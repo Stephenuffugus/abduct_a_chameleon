@@ -28,5 +28,35 @@
     "file": "maps/bog.json",
     "name": "bog",
     "display": "Bog — sunken swamp"
+  },
+  {
+    "file": "maps/riverline.json",
+    "name": "riverline",
+    "display": "Riverline — valley of three bridges"
+  },
+  {
+    "file": "maps/ruins.json",
+    "name": "ruins",
+    "display": "Sunken Ruins — flooded courtyards"
+  },
+  {
+    "file": "maps/cinderfield.json",
+    "name": "cinderfield",
+    "display": "Cinderfield — seams through the fire"
+  },
+  {
+    "file": "maps/frostharbor.json",
+    "name": "frostharbor",
+    "display": "Frostharbor — docks and crate rows"
+  },
+  {
+    "file": "maps/scrapline.json",
+    "name": "scrapline",
+    "display": "Scrapline — junkyard alleys"
+  },
+  {
+    "file": "maps/gardens.json",
+    "name": "gardens",
+    "display": "Twin Gardens — two-tone topiary maze"
   }
 ]

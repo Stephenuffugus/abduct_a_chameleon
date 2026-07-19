@@ -1,15 +1,18 @@
 // Validate every maps/*.json against the scanner-map contract + playability rules the game needs.
 //   node tools/validate-maps.mjs            (all maps in the manifest)
 //   node tools/validate-maps.mjs maps/foo.json ...   (specific files)
-// Checks: format/version, grid matches terrain dims, known terrain + cover keys, spawns present + valid
-// (hider on a non-hazard non-cover cell, seeker in-bounds non-void), and REACHABILITY (a flood-fill from a
-// hider spawn over walkable ground covers a healthy fraction — i.e. the map isn't chopped into sealed pockets).
+// Checks: format/version, optional biome tag, grid matches terrain dims (and fits the terrain-cache bake
+// limit), known terrain + cover keys, one object per cell, spawns present + valid (16+ hiders on non-hazard
+// non-cover cells, 4-6 seekers in-bounds non-void), and REACHABILITY (a flood-fill from a hider spawn over
+// walkable ground covers a healthy fraction — i.e. the map isn't chopped into sealed pockets).
 import { readFileSync } from 'fs';
 
 const TERRAIN = new Set(['void','grass','dirt','water','rock','concrete','foliage','metal','sand','snow','ice','mud','moss','lava','ash','crystal']);
 const COVER   = new Set(['tree','boulder','crate','barrel','wall','cactus','dead_tree','ice_spike','alien_pod']);
 const MOVE_BLOCK = new Set(['wall']);            // matches index.html MOVE_BLOCK + void terrain
 const HAZARD = new Set(['water','lava','void']); // hiders should not spawn here
+const BIOMES = new Set(['greenwood','dunes','tundra','downtown','xeno','bog']); // optional mood tag
+const MAX_COLS = 110, MAX_ROWS = 80;             // terrain-cache bake limit
 
 let files = process.argv.slice(2);
 if (!files.length) files = JSON.parse(readFileSync('maps/levels.json','utf8')).map(l => l.file);
@@ -22,8 +25,10 @@ for (const file of files) {
   let m; try { m = JSON.parse(readFileSync(file,'utf8')); } catch(e){ bad(file,'unparseable: '+e.message); continue; }
   if (m.format !== 'scanner-map') bad(file,`format is "${m.format}" (want scanner-map)`);
   if (m.version !== 1) bad(file,`version ${m.version} (want 1)`);
+  if (m.biome !== undefined && !BIOMES.has(m.biome)) bad(file,`unknown biome "${m.biome}" (want ${[...BIOMES].join('|')})`);
   const cols=m.grid&&m.grid.cols, rows=m.grid&&m.grid.rows;
   if (!(cols>0&&rows>0)) { bad(file,'bad grid'); continue; }
+  if (cols>MAX_COLS||rows>MAX_ROWS) bad(file,`grid ${cols}x${rows} exceeds bake limit ${MAX_COLS}x${MAX_ROWS}`);
   if (!Array.isArray(m.terrain) || m.terrain.length!==rows) bad(file,`terrain rows ${m.terrain&&m.terrain.length} != ${rows}`);
   let badKeys=new Set();
   for (let r=0;r<rows;r++){ const row=m.terrain[r]||[]; if(row.length!==cols) bad(file,`row ${r} width ${row.length} != ${cols}`);
@@ -31,17 +36,22 @@ for (const file of files) {
   if (badKeys.size) bad(file,'unknown terrain keys: '+[...badKeys].join(','));
   // cover grid + unknown cover
   const cover = Array.from({length:rows},()=>new Array(cols).fill(null));
-  let badCover=new Set(), oob=0;
+  let badCover=new Set(), oob=0, dupObj=0; const objCells=new Set();
   for (const o of (m.objects||[])){ if(!COVER.has(o.type)) badCover.add(o.type);
-    if(o.x<0||o.y<0||o.x>=cols||o.y>=rows){ oob++; continue; } cover[o.y][o.x]=o.type; }
+    if(o.x<0||o.y<0||o.x>=cols||o.y>=rows){ oob++; continue; }
+    const k=o.x+','+o.y; if(objCells.has(k)) dupObj++; objCells.add(k);
+    cover[o.y][o.x]=o.type; }
   if (badCover.size) bad(file,'unknown cover types: '+[...badCover].join(','));
   if (oob) bad(file,`${oob} cover objects out of bounds`);
+  if (dupObj) bad(file,`${dupObj} duplicate cover objects sharing a cell`);
   const terr=(c,r)=> (r>=0&&c>=0&&r<rows&&c<cols)? m.terrain[r][c] : 'void';
   const walk=(c,r)=>{ if(terr(c,r)==='void') return false; const cv=cover[r] && cover[r][c]; return !(cv && MOVE_BLOCK.has(cv)); };
   // spawns
   const hiders=(m.spawns||[]).filter(s=>s.role==='hider'), seekers=(m.spawns||[]).filter(s=>s.role==='seeker');
   if (!hiders.length) bad(file,'no hider spawns');
+  else if (hiders.length<16) bad(file,`only ${hiders.length} hider spawns (want 16+; Hunt bots use every other one)`);
   if (!seekers.length) bad(file,'no seeker spawns');
+  else if (seekers.length<4||seekers.length>6) bad(file,`${seekers.length} seeker spawns (want 4-6)`);
   for (const s of hiders){ if(s.x<0||s.y<0||s.x>=cols||s.y>=rows){ bad(file,`hider spawn OOB (${s.x},${s.y})`); continue; }
     if (HAZARD.has(terr(s.x,s.y))) bad(file,`hider spawn on hazard ${terr(s.x,s.y)} (${s.x},${s.y})`);
     if (cover[s.y][s.x]) bad(file,`hider spawn on cover ${cover[s.y][s.x]} (${s.x},${s.y})`); }
@@ -57,7 +67,7 @@ for (const file of files) {
     if (frac<0.6) bad(file,`reachable region only ${(frac*100|0)}% of walkable ground (map is chopped into sealed pockets)`);
     // every hider spawn should be in the main reachable region
     for (const s of hiders){ if(walk(s.x,s.y)&&!seen[s.y*cols+s.x]) bad(file,`hider spawn (${s.x},${s.y}) is stranded in a sealed pocket`); }
-    console.log(`  · ${cols}x${rows}, ${(m.objects||[]).length} cover, ${hiders.length} hider / ${seekers.length} seeker spawns, ${(frac*100|0)}% reachable`);
+    console.log(`  · ${cols}x${rows}${m.biome?` [${m.biome}]`:''}, ${(m.objects||[]).length} cover, ${hiders.length} hider / ${seekers.length} seeker spawns, ${(frac*100|0)}% reachable`);
   }
 }
 console.log(fails? `\n✗ ${fails} problem(s)` : `\n✓ all maps valid`);
