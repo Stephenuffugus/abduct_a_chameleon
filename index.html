@@ -819,6 +819,9 @@ let camLock = false;                         // "the shot is held" — set impli
 let vz = VZ_SEEKER, vzTarget = VZ_SEEKER;    // user view-zoom on zoomBase; only bites while inspectZoomT>0
 let pinch = null;                            // {a,b,d0,vz0,wx,wy} two-finger zoom gesture
 let panBoost = 1;                            // spotted-while-held glides home faster (never snaps)
+let panMaxRelax = MOVE_PEEK_MAX;             // pan ceiling grows instantly, shrinks as a glide (no one-frame clamp snap)
+let _lastZoomFrame = 0;                      // re-anchor live pan drags whenever zoom moves under them
+let _nudgeSeq = 0;                           // compose-nudge tween token — a re-hold must never resurrect a stale tween
 let holdBracketT = 0;                        // viewfinder corner brackets ease 0..1
 const gpCam = { x:0, y:0 };                  // gamepad right-stick camera pan
 let _prevMoveTag = 'idle';
@@ -985,7 +988,7 @@ function onWheel(e){
   if(appState!=='ROUND'||roundState!=='PLAYING'||!round||round.mode==='HUNT'||!player.alive) return;
   ensureAudio();
   if(ctrlMode==='MOVE'){ if(dy>0){ enterInspect(); vz=vzTarget=1; } else return; }   // pulling back = "let me look"
-  else if(ctrlMode==='PAINT'){ if(!camLock){ camLock=true; SFX.shutter(); composeNudge(); } }  // desktop graduates into the hold
+  else if(ctrlMode==='PAINT'){ if(!camLock){ camLock=true; SFX.shutter(); } }  // desktop graduates into the hold (no nudge — the wheel IS the framing)
   const w=screenToWorld(e.clientX,e.clientY);                    // zoom toward the cursor: camPan-only edit, projections untouched
   vz=clamp(vz*Math.exp(-dy*WHEEL_K), vzMin(), VZ_IN); vzTarget=vz;
   const z=liveZoom();
@@ -1101,7 +1104,7 @@ function onPointerMove(e){
   } else if(p.role==='pan'){                              // camera peek (world units, 1:1 grab via zoom)
     if(p.tap && Math.hypot(sx-p.tx,sy-p.ty)>TAP_SLOP) p.tap=false;
     camPan.x=p.px0+(sx-p.sx0)/zoom; camPan.y=p.py0+(sy-p.sy0)/zoom;
-    clampPan(panMaxNow());
+    clampPan(Math.max(panMaxNow(),panMaxRelax));
   } else if(p.role==='pinch'){                            // P9: fingers glue the grabbed world point under the moving midpoint
     if(pinch){ const A=pointers.get(pinch.a), B=pointers.get(pinch.b);
       if(A&&B){ const dd=Math.hypot(A.sx-B.sx,A.sy-B.sy);
@@ -1217,10 +1220,12 @@ function goHome(){ if(studio.open) closeStudio(); camLock=false; cancelPinch(); 
 function coachOnce(flag,msg){ if(settings[flag]) return; settings[flag]=true; saveSettings(); showToast(msg); }
 function composeNudge(){ const r=studioRects(), s=worldToScreen(player.x,player.y);   // held paint: keep your body visible above the panel
   if(s.y > r.panel.y-30 && s.x > r.panel.x-20 && s.x < r.panel.x+r.panel.w+20){
-    const z=liveZoom(); const want=player.y-(r.panel.y-56-vpH/2)/z;                   // cam.y that sits the body 56px above the panel
+    const z=Math.max(ZOOM_MIN*0.55, zoomBase*(1+(vzTarget-1)));                       // the SETTLED hold zoom — never a mid-ease liveZoom
+    const want=player.y-(r.panel.y-56-vpH/2)/z;                                       // cam.y that sits the body 56px above the panel
     const ty=clamp(want-camFollow.y, -INSPECT_PAN_MAX*1.8, INSPECT_PAN_MAX*1.8);
-    // the setter self-disarms if the hold ends mid-tween — a leftover nudge must never move a hopped-back LOOK frame
-    if(FX_MOTION>0) tw(camPan.y, ty, 0.26, easeOutCubic, v=>{ if(ctrlMode==='PAINT'&&camLock) camPan.y=v; }); else camPan.y=ty; } }
+    // token + guard: the setter self-disarms when the hold ends AND when a newer nudge supersedes it
+    const tok=++_nudgeSeq;
+    if(FX_MOTION>0) tw(camPan.y, ty, 0.26, easeOutCubic, v=>{ if(tok===_nudgeSeq && ctrlMode==='PAINT' && camLock) camPan.y=v; }); else camPan.y=ty; } }
 function togglePaintMode(){ ctrlMode==='PAINT' ? exitPaint() : enterPaint(); }
 function toggleInspect(){ ctrlMode==='INSPECT' ? exitInspect() : enterInspect(); }
 function samplePos(){ return studio.reticleOn && studio.reticle.active ? {x:studio.reticle.x,y:studio.reticle.y} : {x:player.x,y:player.y}; }
@@ -1545,8 +1550,10 @@ function computeZoom(){ zoomBase=clamp(Math.min(vpW,vpH)/(TARGET_VISIBLE_TILES*T
 function updateCamera(dt){
   // (1) zoom: user view-zoom vz generalizes INSPECT_ZOOM_MUL inside the inspect ease; held PAINT keeps altitude (P9)
   const zt=heldCam()?1:0; inspectZoomT+=(zt-inspectZoomT)*Math.min(1,dt*INSPECT_ZOOM_RATE*panBoost);
+  if(vzTarget<vzMin()) vzTarget=vzMin();                          // a perf-tier drop lifts an already-FAR zoom back up
   if(!pinch) vz+=(vzTarget-vz)*Math.min(1,dt*VZ_RATE);            // pinch/wheel drive vz 1:1; buttons/keys ease
   zoom=liveZoom();
+  if(Math.abs(zoom-_lastZoomFrame)>1e-4){ if(!pinch) reanchorPans(); _lastZoomFrame=zoom; }   // zoom moved under a live drag → re-base its grab
   holdBracketT+=((camLock?1:0)-holdBracketT)*Math.min(1,dt*(camLock?10:14));
   // (2) eased follow anchor (velocity lookahead ONLY in MOVE)
   const lead=ctrlMode==='MOVE'?1:0;
@@ -1564,7 +1571,10 @@ function updateCamera(dt){
   else if(ctrlMode==='MOVE'){ let panActive=gpm>0.02; if(!panActive) for(const pp of pointers.values()){ if(pp.role==='pan'||pp.role==='pinch'){ panActive=true; break; } }
     if(!panActive){ const t=1-Math.exp(-PAN_HOME_RATE*panBoost*dt); camPan.x+=(0-camPan.x)*t; camPan.y+=(0-camPan.y)*t;
       if(Math.hypot(camPan.x,camPan.y)<0.5){ camPan.x=0; camPan.y=0; } } }
-  clampPan(panMaxNow());
+  { const pmT=panMaxNow();                                        // ceiling grows instantly, shrinks as a glide (no snap on unlock)
+    panMaxRelax = pmT>=panMaxRelax ? pmT : panMaxRelax+(pmT-panMaxRelax)*Math.min(1,dt*6*panBoost);
+    if(Math.abs(panMaxRelax-pmT)<3) panMaxRelax=pmT;              // close the exponential tail — legacy clamps stay exact
+    clampPan(panMaxRelax); }
   if(panBoost>1 && ctrlMode==='MOVE' && inspectZoomT<0.05 && Math.hypot(camPan.x,camPan.y)<1) panBoost=1;
   // (4) derive the true rendered center (cam) = clamp(follow + pan) — projections read cam only
   const halfW=(vpW/2)/zoom, halfH=(vpH/2)/zoom;
@@ -1597,7 +1607,7 @@ function drawRound(alpha){
     const sw=Math.min(worldW,Math.ceil(vx1))-sx, sh=Math.min(worldH,Math.ceil(vy1))-sy;
     if(sw>0&&sh>0) ctx.drawImage(terrainCanvas,sx,sy,sw,sh,sx,sy,sw,sh); }
   // 3. ambient ground emissive (under entities)
-  if(zoom>=zoomBase*0.8) drawAmbientGround(v);   // P9: shed ambient sprite cost at survey altitude (3× the tiles on screen)
+  if(zoom>=zoomBase*0.7) drawAmbientGround(v);   // P9: shed ambient sprite cost only below SEEKER altitude (0.78 keeps its fireflies)
   // 4. footstep ripples
   for(const p of particles){ if(p.type==='ripple'){ const k=p.life/p.maxLife; ctx.globalAlpha=0.30*(1-k);
       ctx.strokeStyle=p.color; ctx.lineWidth=2; ctx.beginPath();
@@ -1642,7 +1652,7 @@ function drawRound(alpha){
     ctx.fillStyle=g; ctx.beginPath(); ctx.arc(ik.x,ik.y,rad,0,TAU); ctx.fill(); }
   }
   // 9. ambient overhead drifters (over entities, additive)
-  if(zoom>=zoomBase*0.8) drawAmbientOverhead();
+  if(zoom>=zoomBase*0.7) drawAmbientOverhead();
   // 10. reticle
   if(studio.reticleOn && studio.reticle.active) drawReticle();
   // 11-14. screen-space post: grade multiply -> vignette/CA -> danger pulse -> scanlines
@@ -2094,16 +2104,20 @@ function drawHuntHUD(){
     ctx.fillStyle=COL.cyan; ctx.beginPath(); ctx.arc(joystick.cx+joystick.dx*60,joystick.cy+joystick.dy*60,16,0,TAU); ctx.fill(); ctx.globalAlpha=1; }
 }
 function drawThreatArrows(){ if(!round||!player.alive) return;
-  const inset=36, cx=vpW/2, cy=vpH/2, hw=vpW/2-inset, hh=vpH/2-inset;
+  const inset=36;
+  // arrows radiate from YOUR body (clamped into view) — under a large held pan the screen center lies
+  const pw=worldToScreen(player.x,player.y);
+  const ax=clamp(pw.x,inset,vpW-inset), ay=clamp(pw.y,inset,vpH-inset);
   for(const u of round.ufos){
-    const sx=vpW/2+(u.x-cam.x)*zoom, sy=vpH/2+(u.y-cam.y)*zoom;
+    const us=worldToScreen(u.x,u.y); const sx=us.x, sy=us.y;
     const onScreen = sx>=0&&sx<=vpW&&sy>=0&&sy<=vpH;
     const chasing = u.state==='CHASE'||u.state==='BEAM';
     if(onScreen && !chasing) continue;                       // only for off-screen or actively-chasing hunters
     if(!chasing && u.suspicion<ENTER_SUSPECT && onScreen) continue;
     const dx=u.x-player.x, dy=u.y-player.y, ang=Math.atan2(dy,dx);
-    const t=Math.min(Math.abs(hw/(Math.cos(ang)||1e-6)), Math.abs(hh/(Math.sin(ang)||1e-6)));
-    const ex=cx+Math.cos(ang)*t, ey=cy+Math.sin(ang)*t;
+    const c=Math.cos(ang)||1e-6, sn=Math.sin(ang)||1e-6;
+    const t=Math.max(0, Math.min((c>0?(vpW-inset-ax):(inset-ax))/c, (sn>0?(vpH-inset-ay):(inset-ay))/sn));
+    const ex=ax+c*t, ey=ay+sn*t;
     const col = chasing?PAL.danger:(u.suspicion>=ENTER_INVEST?PAL.warn:PAL.calm);
     const pulse = chasing?(0.6+0.4*Math.sin(gfx.t*8)):0.9;
     ctx.save(); ctx.translate(ex,ey); ctx.rotate(ang); ctx.globalAlpha=pulse; ctx.fillStyle=col;
