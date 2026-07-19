@@ -993,8 +993,10 @@ function onWheel(e){
   clampPan(panMaxNow()); reanchorPans();
 }
 /* ---- P9: two-finger pinch — a second non-UI pointer while a pan finger is live becomes a pinch pair ---- */
+function cancelPinch(){ if(!pinch) return; const A=pointers.get(pinch.a), B=pointers.get(pinch.b); pinch=null;
+  for(const s of [A,B]) if(s && s.role==='pinch'){ s.role='pan'; s.sx0=s.sx; s.sy0=s.sy; s.px0=camPan.x; s.py0=camPan.y; s.tap=false; } }  // survivors become live pans — no dead fingers
 function tryStartPinch(id,sx,sy){
-  if(pinch || !round || round.mode==='HUNT') return false;
+  if(pinch || !round || round.mode==='HUNT' || roundState!=='PLAYING' || !player.alive) return false;
   let live=null; for(const [pid,pp] of pointers){ if(pp.role==='pan'){ live={id:pid,p:pp}; break; } }
   if(!live) return false;
   if(!heldCam()){                                               // in MOVE both fingers must be on the pan side (never conscript the joystick)
@@ -1048,7 +1050,7 @@ function onPointerDown(e){
     else pointers.set(id,{sx,sy,role:'sscroll',sy0:sy,scroll0:settingsScroll}); return; }
   if(appState!=='ROUND'){
     if(appState==='LEVEL_SELECT' && levelMaxScroll>0 && !showHelp){    // P10: a serious map set scrolls — tap fires on release if the finger didn't drag
-      pointers.set(id,{sx,sy,role:'lvscroll',sy0:sy,scroll0:levelScroll,moved:false}); return; }
+      pointers.set(id,{sx,sy,role:'lvscroll',sy0:sy,scroll0:levelScroll,moved:false,app:appState}); return; }
     handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
   // ROUND — paused overlay is a menu (uses navList)
   if(roundState==='PAUSED'){ handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
@@ -1061,6 +1063,7 @@ function onPointerDown(e){
     if(!inRect(sx,sy,p)){
       if(studio.reticleOn){ pointers.set(id,{sx,sy,role:'reticle'}); studioReticleDrag(sx,sy); return; }
       if(camLock){                                                   // held shot: drag above the panel reframes, a clean tap hops back to LOOK
+        if(pinch){ pointers.set(id,{sx,sy,role:'ui'}); return; }
         if(tryStartPinch(id,sx,sy)) return;
         pointers.set(id,{sx,sy,role:'pan',sx0:sx,sy0:sy,px0:camPan.x,py0:camPan.y,tap:true,tx:sx,ty:sy}); return; }
       exitPaint(); return;   // unlocked paint: tapping empty space leaves paint → Move (legacy path, tests ride this)
@@ -1070,6 +1073,7 @@ function onPointerDown(e){
   // round on-screen buttons first
   for(const h of roundHits){ if(inRect(sx,sy,h)){ h.fn(); pointers.set(id,{sx,sy,role:'ui'}); return; } }
   if(roundState==='CAUGHT'||roundState==='TIMEOUT'){ pointers.set(id,{sx,sy,role:'ui'}); return; }
+  if(pinch){ pointers.set(id,{sx,sy,role:'ui'}); return; }   // a third finger never fights an active pinch
   if(tryStartPinch(id,sx,sy)) return;           // second finger while a pan finger is live → pinch zoom (P9)
   // movement-hand side = floating analog stick; other side = camera pan (peek/free-look)
   const joyOnLeft = settings.handed!=='left';   // right-handed → move with left thumb; actions on right
@@ -1113,6 +1117,7 @@ function onPointerMove(e){
     if(p.moved) levelScroll=clamp(p.scroll0-(sy-p.sy0),0,levelMaxScroll); }
 }
 function onPointerUp(e){
+  const cancelled = e.type==='pointercancel';   // a cancelled gesture must never fire tap actions
   const p=pointers.get(e.pointerId); pointers.delete(e.pointerId);
   try{ cv.releasePointerCapture(e.pointerId); }catch(_){}
   if(!p) return;
@@ -1123,8 +1128,8 @@ function onPointerUp(e){
     const s=otherId!=null?pointers.get(otherId):null;              // survivor re-bases to a pan — zero jump (P9 re-seed rule)
     if(s && s.role==='pinch'){ s.role='pan'; s.sx0=s.sx; s.sy0=s.sy; s.px0=camPan.x; s.py0=camPan.y; s.tap=false; }
   }
-  else if(p.role==='pan' && p.tap && ctrlMode==='PAINT' && camLock && studio.open){ exitPaint(); }  // clean tap above the panel hops back to LOOK
-  else if(p.role==='lvscroll' && !p.moved){ handleMenuTap(p.sx,p.sy); }                            // level-select tap fires on clean release
+  else if(p.role==='pan' && p.tap && !cancelled && ctrlMode==='PAINT' && camLock && studio.open){ exitPaint(); }  // clean tap above the panel hops back to LOOK
+  else if(p.role==='lvscroll' && !p.moved && !cancelled && appState===p.app){ handleMenuTap(p.sx,p.sy); }         // level-select tap fires on clean release, same screen only
 }
 
 /* ---- movement + collision (§5.3) ---- */
@@ -1207,8 +1212,8 @@ function enterInspect(){ if(!round||roundState!=='PLAYING'||round.mode==='HUNT')
   if(studio.open) closeStudio(); camLock=false; ctrlMode='INSPECT'; joystick=null;
   if(!fromHold){ vz=vzTarget=VZ_SEEKER; }                        // fresh look always eases out to seeker altitude
   SFX.ui(); coachOnce('seenLookHint','🤏 pinch or scroll to zoom · drag to look'); }
-function exitInspect(){ ctrlMode='MOVE'; camLock=false; SFX.back(); }
-function goHome(){ if(studio.open) closeStudio(); camLock=false; pinch=null; ctrlMode='MOVE'; SFX.back(); }  // the pill: ALL the way home
+function exitInspect(){ ctrlMode='MOVE'; camLock=false; cancelPinch(); SFX.back(); }
+function goHome(){ if(studio.open) closeStudio(); camLock=false; cancelPinch(); ctrlMode='MOVE'; SFX.back(); }  // the pill: ALL the way home
 function coachOnce(flag,msg){ if(settings[flag]) return; settings[flag]=true; saveSettings(); showToast(msg); }
 function composeNudge(){ const r=studioRects(), s=worldToScreen(player.x,player.y);   // held paint: keep your body visible above the panel
   if(s.y > r.panel.y-30 && s.x > r.panel.x-20 && s.x < r.panel.x+r.panel.w+20){
@@ -1551,7 +1556,8 @@ function updateCamera(dt){
   const d=Math.hypot(tx-camFollow.x, ty-camFollow.y);
   if(d>CAM_DEADZONE){ const t=1-Math.exp(-CAM_STIFFNESS*dt); camFollow.x+=(tx-camFollow.x)*t; camFollow.y+=(ty-camFollow.y)*t; }
   // (2.5) gamepad right stick pans the camera (rate-based) in MOVE peek and while looking/held
-  const gpm=Math.hypot(gpCam.x,gpCam.y);
+  const gpLive = roundState==='PLAYING' && round && round.mode!=='HUNT';   // never drift during pause/countdown/cutscene or in HUNT
+  const gpm=gpLive ? Math.hypot(gpCam.x,gpCam.y) : 0;
   if(gpm>0.02 && (ctrlMode==='MOVE'||heldCam())){ camPan.x+=gpCam.x*420*dt; camPan.y+=gpCam.y*420*dt; }
   // (3) pan: unlocked PAINT pins to the body; MOVE springs home when idle; LOOK / held PAINT hold the framing
   if(ctrlMode==='PAINT' && !camLock){ camPan.x=0; camPan.y=0; }
@@ -2384,6 +2390,8 @@ function endHunt(win){ if(round.finalized) return;
   const ratio=total?caught/total:0; const perf=0.7*ratio + 0.3*clamp01(1-timeUsed/HUNT_TIME);
   const grade=perf>=GRADE.S?'S':perf>=GRADE.A?'A':perf>=GRADE.B?'B':perf>=GRADE.C?'C':perf>=GRADE.D?'D':'F';
   round.finalized=true; stopAllLoops();
+  if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
+  if(document.activeElement===hexInput) hexInput.blur();   // a focused hex field would eat the summary's keyboard
   round.summary={ outcome:win?'WIN':'LOSE', hunt:true, caught, total, score, grade, timeUsed:timeUsed,
     survSec:timeUsed, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0 };
   if(round.mode==='HUNT'){ const key=round.entry.display+'|HUNT|'+round.diff.label; const bb=best[key]||{bestScore:0,bestGrade:'F',plays:0};
@@ -2442,6 +2450,9 @@ function endTimeAttack(win){ if(round.finalized) return;
   const ratio=total?banked/total:0, perf=0.6*ratio+0.4*(win?clamp01(tl/TA_TIME):0);
   const grade=perf>=GRADE.S?'S':perf>=GRADE.A?'A':perf>=GRADE.B?'B':perf>=GRADE.C?'C':perf>=GRADE.D?'D':'F';
   round.finalized=true; stopAllLoops();
+  // the TA clock can expire mid-paint: leaving PLAYING must close the studio + clear the hold (invariant)
+  if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
+  if(document.activeElement===hexInput) hexInput.blur();
   round.summary={ outcome:win?'WIN':'LOSE', ta:true, banked, total, score, grade, timeUsed:TA_TIME-tl,
     survSec:TA_TIME-tl, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0 };
   const key=round.entry.display+'|TA|'+round.diff.label, bb=best[key]||{bestScore:0,bestGrade:'F',plays:0};

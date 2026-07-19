@@ -1,0 +1,356 @@
+[
+ {
+  "dimension": "CAMERA & PROJECTION MATH",
+  "findings": [
+   {
+    "title": "Exiting a held camera hard-snaps the pan by up to ~470 world units in one frame",
+    "file": "index.html",
+    "approxLine": 1561,
+    "severity": "major",
+    "claim": "updateCamera unconditionally runs clampPan(panMaxNow()) every frame; on the first frame after any held->MOVE transition (goHome, exitInspect, spotted-pop) panMaxNow() drops from INSPECT_PAN_MAX*1.8=691 (or 384-492 at vz>=0.78) to MOVE_PEEK_MAX=224, radially truncating camPan in a single frame instead of letting the PAN_HOME_RATE*panBoost spring glide it home. The spotted path's own comment (line 1457: 'the camera GLIDES back (never snaps)') and the panBoost machinery are defeated by this clamp.",
+    "scenario": "INSPECT at FAR (vz=0.55), drag pan to the 691-wu ceiling (allowed by panMaxNow while held), get spotted -> updateUfo calls goHome(); panBoost=1.5 (line 1459). Next updateCamera frame: the home spring shrinks pan ~18%, then clampPan(224) truncates ~650->224, an instantaneous ~430-wu (~300+ px at that zoom) camera lurch, followed by the intended glide. Same snap on plain 'eye' exit from a panned INSPECT (492->224). Pre-session the worst case was 384->224; the session's 1.8x vz scaling of panMaxNow tripled the snap while shipping the 'never snaps' promise.",
+    "fix": "In MOVE, when no pan input is active and |camPan| > MOVE_PEEK_MAX, clamp to the current magnitude instead of 224 and let the home spring converge: e.g. clampPan(ctrlMode==='MOVE' && !panActive ? Math.max(MOVE_PEEK_MAX, Math.hypot(camPan.x,camPan.y)) : panMaxNow()) (requires hoisting the panActive check above the clamp)."
+   },
+   {
+    "title": "Detent zoom during an active pan drag makes the camera jump (stepDetent never re-anchors pan pointers)",
+    "file": "index.html",
+    "approxLine": 832,
+    "severity": "major",
+    "claim": "The 'pan' pointer role maps its full accumulated screen delta through the CURRENT zoom every move event (onPointerMove line 1099: camPan = px0 + (sx-sx0)/zoom). The wheel handler knows this and calls reanchorPans() after changing vz (line 993), and the recenter button does too (line 1969), but stepDetent (keys -/= line 942, dpad line 907, HUD + / - buttons lines 1967/1972) changes vzTarget without re-anchoring, so the historical drag delta is retroactively rescaled by the new zoom.",
+    "scenario": "Tablet in INSPECT (zoomBase 1.6, vz 0.78, zoom~1.25): pan finger dragged 350 px (camPan~280 wu), then a second finger taps the HUD + button (role 'ui' via roundHits, so it never becomes a pinch) -> vz eases 0.78->1.0 (zoom->1.6). The next pointermove of the resting pan finger (touch jitter of 1 px is enough) recomputes camPan = 350/1.6 ~= 219 wu: a ~61-wu (~98 px) instantaneous camera lurch under a stationary finger. Same on desktop with a mouse-drag pan plus the '=' key.",
+    "fix": "Call reanchorPans() inside stepDetent (or inside setVzTarget) so px0/sx0 re-base to the current state before the zoom ease begins, mirroring what onWheel already does."
+   },
+   {
+    "title": "composeNudge computes its framing target at the current liveZoom() instead of the settled hold zoom",
+    "file": "index.html",
+    "approxLine": 1215,
+    "severity": "major",
+    "claim": "composeNudge derives want = player.y - (panel.y-56-vpH/2)/z with z = liveZoom() at call time. On the onWheel PAINT hold-engage path (line 988) camLock has just been set but inspectZoomT is still ~0 (unlocked PAINT is not heldCam), so z ~= zoomBase, while the hold then eases to zoomBase*vz (vz persists from the last look, 0.55-1.6; VZ_SEEKER=0.78 after startRound). The screen offset the tween establishes is therefore wrong by a factor of vz once the zoom settles, and the gating test s=worldToScreen(player) mispredicts for the same reason. The fromLook enterPaint path is only correct because inspectZoomT~=1 there; a fast INSPECT->paint tap mid-ease hits the same error partially.",
+    "scenario": "Short landscape viewport 900x500 (panel.y~200, zoomBase clamped to 1.15): unlocked PAINT from MOVE, scroll the wheel to engage the hold with vz=0.55 -> composeNudge aims cam.y for a 144-px body line assuming z=1.15, but the hold settles at zoom 0.63, leaving the body at ~192 px, below the panel.y-30 threshold, i.e. still hidden behind the studio panel, which is exactly what the nudge exists to prevent. With vz=1.6 the body overshoots ~63 px too high into the top HUD row.",
+    "fix": "Compute the target at the settled hold zoom: const z = zoomBase*(1+(vzTarget-1)) (ignore inspectZoomT and zoomPunch), and use the same z to predict the body's settled screen position for the trigger test instead of worldToScreen at current zoom."
+   },
+   {
+    "title": "onWheel hold-engage starts the composeNudge tween and then fights it for camPan.y for 0.26 s",
+    "file": "index.html",
+    "approxLine": 988,
+    "severity": "minor",
+    "claim": "When a wheel event graduates unlocked PAINT into the hold, the handler calls composeNudge() (which starts a 0.26 s tween writing camPan.y each frame, guard ctrlMode==='PAINT'&&camLock stays true) and then the very same handler, plus every subsequent wheel tick, writes camPan.y directly via the cursor-pivot math. Two writers alternate on camPan.y: each wheel event sets the pivot value, each updateTweens frame stomps it back onto the tween track, so the cursor-glue is broken and the view judders vertically until the tween expires. The tween can also target |ty| up to INSPECT_PAN_MAX*1.8 while panMaxNow() is only 384 at vz>=1, so the per-frame radial clampPan additionally erodes camPan.x multiplicatively while y saturates.",
+    "scenario": "Desktop player in unlocked PAINT scrolls three wheel ticks over ~200 ms near the map interior: tick 1 engages the hold and starts the tween; ticks 2-3 place the world point under the cursor, but on the next RAF the tween overwrites camPan.y with its own precomputed from->ty track (from was captured as 0 at engage time), producing a visible per-frame sawtooth of the frame's vertical position for a quarter second.",
+    "fix": "Skip composeNudge on the wheel path (the user is already framing with the cursor), or cancel the nudge tween on any manual camera write (wheel pivot, pinch, pan drag) by flagging it dead instead of relying only on the hold-ended guard."
+   },
+   {
+    "title": "drawThreatArrows aims edge arrows with the player->UFO bearing anchored at the screen center, which lies under P9's large held pans",
+    "file": "index.html",
+    "approxLine": 2097,
+    "severity": "minor",
+    "claim": "drawThreatArrows projects visibility with cam (sx=vpW/2+(u.x-cam.x)*zoom) but computes the arrow's edge position and heading from ang=atan2(u.y-player.y,u.x-player.x) anchored at the viewport center. The code is byte-identical to pre-session, but P9 legitimizes cam being up to ~690 wu away from the player while held, so the arrow's direction/edge placement no longer corresponds to where the off-screen UFO actually lies relative to the visible frame; the session's own drawInspectOverlay YOU-arrow does this correctly with atan2(player.y-cam.y, player.x-cam.x).",
+    "scenario": "Held PAINT with the frame panned 600 wu east of the body; a UFO sits 400 wu due north of the player. Relative to the frame it is up-left and off-screen top-left, but the arrow is drawn at top-center pointing straight up; the player pans toward where the arrow points and the ship is not there, defeating the P9 'never a cheap shot' pre-warning during the exact interaction (held framing) the pass shipped.",
+    "fix": "Use the camera-relative bearing for arrow placement and rotation (const ang=Math.atan2(u.y-cam.y,u.x-cam.x)), keeping the distance label player-relative."
+   },
+   {
+    "title": "qLevel>=2 raises vzMin to 0.62 but never applies it to a vz already at FAR",
+    "file": "index.html",
+    "approxLine": 828,
+    "severity": "minor",
+    "claim": "vzMin() exists so struggling devices (qLevel>=2) don't render at VZ_OUT=0.55 fill rates, but it is only consulted inside setVzTarget/onWheel/pinch. updateCamera eases vz toward the untouched vzTarget, so if the player is already parked at 0.55 when qLevel escalates, vz stays 0.55 indefinitely, the exact far-zoom load that pushed qLevel up in the first place; the guard only takes effect if the user happens to zoom again.",
+    "scenario": "Tablet enters INSPECT, steps to FAR (vz=vzTarget=0.55, ~3x tiles on screen), frame rate drops, adaptive quality reaches qLevel 2 -> vzMin() now returns 0.62 but nothing re-clamps, so the device keeps rendering at 0.55 for the rest of the hold and the perf guard never fires.",
+    "fix": "In updateCamera (or wherever qLevel changes), enforce the floor on the target so the ease lifts it smoothly: if(vzTarget<vzMin()) vzTarget=vzMin();"
+   }
+  ]
+ },
+ {
+  "dimension": "state-machine-correctness",
+  "findings": [
+   {
+    "title": "endTimeAttack exits PLAYING without closing studio or clearing ctrlMode/camLock/pinch",
+    "file": "/workspaces/abduct_a_chameleon/index.html",
+    "approxLine": 2452,
+    "severity": "critical",
+    "claim": "endTimeAttack (and endHunt) set appState='SUMMARY' straight from PLAYING with none of the reset block that triggerAbduction/endRound/togglePause got this session — studio.open, ctrlMode='PAINT', camLock, pinch, camPan and a focused hex field all leak out of the round, violating the stated invariant that every transition out of PLAYING closes the studio and clears ctrlMode/camLock/pinch. stepSim calls stepTABeacons unconditionally while painting, so the funnel is reachable with the studio open.",
+    "scenario": "TA round → press E (PAINT, studio open, optionally held via wheel) → let round.timeLeft expire → stepTABeacons calls endTimeAttack(false) → SUMMARY screen shows with __aac.state.mode==='PAINT', studio.open===true, hold.locked possibly true. Worst case: player had tapped the hex field (hexInput.focus() at ~line 1258) before timeout — closeStudio() never runs, so hexInput keeps focus; keydown's early return (line ~924 'document.activeElement===hexInput') swallows EVERY key on the summary AND in the next round (startRound closes the studio inline without blurring), leaving WASD/E/Escape completely dead until the player mouse-opens the studio and mouse-clicks ✕. Same win path: bank the last beacon while rooted in PAINT next to it → endTimeAttack(true) mid-PAINT.",
+    "fix": "In endTimeAttack and endHunt, before appState='SUMMARY', run the same funnel as endRound: if(studio.open) closeStudio() (use closeStudio, not the inline pair, so hexInput blurs); ctrlMode='MOVE'; camPan.x=camPan.y=0; camLock=false; pinch=null. Better: factor a resetControlState() helper and call it at all six PLAYING-exit sites."
+   },
+   {
+    "title": "exitInspect leaves a live pinch driving the MOVE camera",
+    "file": "/workspaces/abduct_a_chameleon/index.html",
+    "approxLine": 1210,
+    "severity": "major",
+    "claim": "exitInspect(){ ctrlMode='MOVE'; camLock=false; SFX.back(); } clears neither `pinch` nor the two pointers whose role is 'pinch'. It is the only transition out of a held camera that skips pinch cleanup (goHome nulls pinch; enterPaint keeps the hold legitimately), so an active two-finger pinch survives into MOVE fully armed.",
+    "scenario": "In INSPECT with two fingers mid-pinch, tap the 👁 dock button with a third finger (roundHits → toggleInspect → exitInspect), or press Escape/KeyI/gamepad B. Now ctrlMode==='MOVE' but pinch!==null: (1) onPointerMove's pinch branch (line ~1101) keeps writing camPan and vz/vzTarget — the 'exited' gesture still pans the MOVE camera; (2) updateCamera line ~1543 'if(!pinch) vz+=…' freezes vz easing indefinitely while the fingers rest; (3) the MOVE spring-home is disabled because line ~1558 counts role 'pinch' as panActive. The machine sits in the supposed-impossible state (pinch && MOVE && !heldCam) until both fingers lift.",
+    "fix": "In exitInspect (and any future held→MOVE transition), add: pinch=null and demote surviving 'pinch' pointers, e.g. for(const pp of pointers.values()) if(pp.role==='pinch'){ pp.role='pan'; pp.sx0=pp.sx; pp.sy0=pp.sy; pp.px0=camPan.x; pp.py0=camPan.y; pp.tap=false; }"
+   },
+   {
+    "title": "Spotted 'glide home' actually snaps: MOVE pan clamp truncates up to ~467 world units in one frame",
+    "file": "/workspaces/abduct_a_chameleon/index.html",
+    "approxLine": 1561,
+    "severity": "major",
+    "claim": "The session's spotted-pop path (updateUfo ~line 1459: goHome(); panBoost=HOLD_GLIDE_MUL with comment 'the camera GLIDES back (never snaps)') is defeated by the unconditional clampPan(panMaxNow()) in updateCamera (~1561). The frame after goHome, heldCam() is false so panMaxNow()===MOVE_PEEK_MAX (224), while held-cam pan can legally reach INSPECT_PAN_MAX*1.8=691 at far zoom (panMaxNow scaling added this session). clampPan rescales camPan to 224 in a single frame — a hard camera snap of up to ~467 world units (~240+ screen px at far zoom) before the PAN_HOME_RATE*panBoost spring ever runs.",
+    "scenario": "INSPECT at FAR zoom (vz≈0.55), pan ~600 units toward a distant UFO, get spotted → goHome() → next updateCamera frame the camera jumps ~376 units instantly (600→224), then glides the rest. Same snap on the pill/Escape/B exits whenever |camPan|>224. The L4 harness test passes only because its pan is small.",
+    "fix": "Don't clamp to the MOVE limit instantly after leaving a held camera: while panBoost>1 or inspectZoomT>0.05, clamp to lerp(MOVE_PEEK_MAX, INSPECT_PAN_MAX*1.8, inspectZoomT) (or skip clampPan when the spring is still gliding) so the spring, not the clamp, brings camPan under 224."
+   },
+   {
+    "title": "tryStartPinch missing roundState gate — pinch forms during COUNTDOWN with INSPECT entry silently refused",
+    "file": "/workspaces/abduct_a_chameleon/index.html",
+    "approxLine": 997,
+    "severity": "minor",
+    "claim": "onWheel guards appState/roundState/'PLAYING'/player.alive, but tryStartPinch only checks (pinch || !round || round.mode==='HUNT'). During COUNTDOWN/RESUME_COUNTDOWN it calls enterInspect(), which no-ops on its roundState guard, yet the function proceeds to assign 'pinch' roles and create the pinch object — reaching (pinch && ctrlMode==='MOVE' && !heldCam), a state the rest of the code treats as impossible.",
+    "scenario": "During the 3-2-1 countdown put one finger on the pan side (role 'pan' is granted regardless of roundState), add a second ≥32px away → pinch created, mode stays MOVE. The gesture visibly pans the countdown camera (clamped 224) and scrubs vz invisibly; updateCamera's 'if(!pinch)' freezes vz easing for as long as the fingers stay down; when PLAYING starts, the pinch the player is physically holding never enters INSPECT — they must lift both fingers and redo the gesture.",
+    "fix": "Mirror onWheel's gate at the top of tryStartPinch: if(pinch || !round || roundState!=='PLAYING' || round.mode==='HUNT' || !player.alive) return false; (or bail with 'if(!enterInspect-succeeded)' by checking ctrlMode after the call)."
+   },
+   {
+    "title": "Compose-nudge tween self-disarms but never cancels — quick re-hold resurrects the stale tween, which wins over the new one",
+    "file": "/workspaces/abduct_a_chameleon/index.html",
+    "approxLine": 1218,
+    "severity": "minor",
+    "claim": "composeNudge's setter guard (ctrlMode==='PAINT'&&camLock) only pauses writes; the tween stays in FX.tweens for its full 0.26s. Re-entering held PAINT inside that window re-satisfies the guard, and because updateTweens iterates backwards (line ~1475, i from length-1 down to 0), the OLDER tween writes camPan.y LAST each frame — the stale target computed against the previous framing overrides the freshly started nudge, moving a frame the stillness law says must not move.",
+    "scenario": "Held PAINT → Escape (exitPaint → LOOK, guard disarms mid-tween) → E again within ~260ms (gamepad B then Y is trivially this fast) → enterPaint(fromLook) starts a new composeNudge, but the resurrected old tween overwrites camPan.y every frame until it expires, lurching the held frame toward a target computed for the old camFollow/zoom. Also arms via spotted→goHome→quick KeyI+KeyE re-hold, and wheel-engaged holds where the tween fights the cursor-zoom camPan for 0.26s.",
+    "fix": "Cancel instead of disarm: keep a handle to the active nudge tween and splice it from FX.tweens in exitPaint/goHome/enterPaint (or give tw() an id+kill(id), or make the guard set w.t=w.dur to expire it on first blocked write)."
+   },
+   {
+    "title": "goHome/togglePause/triggerAbduction null `pinch` but leave pointer roles 'pinch', disabling survivor-rebase and the MOVE spring",
+    "file": "/workspaces/abduct_a_chameleon/index.html",
+    "approxLine": 1211,
+    "severity": "minor",
+    "claim": "The reset sites clear the pinch object but not the two Map entries whose role is 'pinch'. onPointerUp's rebase (line ~1121) requires `p.role==='pinch' && pinch`, so with pinch already null the survivor is never demoted to 'pan', and updateCamera line ~1558 keeps counting the stale 'pinch' roles as panActive, blocking the MOVE spring-home for as long as either finger stays down.",
+    "scenario": "Pinch-zooming in INSPECT when a UFO spots you → goHome() runs, toast says 'Spotted — move!', panBoost=1.5 promises a glide — but with both fingers still resting on the glass the spring branch never runs: camPan freezes at the 224-clamped offset until BOTH fingers lift (the leftover 'pinch' pointers are inert but still block panActive). Same leak via gamepad-Start pause or an abduction mid-pinch, though camPan is zeroed there so only the dead roles remain.",
+    "fix": "Wherever pinch is nulled outside onPointerUp (goHome, togglePause, triggerAbduction, endRound, and the exitInspect fix), also sweep pointers: for(const pp of pointers.values()) if(pp.role==='pinch') pp.role='pan' with re-seeded anchors — or simply delete the stale entries since blur already shows pointers.clear() is acceptable."
+   }
+  ]
+ },
+ {
+  "dimension": "progression-logic",
+  "findings": [
+   {
+    "title": "Daily Challenge serves XP-locked maps to level-1 players",
+    "file": "index.html",
+    "approxLine": 2624,
+    "severity": "major",
+    "claim": "startDaily builds its pool as LEVELS.slice(0, LEVELS.length-1), which excludes only the baked prototype card and still contains the six expansion maps carrying unlockLevel 2..7 (assigned in loadLevels for manifest indices >= 6), so seed%pool.length routinely selects a locked map and starts it with no gate check.",
+    "scenario": "Fresh install (xp=0, player level 1). On 2026-07-22 dailySeed()=20260722, pool.length=12, 20260722%12=6 -> 'riverline' (unlockLevel 2, shown as a locked card with 'Reach Lv 2' everywhere else, including Practice). startDaily fetches it and startRound runs it anyway — half of all calendar days (indices 6..11) hand a level-1 player a map the P12 arc says is locked, contradicting the lock toast '🔒 Reach Level N to unlock …' in drawLevelSelect (line ~2671).",
+    "fix": "Filter the pool to the always-free set: const pool=LEVELS.slice(0,Math.max(1,LEVELS.length-1)).filter(e=>!(e.unlockLevel>0)); — unlockLevel is a static per-entry property, so the day's map stays identical for every player (DAILY reproducibility preserved). If locked maps in Daily are intended as previews, drawLevelSelect's lock copy should say so instead."
+   },
+   {
+    "title": "Corrupt/huge PROGRESS.xp hangs the game in xpLevel's while loop",
+    "file": "index.html",
+    "approxLine": 640,
+    "severity": "minor",
+    "claim": "loadProgress's back-compat check (line 637) only tests typeof PROGRESS.xp==='number', but JSON.parse('{\"xp\":1e400}') yields Infinity (verified: typeof Infinity==='number'), and xpLevel's loop `while(xp>=75*L*(L+1)) L++` never terminates for Infinity — once 75*L*(L+1) overflows to Infinity, Infinity>=Infinity stays true (verified in node). Huge finite values are nearly as bad: xp=9e15 costs ~11M iterations per call, and drawLevelSelect calls xpLevel(PROGRESS.xp||0) every frame.",
+    "scenario": "A corrupt or hand-edited aac.progress.v1 with xp:1e400 (or any overflowing numeric literal) loads cleanly at boot; the first frame of SELECT LEVEL (drawLevelSelect line ~2660) or the first round end (checkUnlocks -> checkLevelUnlocks(xpLevel(...))) enters xpLevel and the tab hard-freezes; with xp≈9e15 the game becomes a permanent slideshow instead.",
+    "fix": "Harden loadProgress: if(!isFinite(PROGRESS.xp)||PROGRESS.xp<0) PROGRESS.xp=0; (and/or guard xpLevel: if(!isFinite(xp)||xp<=0) return 1;)."
+   },
+   {
+    "title": "Truthy non-object PROGRESS.challenges throws in strict mode and kills the rAF loop",
+    "file": "index.html",
+    "approxLine": 665,
+    "severity": "minor",
+    "claim": "The back-compat heal `if(!PROGRESS.challenges) PROGRESS.challenges={}` (line 637) only fixes falsy values; a save with challenges as a truthy primitive (e.g. \"challenges\":1) survives loadProgress, and because the script is \"use strict\" (line 23), the write `PROGRESS.challenges[c.id]=true` in checkChallenges throws TypeError — the try/catch there wraps only c.test(sum,round), not the write.",
+    "scenario": "aac.progress.v1 contains {\"unlocks\":[...],\"stats\":{\"catches\":20},\"challenges\":1}. Next non-practice round end: checkChallenges finds ch_ghost_hunter done (catches>=15), executes PROGRESS.challenges['ch_ghost_hunter']=true on the number 1 -> TypeError propagates through finishRound before appState='SUMMARY' runs, and out of frame() before its trailing requestAnimationFrame(frame) — the game freezes permanently on the abduction cutscene frame.",
+    "fix": "Type-check the container in loadProgress: if(!PROGRESS.challenges||typeof PROGRESS.challenges!=='object') PROGRESS.challenges={}; (apply the same to blendbook/biomeMedals while there)."
+   },
+   {
+    "title": "Wardrobe two-row accent grid overflows short viewports (no scroll)",
+    "file": "index.html",
+    "approxLine": 2849,
+    "severity": "minor",
+    "claim": "With P12's catalog at 10 accents, drawWardrobe wraps to two rows whenever vpW<~640 (perRow=max(5,floor((vpW-40)/60))), adding ~70px (cw+18 per row) to a fixed-position stack that has no scrolling, so the Blend Book row and the poses line collide with the bottom-anchored Back button on short viewports where the pre-P12 single-row layout still fit.",
+    "scenario": "480x360 landscape phone: perRow=7 -> 2 accent rows; medals row lands at y≈254–300 while Back sits at y=314–350, the Blend Book chips draw at y≈336–362 across the Back button, and the poses line at y≈384 is clipped off-screen. At 400x430 the poses text renders directly on top of the Back button (poses y≈385 vs Back 384–420). Pre-P12 (5 accents, one row) these heights only broke below ~360px.",
+    "fix": "When accents.length>perRow (second row exists), reclaim the added height: shrink chip size/paddings by a vpH-based factor (like the title screen's k=clamp(vpH/560,0.68,1)) or cap the section stack and reuse the settings-style scroll for the wardrobe body."
+   }
+  ]
+ },
+ {
+  "dimension": "INPUT ROUTING & EDGE CASES",
+  "findings": [
+   {
+    "title": "Level-select keyboard-follow reverts pointer/wheel scroll every frame — touch scrolling is dead",
+    "file": "index.html",
+    "approxLine": 2645,
+    "severity": "critical",
+    "claim": "drawLevelSelect's keep-selected-card-in-view block runs unconditionally each frame; with the default menuIndex=0 (set by route()), ry=0 makes 'ry-levelScroll<0' true whenever levelScroll>0, so it resets levelScroll to 0 before every render, undoing any lvscroll drag or wheel scroll.",
+    "scenario": "Phone 390x844, any mode with the 13-level manifest: cols=1, gridH≈1260 vs availH≈698 so levelMaxScroll≈562. Player drags the list up — onPointerMove sets levelScroll, but the next drawLevelSelect frame snaps it back to 0. The list never visibly scrolls; every level below the fold is unreachable by touch (and wheel on short desktop windows). The only 'ratchet' is tapping the bottom visible card, which launches that level if unlocked.",
+    "fix": "Only apply the follow when the selection changed via keyboard/gamepad: track a _lvPrevSel (or set a flag in menuNav) and run the ry clamp only when menuIndex !== _lvPrevSel, then update _lvPrevSel."
+   },
+   {
+    "title": "endTimeAttack leaves PLAYING without closing the studio or clearing ctrlMode/camLock/pinch (stated invariant violation)",
+    "file": "index.html",
+    "approxLine": 2439,
+    "severity": "critical",
+    "claim": "endTimeAttack sets appState='SUMMARY' directly (line 2452) with none of the reset block that triggerAbduction/endRound/togglePause got (close studio, ctrlMode='MOVE', camLock=false, pinch=null); it is reachable while in PAINT because stepTABeacons runs inside stepSim every PLAYING frame and TA does not block paint mode.",
+    "scenario": "Time Attack: player is in held PAINT (studio open, camLock=true) with the hex field focused when timeLeft hits 0 (or banks the final beacon while rooted+concealed next to it). endTimeAttack fires -> SUMMARY with studio.open=true, ctrlMode='PAINT', camLock=true, pinch possibly set. closeStudio never runs so hexInput keeps focus, and the keydown handler's 'document.activeElement===hexInput' early-return (line 924) swallows Enter/arrows — the summary screen is keyboard/gamepad-dead until the player clicks. Stale PAINT/camLock state persists through TITLE until the next startRound.",
+    "fix": "At the top of endTimeAttack (before appState='SUMMARY') run the same funnel as endRound: if(studio.open) closeStudio(); ctrlMode='MOVE'; camPan.x=camPan.y=0; camLock=false; pinch=null."
+   },
+   {
+    "title": "lvscroll release-tap fires handleMenuTap against a stale navList with no appState re-check",
+    "file": "index.html",
+    "approxLine": 1127,
+    "severity": "major",
+    "claim": "onPointerUp's lvscroll branch calls handleMenuTap(p.sx,p.sy) unconditionally; selectLevel is async and can change appState between a pointer's down and up, and navList is only rebuilt by drawMenu (which stops running once appState==='ROUND'), so the stale LEVEL_SELECT card rects can fire selectLevel a second time.",
+    "scenario": "Two fingers resting on two cards (or a quick double-tap while the first selectLevel's fetch is pending): finger 1 releases on card A -> selectLevel(A) -> startRound flips appState to ROUND (Practice/Heat/Daily resolve within the same tick for cached data). Finger 2 releases over card B before the next frame -> handleMenuTap walks the stale navList -> selectLevel(B) -> the round silently restarts on level B mid-countdown with a new seed. In Survive the same race corrupts pendingLevel under an already-open DIFFICULTY_SELECT, so the shown level name and the level actually started diverge.",
+    "fix": "Guard the branch: else if(p.role==='lvscroll' && !p.moved && appState==='LEVEL_SELECT'){ handleMenuTap(p.sx,p.sy); } (menu-tap-on-down paths are safe because drawMenu rebuilds navList every menu frame)."
+   },
+   {
+    "title": "pointercancel is routed to onPointerUp and triggers tap actions (level launch / paint exit)",
+    "file": "index.html",
+    "approxLine": 975,
+    "severity": "minor",
+    "claim": "cv routes pointercancel to onPointerUp, whose lvscroll (!moved -> handleMenuTap) and pan-tap (tap=true -> exitPaint) branches treat a cancelled gesture as a completed clean tap.",
+    "scenario": "Android Chrome, LEVEL_SELECT with scroll active: player starts an OS back edge-swipe whose pointerdown lands on the left edge of a card; the browser claims the gesture and fires pointercancel before any move exceeds TAP_SLOP -> handleMenuTap runs -> the level launches from a gesture the user aborted. Same root cause hops a held-PAINT shot back to LOOK (exitPaint) when a fresh touch above the panel is cancelled within the 12px slop.",
+    "fix": "In onPointerUp check e.type==='pointercancel' and skip the two tap-action branches (still doing the role cleanup), or register a separate pointercancel handler that only deletes the pointer / re-bases the pinch survivor."
+   },
+   {
+    "title": "Gamepad right-stick pan uses stale gpCam outside PLAYING — camera drifts during pause, countdowns and the abduction cutscene",
+    "file": "index.html",
+    "approxLine": 1555,
+    "severity": "minor",
+    "claim": "gpCam is written only in gatherInput (called solely from stepSim/stepHunt while PLAYING) but updateCamera applies it on every appState==='ROUND' frame (PAUSED, COUNTDOWN, RESUME_COUNTDOWN, CAUGHT, TIMEOUT); startRound resets camLock/pinch/vz but never gpCam, and the stale gpm>0.02 also disables the MOVE pan-home spring.",
+    "scenario": "Gamepad player holds the right stick while pressing Start: togglePause zeroes camPan, but every paused frame updateCamera adds gpCam*420*dt until camPan pins at the MOVE_PEEK_MAX=224 clamp — the paused background slides sideways and keeps drifting through the resume countdown (gatherInput does not run until PLAYING). Same drift plays over the abduction cutscene (CAUGHT) and over a fresh round's 3s countdown after Retry, since gpCam still holds the previous round's last stick sample.",
+    "fix": "Gate line 1555 on roundState==='PLAYING' (or re-poll/zero gpCam in updateCamera when gatherInput did not run this frame), and zero gpCam in startRound/togglePause/triggerAbduction/endRound."
+   },
+   {
+    "title": "tryStartPinch has no roundState gate — a pinch begun during COUNTDOWN becomes a dead gesture that persists into PLAYING",
+    "file": "index.html",
+    "approxLine": 997,
+    "severity": "minor",
+    "claim": "tryStartPinch only checks pinch/round/HUNT; during COUNTDOWN or RESUME_COUNTDOWN the inner enterInspect() call is rejected (roundState!=='PLAYING') yet the function still converts the pan pointer to role 'pinch' and creates the pinch object, leaving ctrlMode='MOVE' where vz never bites the zoom (inspectZoomT stays 0).",
+    "scenario": "Player pinches to look around 0.5s before 'GO': nothing zooms (expected during countdown), but the pinch object survives into PLAYING — continued finger spread still does not zoom (mode is MOVE so vz has no effect, only camPan gets written) and the discovery gesture appears broken until both fingers are lifted and the pinch is redone.",
+    "fix": "Add roundState!=='PLAYING' to tryStartPinch's early return so it matches enterInspect's guard: if(pinch || !round || roundState!=='PLAYING' || round.mode==='HUNT') return false."
+   },
+   {
+    "title": "stepDetent does not re-anchor live pan pointers — held drag jumps when zoom detents step",
+    "file": "index.html",
+    "approxLine": 832,
+    "severity": "minor",
+    "claim": "onWheel calls reanchorPans() after changing vz so a live pan drag stays continuous, but stepDetent (Minus/Equal keys, dpad, HUD + and - buttons) changes vzTarget without re-anchoring; the pan formula camPan=px0+(sx-sx0)/zoom then re-scales the accumulated screen offset by the new zoom on the next pointermove.",
+    "scenario": "INSPECT with a pan finger held 300px from its anchor at vz=0.78; a second finger taps the HUD '+' (roundHits fire while dragging). vz eases to 1.0; the drag finger sits still through the ease (no pointermove), then moves 1px — camPan recomputes with the new zoom and the frame snaps by roughly (sx-sx0)*(1/zNew-1/zOld) ≈ 150 world units, contradicting the pass's own never-snaps rule (the wheel path was explicitly re-anchored for exactly this).",
+    "fix": "Call reanchorPans() inside stepDetent (and in the HUD zoom button callbacks if kept separate), or re-anchor pan pointers in updateCamera whenever zoom changes while a 'pan' role is live."
+   },
+   {
+    "title": "Third finger during an active pinch becomes an independent pan pointer that fights the pinch (and can tap-exit held paint)",
+    "file": "index.html",
+    "approxLine": 1073,
+    "severity": "minor",
+    "claim": "When pinch is set, tryStartPinch returns false, so a third non-UI pointer falls through to the pan branch (line 1082, or line 1065 with tap=true in held-PAINT); its pointermove writes camPan absolutely from its own anchors while the pinch handler also writes camPan, and on pinch end the survivor re-bases to a second 'pan', leaving two pan pointers with conflicting anchors.",
+    "scenario": "Tablet player pinch-zooming in held PAINT rests a third finger above the panel: each interleaved pointermove alternates camPan between the pinch midpoint solution and the third finger's grab solution — visible frame jitter. If the third finger lifts within the 12px slop instead, its tap=true branch calls exitPaint() and the studio closes mid-pinch.",
+    "fix": "In onPointerDown, when pinch is truthy register additional non-UI pointers as inert (role 'ui') instead of 'pan', in both the held-studio branch (line 1063-1065) and the ROUND branch (line 1082)."
+   }
+  ]
+ },
+ {
+  "dimension": "render/hud-regressions",
+  "findings": [
+   {
+    "title": "Level-select keyboard-follow pins levelScroll to 0, killing touch/wheel scroll",
+    "file": "index.html",
+    "approxLine": 2645,
+    "severity": "critical",
+    "claim": "drawLevelSelect runs the keep-selected-card-in-view logic every frame regardless of input source. Every entry path into LEVEL_SELECT sets menuIndex=0 (route() line 2620, menuBack line 2550, summary Change-Level line 2728), so ry=0 and the branch `if(ry-levelScroll<0) levelScroll=ry` resets levelScroll to 0 on every frame in which menuIndex still points at row 0 (or any visible row).",
+    "scenario": "Phone/tablet, 13 levels (6 base + 6 expansion + baked proto), vpW=390 -> cols=1, gridH=1260, availH~554, levelMaxScroll~706. Player drags the list (lvscroll role, line 1112 sets levelScroll) or wheel-scrolls (line 983): the very next drawLevelSelect (same rAF) sees menuIndex=0, ry=0, 0-levelScroll<0 and snaps levelScroll back to 0. The list never moves (1-frame jitter at most). Cards below the fold — the entire P11/P12 expansion arc — are unreachable by touch or mouse; only keyboard/gamepad menuNav can move menuIndex and thus scroll. On touch-only devices the new maps cannot be selected at all.",
+    "fix": "Apply the follow only when menuIndex actually changed via keyboard/gamepad: keep `let _lvFollowed=-1;` and run the clamp block only `if(menuIndex!==_lvFollowed){ _lvFollowed=menuIndex; ...adjust levelScroll... }` (reset _lvFollowed on entering LEVEL_SELECT), or set a flag in menuNav and only follow on that flag."
+   },
+   {
+    "title": "Ambient emissive layer cut at standard seeker altitude (0.78 < 0.8 gate)",
+    "file": "index.html",
+    "approxLine": 1594,
+    "severity": "major",
+    "claim": "drawRound gates `drawAmbientGround` and `drawAmbientOverhead` (lines 1594, 1639) on `zoom>=zoomBase*0.8`, but the default INSPECT / held-PAINT altitude is VZ_SEEKER=INSPECT_ZOOM_MUL=0.78, which is below the gate. The comment says the intent was to shed cost at survey altitude (FAR 0.55, ~3x tiles); at 0.78 it is only ~1.6x tiles, so the gate fires on the legacy inspect path, not just far zoom.",
+    "scenario": "Player taps 👁 on a lava/crystal/water map: inspectZoomT eases toward 1, zoom eases from zoomBase to zoomBase*0.78 and crosses 0.8 at t~0.91 — all lava glow, crystal shimmer, water sparkle (drawAmbientGround is the terrain emissive layer, line 390) plus overhead drifters vanish in a single frame near the end of the ease, and pop back the same way on exit. Pre-session, plain INSPECT (an invariant legacy path: 'fresh INSPECT eases to 0.78') drew ambient unconditionally. Held PAINT at seeker altitude — the mode whose whole pitch is watching yourself melt into the living frame — also loses the layer.",
+    "fix": "Lower the gate below the seeker detent, e.g. `zoom>=zoomBase*0.7` (between FAR 0.55 and SEEKER 0.78) on both lines — or gate on the user intent (`vz<0.7`) — optionally fading globalAlpha over a small zoom band instead of a hard cut."
+   },
+   {
+    "title": "Held-PAINT zoom cluster drawn behind the lifted studio panel and untappable on portrait",
+    "file": "index.html",
+    "approxLine": 1965,
+    "severity": "major",
+    "claim": "The P9 ＋⌖－ cluster is drawn whenever heldCam() (drawRoundHUD lines 1965-1980) at mid-screen on the move-hand side, but drawStudio (called later, line 2022) paints the scrim plus the panel over it. On vpW<700 the panel is lifted 78px (studioRects line 1238) into exactly the cluster's band, and studioPointerDown runs before the roundHits check (lines 1056-1059) with a consume-anything-inside-panel fallthrough (line 1263), so the covered buttons are both invisible and unclickable.",
+    "scenario": "iPhone-class viewport 390x844, right-handed, held PAINT: panel spans x 19-371, y 428-750; cluster buttons sit at x 14-70, y 326-514 — ⌖ is half covered and － fully covered by the panel (drawn on top of them). Tapping where － should be lands on the SV color square (line 1251) and changes the paint color instead; the remaining ~5px sliver at x 14-19 still triggers the invisible zoom buttons. The comment's promise that 'buttons cover everything gestures do' fails on the primary touch platform: a phone player in a held shot has no working zoom/recenter buttons.",
+    "fix": "When studio.open, either skip the cluster (mirror the ability bar's `if(!studio.open)` gate) or reposition it above the panel: compute `const pTop=studio.open?studioRects().panel.y:vpH` and start `ry=Math.min(Math.round(vpH*0.5-96), pTop-3*66-10)`; alternatively draw the cluster after drawStudio so it layers above the scrim/panel."
+   },
+   {
+    "title": "Detent dots mirrored to the wrong side — half-clipped at x=0 for default handedness",
+    "file": "index.html",
+    "approxLine": 1975,
+    "severity": "minor",
+    "claim": "`const dx0=rc+(right?-14:56+8)` has its branches swapped. Default settings.handed='right' gives right=true, rc=14 (cluster on left edge), so dx0=0: the four altitude dots are centered on the screen's left edge and render half-clipped. For left-handed, rc=vpW-70 gives dx0=vpW-6, cramming the dots 6px from the right edge.",
+    "scenario": "Any right-handed (default) player enters INSPECT or a held shot: the FAR/SEEKER/NORMAL/CLOSE indicator column at x=0 shows only half-circles bleeding off-screen; the selected-detent emphasis (r=4 vs 2.5) is barely readable.",
+    "fix": "Swap the branches: `const dx0=rc+(right?56+8:-14)` so the dots sit on the inboard side of the cluster in both handedness modes."
+   },
+   {
+    "title": "Inspect chrome pops off in one frame on INSPECT exit instead of fading",
+    "file": "index.html",
+    "approxLine": 2008,
+    "severity": "minor",
+    "claim": "drawInspectOverlay is now called with `lite = ctrlMode!=='INSPECT'` (line 2008), and lite returns before the header panel/hint (line 2054). Exiting INSPECT flips ctrlMode to MOVE immediately while inspectZoomT still eases 1->0, so the SEEKER'S VIEW header panel and the bottom zoom-hint — which pre-session faded out with `ctx.globalAlpha=a` over the whole ease — now vanish in a single frame while the scan rings continue to fade underneath.",
+    "scenario": "Player taps 👁 to leave INSPECT: the top-center panel and hint text hard-pop off on frame 1 of the exit while the orange scan rings visibly fade for another ~0.4s — an abrupt mixed transition on a legacy path that previously faded as one unit.",
+    "fix": "Only lite-gate the held-paint case: `drawInspectOverlay(ctrlMode==='PAINT')` — MOVE fade-out then keeps the pre-session fading chrome, held PAINT stays clean."
+   },
+   {
+    "title": "Menu fade-slide translates visuals 14px away from live hit rects for 180ms",
+    "file": "index.html",
+    "approxLine": 2566,
+    "severity": "minor",
+    "claim": "drawMenu applies `ctx.translate(0,(1-easeOutCubic(ta))*14)` during the 180ms entry animation, but navBtn/navList (and level-card) hit rects are stored in untranslated coordinates, so for the animation window every visible control sits up to 14px below its hit rect.",
+    "scenario": "Player double-taps through MODE_SELECT into LEVEL_SELECT and taps a card within 180ms: the card grid's inter-card pad is exactly 14px, so a tap on the visible top edge of a row-2 card resolves to the bottom of the row-1 card's hit rect and selects the wrong level (or a lock-toast for the wrong map). Same offset applies to SUMMARY Retry taps immediately after round end.",
+    "fix": "Compensate in the same frame: while ta<1 hit-test with `sy - (1-easeOutCubic(ta))*14` in handleMenuTap, or push navList rects with the current offset added (store the frame's offset in a module var set by drawMenu)."
+   },
+   {
+    "title": "Gamepad right-stick camera pan is not gated in HUNT, unlike pointer pan",
+    "file": "index.html",
+    "approxLine": 1555,
+    "severity": "minor",
+    "claim": "updateCamera applies right-stick pan whenever `ctrlMode==='MOVE'||heldCam()` (line 1555) with no round.mode check, while the equivalent pointer pan is explicitly blocked in HUNT (line 1081 `else if(round.mode!=='HUNT')`). HUNT's drawRoundHUD early-return (line 1892) also means no recenter button or MODE pill exists there.",
+    "scenario": "Playing HUNT with a gamepad, the player tilts the right stick (or holds it while aiming a pulse): camPan drifts up to MOVE_PEEK_MAX (224 world units), dragging the camera off the hunter mid-chase, with no on-screen recenter affordance in HUNT; it only springs home once the stick fully recenters below the 0.15 deadzone.",
+    "fix": "Gate the stick pan the same way as pointer pan: `if(gpm>0.02 && round.mode!=='HUNT' && (ctrlMode==='MOVE'||heldCam()))`."
+   },
+   {
+    "title": "Title bottom button row clipped and overprinted by version line on short viewports",
+    "file": "index.html",
+    "approxLine": 2595,
+    "severity": "minor",
+    "claim": "drawTitle's compression factor `k=clamp(vpH/560,0.68,1)` floors at 0.68, which is not enough below ~330px height: the stacked rows starting at `by=Math.max(vpH*0.62, tagY+22k)` overflow the viewport, and the fixed `vpH-22` version line lands on top of the third row.",
+    "scenario": "Landscape phone 568x320: t1=32, t2=34.2, tagY~203, by~218; PLAY spans 218-255, row2 262-292, row3 299-328 — the How-to-Play/Sound row's last 8px are off the 320px viewport (its tappable area shrinks to ~21px) and the 'v0.2 Photo Loop' line at y=298 overprints its top edge.",
+    "fix": "Include the full stack in the budget: after computing by, if `by+64k+54k+42k > vpH-30` shrink k further (k *= (vpH-30-by)/(160k)) or drop the version line when vpH<360."
+   }
+  ]
+ },
+ {
+  "dimension": "test/harness contract",
+  "findings": [
+   {
+    "title": "lockandlook L2 stillness-law assertion is spawn-flaky: composeNudge fires when the random spawn is near the map edge",
+    "file": "test/lockandlook.js",
+    "approxLine": 107,
+    "severity": "critical",
+    "claim": "The L2 'stillness law: LOOK→PAINT moved nothing' assertion fails nondeterministically (reproduced 2 of 12 runs, exit 1) because the fixed down-left drag at lines 106-108 cannot guarantee the player frames clear of the studio panel: Practice rounds use a wallclock seed (index.html ~2290 'performance.now()*1000...'), so the hider spawn is random, and on a west-edge spawn the camera/pan clamp eats the horizontal drag (failing runs show px=-14 vs px=-330 on passing runs). The player's screen position then stays inside the panel band, so enterPaint-from-LOOK (index.html:1199) calls composeNudge() (index.html:1213-1218), which tweens camPan.y (~+108px observed: py -213→-105, cy 1371→1400) between F1 and F2, exceeding sameFrame's 1.5px tolerance.",
+    "scenario": "Run `cd test && npm run all` (or `npm run lockandlook`). Roughly 1 in 5 runs the wallclock seed picks the west-edge hider spawn on greenwood; output shows `FAIL L2 stillness law: LOOK→PAINT moved nothing — {\"F1\":{...\"px\":-14,\"py\":-213},\"F2\":{...\"py\":-105}}` and the suite exits 1, aborting the whole `all` chain before progression.js and maps.js ever run. Nothing in the engine is wrong — composeNudge is the designed 'keep your body visible above the panel' behavior the test comment itself acknowledges trying to dodge.",
+    "fix": "Make the pre-KeyE framing deterministic instead of hoping a fixed drag clears the panel: compute the drag from actual state (playerScreenY = (st().playerPos.y - st().cam.y) * st().zoom + VH()/2, then drag straight down by dy = playerScreenY - VH()*0.25 so the body lands in the upper quarter regardless of spawn), and add a guard assertion before key('KeyE') that the player's screen y is above the panel band (e.g. < VH()*0.5); if the guard fails, the run reports a precondition problem rather than a false stillness violation. Vertical-only drag also sidesteps the x-clamp that bit the failing runs."
+   },
+   {
+    "title": "maps.js hard-codes the manifest count (total===13) owned by a separate, actively-edited pipeline",
+    "file": "test/maps.js",
+    "approxLine": 29,
+    "severity": "minor",
+    "claim": "Line 29 asserts `total===13` ('12 maps + baked'), coupling the engine suite to the exact length of maps/levels.json — a file owned by the separate map pipeline whose fixer is actively editing it. loadLevels (index.html:451-464) is deliberately manifest-driven (any list length works; unlockLevel extends as 2+(i-6) and the seeded xp:1000000 ≈ level 114 covers dozens more entries), so the engine tolerates a 13th or 11th manifest entry but the test does not.",
+    "scenario": "The map-pipeline fixer removes one broken map from maps/levels.json (or ships a 13th). The engine boots every remaining level flawlessly, but `npm run maps` prints `FAIL manifest loaded (12 maps + baked = 13) — levels=12` (or 14) and exits 1, turning `npm run all` red with zero engine defect — and the per-level loop still iterates fine, proving the count assert adds only fragility.",
+    "fix": "Derive the expectation from the same source the engine reads: `const manifest=JSON.parse(fs.readFileSync(path.resolve(path.dirname(htmlPath),'maps/levels.json'),'utf8'));` then assert `total===manifest.length+1` (baked card always appended), keeping a sanity floor like `total>=7` for the always-free six + baked."
+   },
+   {
+    "title": "Session's +1-UFO and biome engine wiring has zero test coverage; maps.js's ufos>=1 passes even if it breaks",
+    "file": "test/maps.js",
+    "approxLine": 37,
+    "severity": "minor",
+    "claim": "maps.js boots every level in PRACTICE, where index.html:2324-2325 explicitly disables the shipped bigMap bonus (`const ufoN = diff.UFO_COUNT + (diff.practice||diff.heat?0:bigMap)`), and its only hunter assertion is `st.ufos>=1` — which diff.UFO_COUNT satisfies trivially. No suite asserts ufos===2 on a >=4800-cell Survive/Daily map, and none asserts MAP.biome is honored (index.html:2302 `biomeKey=(MAP.biome && BIOME[MAP.biome])?...`), so both pieces of this session's engine wiring could regress (e.g. the ternary inverted, or bigMap threshold typo'd to 48000) with every suite staying green.",
+    "scenario": "A future edit flips the condition to `diff.practice||diff.heat?bigMap:0` (practice gets the extra hunter, Survive loses it). `npm run all` passes untouched: maps.js still sees >=1 ufo per practice boot, progression.js's Survive run is on the first (small, <4800-cell) map so ufoN is unchanged there, and no assertion reads biomeKey — a real player on a big Survive map silently loses the designed patrol pressure.",
+    "fix": "Add two assertions to maps.js (or a small sibling): boot one >=4800-cell map in SURVIVE and assert `S().ufos===2`, and boot a small map in SURVIVE asserting `S().ufos===1`; optionally expose `biomeKey` in __aac (add-only) and assert it matches the map's declared biome for one manifest entry."
+   },
+   {
+    "title": "progression.js 'level derived (>=1)' is vacuous — xpLevel can never return less than 1",
+    "file": "test/progression.js",
+    "approxLine": 49,
+    "severity": "minor",
+    "claim": "The assertion `fin.progress.level>=1` cannot fail for any xp value: xpLevel (index.html:640, `let L=1; while(xp>=75*L*(L+1)) L++; return L;`) initializes L=1 and only increments, so it returns >=1 for 0, negative, or garbage xp. The test therefore verifies nothing about level derivation — the leveling curve, xpFloor/xpCeil, and checkLevelUnlocks could all be broken while this line stays green.",
+    "scenario": "Someone refactors xpLevel to `while(xp>=100*L*L) L++` (wrong curve) or awardXP stops calling checkLevelUnlocks. progression.js still prints `OK P12 level derived (≥1) — level=1` because the run earns ~70 xp (below any level-2 threshold) and the function floors at 1 by construction; the only leveling behavior shipped in P12 goes untested.",
+    "fix": "Assert the concrete value for this run — `fin.progress.level===1 && fin.progress.xp<150` — and add a threshold-crossing check: pre-seed 'aac.progress.v1' with xp just under the level-2 boundary (149, since level 2 starts at 75*1*2=150) so the ~70-xp round must produce `fin.progress.level===2`, proving awardXP → xpLevel → level-up actually fires."
+   }
+  ]
+ }
+]
