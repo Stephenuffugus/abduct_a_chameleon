@@ -455,7 +455,8 @@ async function loadLevels(){
     const res = await fetch('maps/levels.json');
     if(res.ok){
       const list = await res.json();
-      for(const lv of list) LEVELS.push({ file:lv.file, name:lv.name, display:lv.display||lv.name, data:null, loaded:false, thumb:null });
+      list.forEach((lv,i)=> LEVELS.push({ file:lv.file, name:lv.name, display:lv.display||lv.name, data:null, loaded:false, thumb:null,
+        unlockLevel: i>=6 ? 2+(i-6) : 0 }));   // P12: the expansion set unlocks along the XP arc (Lv 2..7); first six always free
     }
   }catch(_){ /* file:// or unhosted — baked only */ }
   // always add the baked prototype card at the end
@@ -579,7 +580,7 @@ let PAL=CB_PAL.off, glyphsOn=false;
 // ===== P7 cosmetics / progression =====
 const LS_PROGRESS='aac.progress.v1';
 let PROGRESS={ unlocks:['default','stand','wave','crouch'], equipped:{skin:'default'}, stats:{plays:0,catches:0,bestSurvive:0,hardWin:0,heatBest:0},
-  blendbook:{}, biomeMedals:{} };   // P8-6 camo mastery log
+  blendbook:{}, biomeMedals:{}, xp:0, challenges:{} };   // P8-6 camo mastery log · P12 XP + challenges
 // head-accent cosmetics (drawn on the humanoid head; fade with concealment so they never break camo)
 const SKINS=[
   { id:'default', name:'None', unlock:null, hint:'' },
@@ -593,6 +594,24 @@ const SKINS=[
       ctx.lineTo(hx+hR*0.55,-hR*0.95); ctx.lineTo(hx+hR*0.55,-hR*0.75); ctx.closePath(); ctx.fill(); } },
   { id:'halo', name:'Halo', unlock:'hunt5', hint:'Catch 5 chameleons in Hunt', draw:(hx,hR,a)=>{ ctx.globalAlpha=a*0.9; ctx.strokeStyle='#bfe0f2'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.ellipse(hx,-hR*1.35,hR*0.8,hR*0.32,0,0,TAU); ctx.stroke(); } },
+  // P12: level + challenge cosmetics
+  { id:'beret', name:'Beret', unlock:'lv3', hint:'Reach Level 3', draw:(hx,hR,a)=>{ ctx.globalAlpha=a; ctx.fillStyle='#b8452e';
+      ctx.beginPath(); ctx.ellipse(hx-hR*0.12,-hR*0.78,hR*0.72,hR*0.34,-0.18,0,TAU); ctx.fill();
+      ctx.fillStyle='#7d2c1c'; ctx.beginPath(); ctx.arc(hx-hR*0.1,-hR*1.08,hR*0.12,0,TAU); ctx.fill(); } },
+  { id:'sprout', name:'Sprout', unlock:'lv5', hint:'Reach Level 5', draw:(hx,hR,a)=>{ ctx.globalAlpha=a; ctx.strokeStyle='#5fae52'; ctx.lineWidth=1.6;
+      ctx.beginPath(); ctx.moveTo(hx,-hR*0.8); ctx.quadraticCurveTo(hx+hR*0.1,-hR*1.3,hx-hR*0.05,-hR*1.5); ctx.stroke();
+      ctx.fillStyle='#6fc75f'; ctx.beginPath(); ctx.ellipse(hx-hR*0.28,-hR*1.52,hR*0.3,hR*0.16,-0.6,0,TAU); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(hx+hR*0.22,-hR*1.58,hR*0.3,hR*0.16,0.6,0,TAU); ctx.fill(); } },
+  { id:'headset', name:'Headset', unlock:'lv8', hint:'Reach Level 8', draw:(hx,hR,a)=>{ ctx.globalAlpha=a; ctx.strokeStyle='#3fd0e0'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(hx,-hR*0.1,hR*0.95,-Math.PI*0.95,-Math.PI*0.05); ctx.stroke();
+      ctx.fillStyle='#274058'; ctx.beginPath(); ctx.arc(hx-hR*0.92,-hR*0.05,hR*0.24,0,TAU); ctx.arc(hx+hR*0.92,-hR*0.05,hR*0.24,0,TAU); ctx.fill(); } },
+  { id:'bolt', name:'Bolt', unlock:'ch_untouchable', hint:'Win Survive (Normal+) without being spotted', draw:(hx,hR,a)=>{ ctx.globalAlpha=a; ctx.fillStyle='#ffd94d';
+      ctx.beginPath(); ctx.moveTo(hx+hR*0.15,-hR*1.6); ctx.lineTo(hx-hR*0.25,-hR*0.95); ctx.lineTo(hx+hR*0.02,-hR*0.95);
+      ctx.lineTo(hx-hR*0.15,-hR*0.45); ctx.lineTo(hx+hR*0.35,-hR*1.12); ctx.lineTo(hx+hR*0.06,-hR*1.12); ctx.closePath(); ctx.fill(); } },
+  { id:'star', name:'Star', unlock:'ch_ghost_hunter', hint:'Catch 15 chameleons (total)', draw:(hx,hR,a)=>{ ctx.globalAlpha=a; ctx.fillStyle=COL.amber;
+      const sx=hx-hR*0.45, sy=-hR*1.35, R=hR*0.4; ctx.beginPath();
+      for(let i=0;i<10;i++){ const r=i%2?R*0.45:R, an=-Math.PI/2+i*Math.PI/5; ctx.lineTo(sx+Math.cos(an)*r, sy+Math.sin(an)*r); }
+      ctx.closePath(); ctx.fill(); } },
 ];
 // P8-6: one wearable gem per biome, earned by logging every terrain of that biome in the Blend Book
 const BIOME_LABEL={ greenwood:'Greenwood', dunes:'Dunes', tundra:'Tundra', downtown:'Downtown', xeno:'Xeno', bog:'Bog' };
@@ -614,15 +633,45 @@ function grantUnlock(id){ if(!hasUnlock(id)){ PROGRESS.unlocks.push(id); savePro
     const s=SKIN_BY[id]; showToast('★ Unlocked: '+(s?s.name+' skin':POSE_NAMES[id]||id)); if(typeof SFX!=='undefined')SFX.best(); return true; } return false; }
 function loadProgress(){ try{ const p=JSON.parse(localStorage.getItem(LS_PROGRESS)||'null'); if(p&&p.unlocks){ PROGRESS=Object.assign(PROGRESS,p); PROGRESS.unlocks=p.unlocks; } }catch(_){}
   if(!PROGRESS.equipped) PROGRESS.equipped={skin:'default'};
-  if(!PROGRESS.blendbook) PROGRESS.blendbook={}; if(!PROGRESS.biomeMedals) PROGRESS.biomeMedals={}; }   // P8-6 back-compat
+  if(!PROGRESS.blendbook) PROGRESS.blendbook={}; if(!PROGRESS.biomeMedals) PROGRESS.biomeMedals={};   // P8-6 back-compat
+  if(typeof PROGRESS.xp!=='number') PROGRESS.xp=0; if(!PROGRESS.challenges) PROGRESS.challenges={}; } // P12 back-compat
 function saveProgress(){ try{ localStorage.setItem(LS_PROGRESS, JSON.stringify(PROGRESS)); }catch(_){} }
+// ===== P12: XP + levels (triangular curve — reaching level L costs 75·(L−1)·L total XP) =====
+function xpLevel(xp){ let L=1; while(xp>=75*L*(L+1)) L++; return L; }
+function xpFloor(L){ return L<=1?0:75*(L-1)*L; }
+function xpCeil(L){ return 75*L*(L+1); }
+function awardXP(amount){ if(!amount) return; const before=xpLevel(PROGRESS.xp||0);
+  PROGRESS.xp=(PROGRESS.xp||0)+Math.round(amount);
+  const after=xpLevel(PROGRESS.xp);
+  if(after>before){ showToast('⬆ Level '+after+'!'); if(typeof SFX!=='undefined') SFX.best(); checkLevelUnlocks(after); }
+  saveProgress(); }
+function checkLevelUnlocks(L){ if(L>=3) grantUnlock('beret'); if(L>=5) grantUnlock('sprout'); if(L>=8) grantUnlock('headset'); }
+// ===== P12: challenges — one-shot feats checked at round end (each grants a skin or bonus XP) =====
+const CHALLENGES=[
+  { id:'ch_untouchable', name:'Untouchable', grant:'bolt',
+    test:(s,r)=> r.mode==='SURVIVE' && s.outcome==='WIN' && (r.diff.diffIndex||0)>=1 && s.spotted===0 },
+  { id:'ch_ghost_hunter', name:'Ghost Hunter', grant:'star',
+    test:()=> (PROGRESS.stats.catches||0)>=15 },
+  { id:'ch_quick_banker', name:'Quick Banker', xp:500,
+    test:(s,r)=> r.mode==='TA' && s.outcome==='WIN' && (TA_TIME-s.timeUsed)>=30 },
+  { id:'ch_marathon', name:'Marathon Ghost', xp:750,
+    test:(s,r)=> !!r.heat && s.survSec>=300 },
+  { id:'ch_full_book', name:'Field Guide', xp:1000,
+    test:()=> BLENDBOOK_KEYS.every(k=>PROGRESS.blendbook[k]&&PROGRESS.blendbook[k].logged) },
+];
+function checkChallenges(sum){ if(!sum || !round || round.diff.practice) return;
+  for(const c of CHALLENGES){ if(PROGRESS.challenges[c.id]) continue;
+    let done=false; try{ done=!!c.test(sum,round); }catch(_){}
+    if(done){ PROGRESS.challenges[c.id]=true; showToast('🏆 '+c.name+'!'); if(typeof SFX!=='undefined') SFX.best();
+      if(c.grant) grantUnlock(c.grant); if(c.xp) awardXP(c.xp); saveProgress(); } } }
 // evaluate unlocks after a round
 function checkUnlocks(){ const st=PROGRESS.stats;
   if(st.plays>=3) grantUnlock('antenna');
   if(st.bestSurvive>=60){ grantUnlock('shades'); grantUnlock('armsout'); }
   if(st.hardWin>=1){ grantUnlock('crown'); grantUnlock('cheer'); }
   if(st.catches>=5){ grantUnlock('halo'); grantUnlock('point'); }
-  if(st.bestSurvive>=100) grantUnlock('cheer'); }
+  if(st.bestSurvive>=100) grantUnlock('cheer');
+  checkLevelUnlocks(xpLevel(PROGRESS.xp||0)); }
 // P8-6 Blend Book: log a terrain the moment the SIM says you truly vanished on it (read-only on the sim).
 function updateBlendBook(dt){ const ref=player.ref; if(!ref) return; const key=ref.dominantKey;
   const bh=round._blendHold; if(!bh) return;
@@ -2335,7 +2384,8 @@ function endHunt(win){ if(round.finalized) return;
   if(round.mode==='HUNT'){ const key=round.entry.display+'|HUNT|'+round.diff.label; const bb=best[key]||{bestScore:0,bestGrade:'F',plays:0};
     round.summary.prevBest=bb.bestScore; round.summary.isBest=score>bb.bestScore; bb.plays++;
     if(score>bb.bestScore){bb.bestScore=score;bb.bestGrade=grade;} bb.updated=Date.now(); best[key]=bb; saveBest(); if(round.summary.isBest) SFX.best(); }
-  PROGRESS.stats.plays++; PROGRESS.stats.catches+=caught; PROGRESS.stats.heatBest=Math.max(PROGRESS.stats.heatBest||0,0); saveProgress(); checkUnlocks();
+  PROGRESS.stats.plays++; PROGRESS.stats.catches+=caught; saveProgress(); checkUnlocks();
+  round.summary.xp=Math.round(score/10)+(win?60:15); awardXP(round.summary.xp); checkChallenges(round.summary);   // P12
   appState='SUMMARY'; menuIndex=0;
 }
 function stepHunt(dt){
@@ -2393,6 +2443,7 @@ function endTimeAttack(win){ if(round.finalized) return;
   round.summary.prevBest=bb.bestScore; round.summary.isBest=score>bb.bestScore; bb.plays++;
   if(score>bb.bestScore){bb.bestScore=score;bb.bestGrade=grade;} bb.updated=Date.now(); best[key]=bb; saveBest();
   PROGRESS.stats.plays++; saveProgress(); checkUnlocks(); if(round.summary.isBest) SFX.best();
+  round.summary.xp=Math.round(score/10)+(win?60:15); awardXP(round.summary.xp); checkChallenges(round.summary);   // P12
   appState='SUMMARY'; menuIndex=0;
 }
 function stepSim(dt){
@@ -2466,7 +2517,10 @@ function finishRound(outcome){
   if(outcome==='WIN' && round.diff.label==='HARD' && !round.diff.practice) PROGRESS.stats.hardWin=(PROGRESS.stats.hardWin||0)+1;
   if(round.heat) PROGRESS.stats.heatBest=Math.max(PROGRESS.stats.heatBest||0, round.metrics.survivalMs/1000);
   saveProgress(); checkUnlocks();
-  round.summary=summary; appState='SUMMARY'; menuIndex=0;
+  if(!round.diff.practice){ summary.xp=Math.round(score/10)+(survived?60:15); }   // P12
+  round.summary=summary;
+  if(summary.xp){ awardXP(summary.xp); checkChallenges(summary); }
+  appState='SUMMARY'; menuIndex=0;
 }
 
 /* ============================ §8 MENUS ============================ */
@@ -2587,24 +2641,30 @@ function drawLevelSelect(){ const cx=vpW/2;
     if(ry-levelScroll<0) levelScroll=ry; else if(ry+chh-levelScroll>availH) levelScroll=ry+chh-availH; }
   const gy=top+Math.max(0,(availH-gridH)/2)-levelScroll;
   ctx.save(); ctx.beginPath(); ctx.rect(0,top-4,vpW,availH+8); ctx.clip();
+  const plv=xpLevel(PROGRESS.xp||0);
   for(let i=0;i<LEVELS.length;i++){ const e=LEVELS[i]; const col=i%cols, row=(i/cols)|0;
     const x=gx+col*(cw+pad), y=gy+row*(chh+pad);
     const idx=navList.length; const sel=idx===menuIndex;
+    const locked=(e.unlockLevel||0)>plv;                                     // P12 map-unlock arc
     if(y+chh>top-6 && y<top+availH+6){
       ctx.fillStyle=sel?'rgba(242,179,61,0.14)':'rgba(21,27,44,0.9)'; rr(x,y,cw,chh,10); ctx.fill();
       ctx.strokeStyle=sel?COL.amber:COL.line; ctx.lineWidth=sel?2.5:1.5; rr(x,y,cw,chh,10); ctx.stroke();
       const tw=cw-20, th=chh-46, tx=x+10, ty=y+10;
       const thumb=ensureThumb(e);
       ctx.save(); rr(tx,ty,tw,th,6); ctx.clip();
-      if(thumb){ ctx.imageSmoothingEnabled=false; ctx.drawImage(thumb, tx,ty,tw,th); ctx.imageSmoothingEnabled=true; }
+      if(thumb){ ctx.imageSmoothingEnabled=false; ctx.globalAlpha=locked?0.35:1; ctx.drawImage(thumb, tx,ty,tw,th); ctx.globalAlpha=1; ctx.imageSmoothingEnabled=true; }
       else { ctx.fillStyle='#0A0E19'; ctx.fillRect(tx,ty,tw,th); txt('loading…',tx+tw/2,ty+th/2,11,COL.muted,'center','500'); }
+      if(locked){ txt('🔒', tx+tw/2, ty+th/2, Math.min(22,th*0.6), COL.txt,'center','700'); }
       ctx.restore();
-      txt(e.display.split('—')[0].trim(), x+12, y+chh-20, 14, sel?COL.amber:COL.txt,'left','700');
-      const badge=levelBadge(e); if(badge) txt(badge, x+cw-12, y+chh-20, 10, COL.green,'right','600');
+      txt(e.display.split('—')[0].trim(), x+12, y+chh-20, 14, locked?COL.muted:(sel?COL.amber:COL.txt),'left','700');
+      if(locked) txt('Reach Lv '+e.unlockLevel, x+cw-12, y+chh-20, 10, COL.muted,'right','600');
+      else { const badge=levelBadge(e); if(badge) txt(badge, x+cw-12, y+chh-20, 10, COL.green,'right','600'); }
     }
     // hit rect clipped to the viewport band so an off-screen card can never shadow the Back button
     const vy0=Math.max(y,top-4), vy1=Math.min(y+chh,top+availH+4);
-    navList.push({ x, y:vy0, w:cw, h:Math.max(0,vy1-vy0), fn:()=>selectLevel(e) });
+    navList.push({ x, y:vy0, w:cw, h:Math.max(0,vy1-vy0),
+      fn: locked ? ()=>{ showToast('🔒 Reach Level '+e.unlockLevel+' to unlock '+e.display.split('—')[0].trim()); SFX.back(); }
+                 : ()=>selectLevel(e) });
   }
   ctx.restore();
   if(levelMaxScroll){ const sbH=availH*availH/gridH, sbY=top+(availH-sbH)*(levelScroll/levelMaxScroll);
@@ -2648,6 +2708,14 @@ function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); re
   }
   if(!round.diff.practice){ if(s.isBest){ txt('★ NEW BEST!', cx, sy+6, 16, COL.amber,'center','800'); }
     else if(s.prevBest){ txt('Best '+s.prevBest+'  ('+(s.score-s.prevBest>=0?'+':'')+(s.score-s.prevBest)+')', cx, sy+6, 12, COL.muted,'center','500'); } sy+=28; } else sy+=10;
+  // P12: XP earned + level progress bar
+  if(s.xp){ const L=xpLevel(PROGRESS.xp), lo=xpFloor(L), hi=xpCeil(L), frac=clamp01((PROGRESS.xp-lo)/(hi-lo));
+    const xw=Math.min(280,vpW-80), xx=cx-xw/2;
+    txt('+'+s.xp+' XP', cx, sy, 13, COL.cyan,'center','800'); sy+=16;
+    ctx.fillStyle='#0A0E19'; rr(xx,sy,xw,8,4); ctx.fill();
+    ctx.fillStyle=COL.cyan; rr(xx,sy,Math.max(6,xw*frac),8,4); ctx.fill();
+    txt('Lv '+L, xx-8, sy+4, 11, COL.txt,'right','700'); txt('Lv '+(L+1), xx+xw+8, sy+4, 11, COL.muted,'left','600');
+    sy+=20; }
   const by=Math.min(sy+10, vpH-64); const bw3=(bw-16)/3;
   const fixedMode = round.mode==='DAILY';   // DAILY has a fixed level+seed — no re-pick
   navBtn('Retry', bx, by, bw3, 46, ()=>startRound(round.entry, round.mode, round.diff), {size:14});
@@ -2758,14 +2826,29 @@ function drawWardrobe(){ const cx=vpW/2; navList=[];
     ctx.fillStyle='#0a0a12'; ctx.beginPath(); ctx.arc(R*0.35,-R*0.22,R*0.16,0,TAU); ctx.arc(R*0.35,R*0.22,R*0.16,0,TAU); ctx.fill();
     if(unlocked && s.draw){ s.draw(0,R,1); ctx.globalAlpha=1; } ctx.restore();
     if(unlocked) navList.push({x,y,w,h:w,fn:()=>{ PROGRESS.equipped.skin=s.id; saveProgress(); SFX.ui(); }}); };
+  // P12: level header (top-left, clear of the preview figure)
+  { const L=xpLevel(PROGRESS.xp||0), hi=xpCeil(L), lo=xpFloor(L), frac=clamp01(((PROGRESS.xp||0)-lo)/(hi-lo));
+    const xw=Math.min(150,vpW*0.3);
+    txt('LEVEL '+L, 14, 26, 12, COL.cyan,'left','800');
+    ctx.fillStyle='#0A0E19'; rr(14,36,xw,7,3); ctx.fill();
+    ctx.fillStyle=COL.cyan; rr(14,36,Math.max(5,xw*frac),7,3); ctx.fill();
+    txt((PROGRESS.xp||0)+' / '+hi+' XP', 14, 54, 9, COL.muted,'left','600');
+    const done=CHALLENGES.filter(c=>PROGRESS.challenges[c.id]).length;
+    txt('🏆 '+done+' / '+CHALLENGES.length+' challenges', vpW-14, 26, 10, done===CHALLENGES.length?COL.amber:COL.muted,'right','700'); }
   let y=90;
-  // --- head accents ---
+  // --- head accents (wrapping grid — the catalog grew past one row) ---
   const accents=SKINS.filter(s=>!s.medal);
   txt('HEAD ACCENTS', cx, y, 9, COL.amber,'center','700'); y+=12;
-  const cw=Math.min(52,(vpW-40)/accents.length), aw=accents.length*cw+(accents.length-1)*gap, axx=(vpW-aw)/2;
-  accents.forEach((s,i)=>{ const x=axx+i*(cw+gap); chip(s,x,y,cw);
-    txt(s.unlock===null||hasUnlock(s.id)?s.name:'🔒', x+cw/2, y+cw+8, 8, (PROGRESS.equipped.skin===s.id)?COL.amber:COL.muted,'center','600'); });
-  y+=cw+22;
+  const perRow=Math.min(accents.length, Math.max(5, Math.floor((vpW-40)/60)));
+  const cw=Math.min(52,(vpW-40)/perRow);
+  for(let r0=0; r0<accents.length; r0+=perRow){
+    const rowN=Math.min(perRow, accents.length-r0);
+    const aw=rowN*cw+(rowN-1)*gap, axx=(vpW-aw)/2;
+    for(let i=0;i<rowN;i++){ const s=accents[r0+i], x=axx+i*(cw+gap); chip(s,x,y,cw);
+      txt(s.unlock===null||hasUnlock(s.id)?s.name:'🔒', x+cw/2, y+cw+8, 8, (PROGRESS.equipped.skin===s.id)?COL.amber:COL.muted,'center','600'); }
+    y+=cw+18;
+  }
+  y+=4;
   // --- biome medals ---
   const medals=SKINS.filter(s=>s.medal);
   const loggedCount=BLENDBOOK_KEYS.filter(k=>PROGRESS.blendbook[k]&&PROGRESS.blendbook[k].logged).length;
@@ -2884,7 +2967,8 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   tones: player.ref&&player.ref.tones?player.ref.tones.map(t=>({key:t.key,w:+t.w.toFixed(2)})):null,
   snapCount: player.snapCount||0, ghostMs: Math.round(round?(round.metrics.ghostMs||0):0),
   particles: particles.length, dripEmitted: dripEmitted,
-  progress:{ blendbook:PROGRESS.blendbook||{}, biomeMedals:PROGRESS.biomeMedals||{}, unlocks:PROGRESS.unlocks },
+  progress:{ blendbook:PROGRESS.blendbook||{}, biomeMedals:PROGRESS.biomeMedals||{}, unlocks:PROGRESS.unlocks,
+             xp:PROGRESS.xp||0, level:xpLevel(PROGRESS.xp||0), challenges:PROGRESS.challenges||{} },
   // ---- mode-based controls ----
   mode:ctrlMode, cam:{x:Math.round(cam.x),y:Math.round(cam.y)}, camFollow:{x:Math.round(camFollow.x),y:Math.round(camFollow.y)},
   camPan:{x:Math.round(camPan.x),y:Math.round(camPan.y)}, zoom:+zoom.toFixed(3),

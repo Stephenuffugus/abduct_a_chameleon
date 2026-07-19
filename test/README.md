@@ -16,6 +16,7 @@ npm run math                  # camo colour-match math vs docs/BUILD_SPEC.md cal
 npm run twotone               # P8 Split Camo oracle: per-tone match == uniform, two-tone beats a seam
 npm run pass8                 # P8 "Living Camo": coach, touch-offset, split toggle, drips, blend-snap, Blend Book
 npm run lockandlook           # P9 "Photo Loop": stillness law, implicit camera-hold, wheel+pinch zoom, hop-back/pill exits
+npm run progression           # P12: XP awarded at round end, level derived, persisted; __aac add-only shape
 npm run shots                 # render PNG/JPEG screenshots of each screen to test/shots/
 ```
 

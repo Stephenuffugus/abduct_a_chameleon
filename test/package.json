@@ -10,7 +10,8 @@
     "pass8":     "node pass8.js ../index.html",
     "controls":  "node controls.js ../index.html",
     "lockandlook": "node lockandlook.js ../index.html",
+    "progression": "node progression.js ../index.html",
     "shots":     "node render.js ../index.html shots 640 400 1",
-    "all":       "node smoke.js ../index.html 220 && node survive.js && node abilities.js && node hunt.js && node timeattack.js && node mathcheck.mjs && node twotone.mjs && node pass8.js ../index.html && node controls.js ../index.html && node lockandlook.js ../index.html"
+    "all":       "node smoke.js ../index.html 220 && node survive.js && node abilities.js && node hunt.js && node timeattack.js && node mathcheck.mjs && node twotone.mjs && node pass8.js ../index.html && node controls.js ../index.html && node lockandlook.js ../index.html && node progression.js ../index.html"
   },
   "devDependencies": { "jsdom": "^24", "@napi-rs/canvas": "^0.1" } }
