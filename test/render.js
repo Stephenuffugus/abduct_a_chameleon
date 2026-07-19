@@ -76,6 +76,9 @@ function shot(name){ const cv=doc.getElementById('game'); if(cv&&cv.__napi){ con
 (async () => {
   await wait(160); pump(20);
   shot('01-title');
+  // Wardrobe (P8-6 Blend Book + biome medals) — TITLE ▸ Wardrobe, then back
+  key('ArrowDown'); pump(4); key('Enter'); pump(8); shot('10-wardrobe');
+  key('Escape'); pump(8);                            // back to TITLE
   key('Enter'); pump(8); shot('02-mode');            // MODE_SELECT
   key('Enter'); pump(8); shot('03-level-practice');  // LEVEL_SELECT (practice)
   // let thumbnails fetch + build
@@ -87,6 +90,8 @@ function shot(name){ const cv=doc.getElementById('game'); if(cv&&cv.__napi){ con
   down('KeyD'); pump(40); up('KeyD'); shot('06-moved');
   key('KeyE'); pump(12); shot('07-studio');          // paint studio open
   key('KeyQ'); pump(20); shot('08-matched');         // instant match
+  // P8-3 two-tone: toggle split via its studio rect, match, capture the 2-tone studio + body
+  { const sp = S().studio && S().studio.splitRect; if(sp){ tap(sp.x+sp.w/2, sp.y+sp.h/2, 5); pump(6); key('KeyQ'); pump(20); shot('08b-twotone'); } }
   key('KeyE'); pump(10);
   // survive mode gameplay + a difficulty screen
   key('Escape'); pump(6);                            // pause

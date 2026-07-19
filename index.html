@@ -51,6 +51,10 @@ const ICE_SETTLE_MULT = 1.5;
 const LAVA_MATCH_CAP = 0.35, LAVA_CONCEAL_CAP = 0.40, LAVA_DOT = 2;
 const CRYSTAL_CONCEAL_CAP = 0.92;
 const WELL_HIDDEN_C = 0.30, STREAK_C = 0.35;
+// P8 "Living Camo" — all additive, no-op on the default single-color path
+const SPLIT_MIN_W = 0.18;                 // P8-3: min 2nd-tone footprint weight for two-tone to engage
+const BLEND_SNAP_C = 0.85, GHOST_C = 0.90; // P8-5: melt-in payoff threshold + ghost tier
+const BLEND_LOG_MQ = 0.85, BLEND_LOG_HOLD = 1.0; // P8-6: Blend Book logging threshold + dwell time
 // color / paint
 const STUDIO_SLOWMO = 0.35;
 // bot ai — shared thresholds
@@ -206,16 +210,42 @@ function terrainReference(px,py){
   const R=PLAYER_RADIUS, x0=px-R, x1=px+R, y0=py-R, y1=py+R, footArea=(2*R)*(2*R);
   const c0=Math.floor(x0/TILE), c1=Math.floor(x1/TILE), r0=Math.floor(y0/TILE), r1=Math.floor(y1/TILE);
   let aR=0,aG=0,aB=0,aW=0, domKey='void', domW=-1;
+  const kw=Object.create(null);                        // P8-3: per-KEY summed footprint weight (add-only)
   for(let row=r0; row<=r1; row++) for(let col=c0; col<=c1; col++){
     const key=terrainAt(col,row);
     const ox=Math.max(0, Math.min(x1,(col+1)*TILE)-Math.max(x0,col*TILE));
     const oy=Math.max(0, Math.min(y1,(row+1)*TILE)-Math.max(y0,row*TILE));
     const w=(ox*oy)/footArea; const c=TERRAIN_RGB[key]||TERRAIN_RGB.void;
     aR+=w*c.r; aG+=w*c.g; aB+=w*c.b; aW+=w;
-    if(w>domW){ domW=w; domKey=key; }
+    kw[key]=(kw[key]||0)+w;
+    if(w>domW){ domW=w; domKey=key; }                  // per-tile-max (unchanged)
   }
   if(aW<=0){ const c=TERRAIN_RGB.void; return { rgb:{r:c.r,g:c.g,b:c.b}, dominantKey:'void', dominantW:1 }; }
-  return { rgb:{ r:aR/aW, g:aG/aW, b:aB/aW }, dominantKey:domKey, dominantW:domW };
+  // distinct terrain tones under the footprint (pure TERRAIN_RGB), heaviest first — for the
+  // per-tone match model + optional Split Camo. On uniform ground this is a single tone (w:1).
+  const tones=[]; for(const k in kw) tones.push({ key:k, rgb:TERRAIN_RGB[k]||TERRAIN_RGB.void, w:kw[k]/aW });
+  tones.sort((x,y)=>y.w-x.w);
+  return { rgb:{ r:aR/aW, g:aG/aW, b:aB/aW }, dominantKey:domKey, dominantW:domW, tones };
+}
+// Effective match of ONE body color across the footprint: weighted match vs EACH tone.
+// On uniform ground (a single tone) this === matchQuality(paint, that terrain) → calibration unchanged.
+// On a real terrain seam a single color can't match both halves, so it caps below 1 (the seam tax).
+function matchQualityRef(paint, ref){
+  const tones=ref.tones;
+  if(tones && tones.length>1){ let s=0,w=0; for(const t of tones){ s+=t.w*matchQuality(paint,t.rgb); w+=t.w; } if(w>0) return s/w; }
+  return matchQuality(paint, ref.rgb);
+}
+// Effective match for a body (single color pA, or two colors pA/pB when split is on). Shared by the
+// sim (computeCamoFor) and the studio coach so they can never disagree. Returns {mq, mq2}.
+function effMatch(pA, pB, split, ref){
+  const cap=terrainMatchCap(ref.dominantKey);
+  const single=Math.min(matchQualityRef(pA, ref), cap);
+  if(split && pB && ref.tones && ref.tones.length>1 && ref.tones[1].w>SPLIT_MIN_W){
+    let s=0,w=0; for(const t of ref.tones){ s+=t.w*Math.max(matchQuality(pA,t.rgb), matchQuality(pB,t.rgb)); w+=t.w; }
+    const two=Math.min(w>0?s/w:0, cap);
+    return { mq:Math.max(single, two), mq2:two };     // two colors never do worse than one
+  }
+  return { mq:single, mq2:0 };
 }
 
 // line-of-sight: sample the segment; blocked if any covered (LoS) cell between endpoints
@@ -475,6 +505,40 @@ function spottedReason(mq,m,S,domKey){
   if(top===unsettled && unsettled>0.25) return "You hadn't settled yet";
   return "A scanner passed directly overhead";
 }
+// How well the tone you're editing matches the ground it should cover: single mode → vs the footprint
+// mean; split mode → vs the footprint tone that tone is closest to (so the coach guides THIS tone, not
+// the average). On uniform ground (one tone) refRgb === ref.rgb, so it's identical to the single path.
+function activeAimMatch(){
+  const ref=player.ref; if(!ref) return { mq:0, refRgb:{r:0,g:0,b:0} };
+  let refRgb=ref.rgb;
+  if(player.splitPaint && ref.tones && ref.tones.length>1){
+    const at=activeTarget(); let bd=Infinity;
+    for(const t of ref.tones){ const d=redmean(at,t.rgb); if(d<bd){ bd=d; refRgb=t.rgb; } }
+  }
+  return { mq:matchQuality(activeTarget(), refRgb), refRgb };
+}
+// P8-1: Live Match Coach — PURE READ-ONLY. Teaches the redmean metric by naming the single biggest way
+// to nudge the AIM color toward the ground it should match. Never writes any sim/paint state.
+function paintCoach(){
+  const mqNow=player.mq;
+  const mqAim=player.ref?effMatch(player.targetPaint, player.targetPaint2, player.splitPaint, player.ref).mq:0;
+  const word=mqNow>=0.85?'HIDDEN':(mqNow>=0.5?'BLENDING':'EXPOSED');
+  let hint='matched', glyph='✓';
+  if(player.ref){
+    const aim=activeAimMatch();                              // hint targets the ACTIVE tone's terrain tone
+    if(aim.mq<0.85){
+      const A=rgb2hsv(activeTarget()), R=rgb2hsv(aim.refRgb);
+      const dv=R.v-A.v, ds=R.s-A.s;
+      const warm=h=>Math.cos(h*Math.PI/180);
+      const dw=(warm(R.h)-warm(A.h))*0.5*Math.min(A.s,R.s);   // hue only matters when both are colorful
+      const cand=[ {m:Math.abs(dv), w:dv>0?'lighter':'darker',    g:dv>0?'▲':'▼'},
+                   {m:Math.abs(ds), w:ds>0?'more vivid':'more muted', g:ds>0?'◆':'◇'},
+                   {m:Math.abs(dw), w:dw>0?'warmer':'cooler',      g:dw>0?'☼':'❄'} ];
+      cand.sort((a,b)=>b.m-a.m); hint=cand[0].w; glyph=cand[0].g;
+    }
+  }
+  return { mqNow, mqAim, word, hint, glyph };
+}
 
 /* ============================ GAME STATE ============================ */
 let cv, ctx, dpr=1, vpW=0, vpH=0;
@@ -498,7 +562,8 @@ const CB_PAL={
 let PAL=CB_PAL.off, glyphsOn=false;
 // ===== P7 cosmetics / progression =====
 const LS_PROGRESS='aac.progress.v1';
-let PROGRESS={ unlocks:['default','stand','wave','crouch'], equipped:{skin:'default'}, stats:{plays:0,catches:0,bestSurvive:0,hardWin:0,heatBest:0} };
+let PROGRESS={ unlocks:['default','stand','wave','crouch'], equipped:{skin:'default'}, stats:{plays:0,catches:0,bestSurvive:0,hardWin:0,heatBest:0},
+  blendbook:{}, biomeMedals:{} };   // P8-6 camo mastery log
 // head-accent cosmetics (drawn on the humanoid head; fade with concealment so they never break camo)
 const SKINS=[
   { id:'default', name:'None', unlock:null, hint:'' },
@@ -513,13 +578,27 @@ const SKINS=[
   { id:'halo', name:'Halo', unlock:'hunt5', hint:'Catch 5 chameleons in Hunt', draw:(hx,hR,a)=>{ ctx.globalAlpha=a*0.9; ctx.strokeStyle='#bfe0f2'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.ellipse(hx,-hR*1.35,hR*0.8,hR*0.32,0,0,TAU); ctx.stroke(); } },
 ];
+// P8-6: one wearable gem per biome, earned by logging every terrain of that biome in the Blend Book
+const BIOME_LABEL={ greenwood:'Greenwood', dunes:'Dunes', tundra:'Tundra', downtown:'Downtown', xeno:'Xeno', bog:'Bog' };
+for(const b of ['greenwood','dunes','tundra','downtown','xeno','bog']){
+  SKINS.push({ id:'medal_'+b, name:BIOME_LABEL[b]+' Medal', unlock:'medal_'+b, hint:'Blend every '+BIOME_LABEL[b]+' terrain', medal:true,
+    draw:(hx,hR,a)=>{ ctx.globalAlpha=a; const mo=((BIOME[b]&&BIOME[b].moon)||'rgba(207,214,230,1)').replace(/,[\d.]+\)$/,',0.95)');
+      const mx=hx-hR*0.5, my=-hR*1.4, R=hR*0.42;
+      ctx.fillStyle=mo; ctx.beginPath(); ctx.arc(mx,my,R,0,TAU); ctx.fill();
+      ctx.strokeStyle='#0a0e19'; ctx.lineWidth=1.2; ctx.stroke();
+      ctx.fillStyle='#0a0e19'; ctx.beginPath(); ctx.arc(mx,my,R*0.42,0,TAU); ctx.fill(); ctx.globalAlpha=1; } });
+}
+// invert BIOME_TERRAINS (terrain→biome) into biome→[terrains] for medal completion checks
+const BIOME_MEMBERS={}; for(const t in BIOME_TERRAINS){ const b=BIOME_TERRAINS[t]; (BIOME_MEMBERS[b]=BIOME_MEMBERS[b]||[]).push(t); }
+const BLENDBOOK_KEYS=PRESET_ORDER.filter(k=>k!=='void'&&k!=='lava');   // 14 loggable terrains (void/lava are unhidable)
 const SKIN_BY={}; for(const s of SKINS) SKIN_BY[s.id]=s;
 const UNLOCKABLE_POSES=['armsout','cheer','point'];   // stand/wave/crouch are default
 function hasUnlock(id){ return PROGRESS.unlocks.indexOf(id)>=0; }
 function grantUnlock(id){ if(!hasUnlock(id)){ PROGRESS.unlocks.push(id); saveProgress();
     const s=SKIN_BY[id]; showToast('★ Unlocked: '+(s?s.name+' skin':POSE_NAMES[id]||id)); if(typeof SFX!=='undefined')SFX.best(); return true; } return false; }
 function loadProgress(){ try{ const p=JSON.parse(localStorage.getItem(LS_PROGRESS)||'null'); if(p&&p.unlocks){ PROGRESS=Object.assign(PROGRESS,p); PROGRESS.unlocks=p.unlocks; } }catch(_){}
-  if(!PROGRESS.equipped) PROGRESS.equipped={skin:'default'}; }
+  if(!PROGRESS.equipped) PROGRESS.equipped={skin:'default'};
+  if(!PROGRESS.blendbook) PROGRESS.blendbook={}; if(!PROGRESS.biomeMedals) PROGRESS.biomeMedals={}; }   // P8-6 back-compat
 function saveProgress(){ try{ localStorage.setItem(LS_PROGRESS, JSON.stringify(PROGRESS)); }catch(_){} }
 // evaluate unlocks after a round
 function checkUnlocks(){ const st=PROGRESS.stats;
@@ -528,6 +607,23 @@ function checkUnlocks(){ const st=PROGRESS.stats;
   if(st.hardWin>=1){ grantUnlock('crown'); grantUnlock('cheer'); }
   if(st.catches>=5){ grantUnlock('halo'); grantUnlock('point'); }
   if(st.bestSurvive>=100) grantUnlock('cheer'); }
+// P8-6 Blend Book: log a terrain the moment the SIM says you truly vanished on it (read-only on the sim).
+function updateBlendBook(dt){ const ref=player.ref; if(!ref) return; const key=ref.dominantKey;
+  const bh=round._blendHold; if(!bh) return;
+  const ok = BLENDBOOK_KEYS.indexOf(key)>=0 && player.mq>=BLEND_LOG_MQ && player.C<WELL_HIDDEN_C && player.S>=0.9 && (round.maxSusp||0)<ENTER_CHASE;
+  if(ok){ if(bh.key===key) bh.t+=dt; else { bh.key=key; bh.t=0; }
+    if(bh.t>=BLEND_LOG_HOLD){ logBlend(key, player.mq); bh.t=0; } }
+  else { bh.key=null; bh.t=0; } }
+function logBlend(key,mq){ if(!PROGRESS.blendbook) PROGRESS.blendbook={};
+  let e=PROGRESS.blendbook[key]; const first=!e||!e.logged; const improved=!e||mq>(e.bestMq||0);
+  if(!e){ e=PROGRESS.blendbook[key]={ logged:false, bestMq:0, biome:round.biome }; }
+  e.bestMq=Math.max(e.bestMq||0, mq); e.logged=true;
+  if(first){ showToast('★ '+(TERRAIN_NAME[key]||key)+' blended!'); if(typeof SFX!=='undefined') SFX.best(); }
+  if(first||improved) saveProgress();
+  if(first) checkBiomeMedals(); }
+function checkBiomeMedals(){ if(!PROGRESS.biomeMedals) PROGRESS.biomeMedals={};
+  for(const b in BIOME_MEMBERS){ if(PROGRESS.biomeMedals[b]) continue;
+    if(BIOME_MEMBERS[b].every(t=>PROGRESS.blendbook[t]&&PROGRESS.blendbook[t].logged)){ PROGRESS.biomeMedals[b]=true; grantUnlock('medal_'+b); } } }
 function applySettingsRuntime(){
   FX_MOTION = {full:1, reduced:0.45, minimal:0}[settings.motion] ?? 1;
   shakeScale = {full:1, low:0.5, off:0}[settings.screenShake] ?? 1;
@@ -547,6 +643,11 @@ let toast=null;            // {text, until}
 const player = { x:0,y:0, vx:0,vy:0, facing:0, prevx:0,prevy:0,
   currentPaint:{r:78,g:140,b:74}, targetPaint:{r:78,g:140,b:74},
   paintHSV:rgb2hsv({r:78,g:140,b:74}), shifting:false,
+  // P8-3 split camo (off by default → single-color path is byte-identical)
+  splitPaint:false, currentPaint2:{r:78,g:140,b:74}, targetPaint2:{r:78,g:140,b:74},
+  paintHSV2:rgb2hsv({r:78,g:140,b:74}), mq2:0,
+  // P8-5 melt-in payoff + ghost tracking
+  prevConceal:0, snapT:0, snapCount:0, snapArmed:true,
   S:1, mq:0, m:0, conceal:0, C:0, ref:null,
   mqDisplay:0, detDisplay:0, abductT:0, alive:true,
   // render-anim (Pass 2, scalar only — never feeds the sim)
@@ -593,6 +694,7 @@ const SFX={
   back(){ tone(360,0.07,'sine',0.16,240); },
   spotted(){ tone(300,0.14,'sawtooth',0.22,180); },
   relief(){ tone(392,0.12,'sine',0.16); setTimeout(()=>tone(523,0.14,'sine',0.16),90); },
+  blend(){ tone(523,0.08,'sine',0.14); setTimeout(()=>tone(659,0.10,'sine',0.14),70); },
   count(){ tone(440,0.09,'triangle',0.2); },
   go(){ tone(660,0.16,'triangle',0.26); },
   abduct(){ tone(180,0.9,'sine',0.34,1500); noise(0.9,0.12,2400); },
@@ -796,7 +898,7 @@ function onPointerDown(e){
   // ROUND — paused overlay is a menu (uses navList)
   if(roundState==='PAUSED'){ handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
   if(studio.open){
-    const consumed = studioPointerDown(id,sx,sy);
+    const consumed = studioPointerDown(id,sx,sy,e.pointerType);
     if(consumed) return;
     const p=studioRects().panel;
     if(!inRect(sx,sy,p)){
@@ -830,7 +932,7 @@ function onPointerMove(e){
     if(mag<dead){ joystick.dx=0; joystick.dy=0; }
     else { const cl=Math.min(mag,R); const nx=dx/mag, ny=dy/mag; const f=(cl-dead)/(R-dead);
       joystick.dx=nx*f; joystick.dy=ny*f; }
-  } else if(p.role==='sv'){ studioSV(sx,sy); }
+  } else if(p.role==='sv'){ studioSV(sx,sy,p.ptype); }
   else if(p.role==='hue'){ studioHue(sx,sy); }
   else if(p.role==='reticle'){ studioReticleDrag(sx,sy); }
   else if(p.role==='sscroll'){ settingsScroll=clamp(p.scroll0-(sy-p.sy0),0,settingsMaxScroll); }
@@ -881,23 +983,40 @@ function movePlayer(dt){
 }
 
 /* ============================ §3 PAINT STUDIO ============================ */
-const studio = { open:false, state:'CLOSED', reticleOn:false,
+const studio = { open:false, state:'CLOSED', reticleOn:false, coachHidden:false, activeTone:0,
   reticle:{ x:0, y:0, active:false, hideAt:0 } };
-function setPaintFromHSV(){ const c=hsv2rgb(player.paintHSV.h,player.paintHSV.s,player.paintHSV.v);
-  player.targetPaint={ r:c.r, g:c.g, b:c.b }; }
+// P8-2/P8-3: which HSV the picker edits — tone 0 (default) or tone 1 (only when split camo is on)
+function activeHSV(){ return (player.splitPaint && studio.activeTone===1 && player.paintHSV2) ? player.paintHSV2 : player.paintHSV; }
+function setPaintFromHSV(){ const H=activeHSV(); const c=hsv2rgb(H.h,H.s,H.v);
+  if(player.splitPaint && studio.activeTone===1) player.targetPaint2={ r:c.r, g:c.g, b:c.b };
+  else player.targetPaint={ r:c.r, g:c.g, b:c.b }; }
 function setPaintColor(rgb){ player.targetPaint={ r:rgb.r, g:rgb.g, b:rgb.b };
   player.paintHSV=rgb2hsv(rgb); }
+// P8-3: set a specific tone (0=primary, 1=secondary) — target + HSV together
+function setToneColor(tone,rgb){ if(tone===1){ player.targetPaint2={r:rgb.r,g:rgb.g,b:rgb.b}; player.paintHSV2=rgb2hsv(rgb); }
+  else { player.targetPaint={r:rgb.r,g:rgb.g,b:rgb.b}; player.paintHSV=rgb2hsv(rgb); } }
+// set whichever tone the picker is currently editing (presets route here so they honor the active tone)
+function setActivePaintColor(rgb){ if(player.splitPaint && studio.activeTone===1) setToneColor(1,rgb); else setPaintColor(rgb); }
+function activeTarget(){ return (player.splitPaint && studio.activeTone===1)?player.targetPaint2:player.targetPaint; }
+function toggleSplit(){ player.splitPaint=!player.splitPaint; SFX.ui();
+  if(player.splitPaint){ player.targetPaint2={...player.targetPaint}; player.currentPaint2={...player.currentPaint};
+    player.paintHSV2=rgb2hsv(player.targetPaint); studio.activeTone=1; showToast('2-tone camo ON — paint the 2nd tone'); }
+  else { studio.activeTone=0; showToast('2-tone camo off'); }
+  syncHexField(); }
 function openStudio(){ studio.open=true; studio.state='OPEN_IDLE'; SFX.ui(); syncHexField(); }
-function closeStudio(){ studio.open=false; studio.state='CLOSED'; studio.reticle.active=false;
+function closeStudio(){ studio.open=false; studio.state='CLOSED'; studio.reticle.active=false; studio.coachHidden=false;
   if(document.activeElement===hexInput) hexInput.blur(); SFX.back(); }
 function samplePos(){ return studio.reticleOn && studio.reticle.active ? {x:studio.reticle.x,y:studio.reticle.y} : {x:player.x,y:player.y}; }
-function doMatch(){ const sp=samplePos(); const ref=terrainReference(sp.x,sp.y);
-  setPaintColor({ r:Math.round(ref.rgb.r), g:Math.round(ref.rgb.g), b:Math.round(ref.rgb.b) });
+// P8-3: when split camo is on, MATCH samples the two dominant footprint tones into the two paints;
+// otherwise it samples the single footprint mean exactly as before.
+function applyMatch(sx,sy){ const ref=terrainReference(sx,sy); const rnd=c=>({r:Math.round(c.r),g:Math.round(c.g),b:Math.round(c.b)});
+  if(player.splitPaint && ref.tones && ref.tones.length>1 && ref.tones[1].w>SPLIT_MIN_W){
+    setToneColor(0, rnd(ref.tones[0].rgb)); setToneColor(1, rnd(ref.tones[1].rgb)); }
+  else if(player.splitPaint){ setToneColor(0, rnd(ref.rgb)); setToneColor(1, rnd(ref.rgb)); }   // uniform ground → both tones = mean
+  else setPaintColor(rnd(ref.rgb));
   syncHexField(); SFX.match(player.mq); spawnRepaintPuff(); addTrauma(TRAUMA.repaint); punchZoom(0.03,90,260); vibe(12); }
-function instantMatch(){ // works from any state (Q / RT / long-press) without opening
-  const ref=terrainReference(player.x,player.y);
-  setPaintColor({ r:Math.round(ref.rgb.r), g:Math.round(ref.rgb.g), b:Math.round(ref.rgb.b) });
-  syncHexField(); SFX.match(player.mq); spawnRepaintPuff(); addTrauma(TRAUMA.repaint); punchZoom(0.03,90,260); vibe(12); }
+function doMatch(){ const sp=samplePos(); applyMatch(sp.x,sp.y); }
+function instantMatch(){ applyMatch(player.x,player.y); }   // Q / RT / long-press, works without opening
 
 // panel geometry (logical 360x330). returns screen-space CSS-px rects.
 function studioRects(){
@@ -906,32 +1025,38 @@ function studioRects(){
   const px=(vpW-pw)/2; const py=vpH-ph-16;
   const R=(lx,ly,lw,lh)=>({ x:px+lx*scale, y:py+ly*scale, w:lw*scale, h:lh*scale });
   return { scale, panel:{x:px,y:py,w:pw,h:ph},
-    sv:R(14,44,200,200), hue:R(224,44,26,200), match:R(262,44,84,40),
+    sv:R(14,44,200,200), hue:R(222,44,30,200), match:R(262,44,84,40),
     swatch:R(262,92,84,44), matchPct:R(262,144,84,24), reticle:R(262,178,84,26),
+    coach:R(262,206,84,24), split:R(262,232,84,22),
     hex:R(14,258,116,26), rgb:R(140,258,110,26),
     presets:R(14,290,334,34), title:R(14,14,300,20), close:R(326,10,24,24) };
 }
 function studioLocal(sx,sy){ const r=studioRects(); return { x:(sx-r.panel.x)/r.scale, y:(sy-r.panel.y)/r.scale }; }
-function studioPointerDown(id,sx,sy){
+function studioPointerDown(id,sx,sy,ptype){
   const r=studioRects();
   if(inRect(sx,sy,r.close)){ closeStudio(); return true; }
-  if(inRect(sx,sy,r.sv)){ pointers.set(id,{sx,sy,role:'sv'}); studioSV(sx,sy); return true; }
+  if(inRect(sx,sy,r.sv)){ pointers.set(id,{sx,sy,role:'sv',ptype}); studioSV(sx,sy,ptype); return true; }
   if(inRect(sx,sy,r.hue)){ pointers.set(id,{sx,sy,role:'hue'}); studioHue(sx,sy); return true; }
   if(inRect(sx,sy,r.match)){ doMatch(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
+  if(inRect(sx,sy,r.split)){ toggleSplit(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
+  if(player.splitPaint && inRect(sx,sy,r.swatch)){        // pick which tone the picker edits (left=1st, right=2nd)
+    studio.activeTone = (sx < r.swatch.x + r.swatch.w/2) ? 0 : 1; SFX.ui(); syncHexField(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
   if(inRect(sx,sy,r.reticle)){ toggleReticle(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
   if(inRect(sx,sy,r.hex)){ hexInput.focus(); hexInput.select&&hexInput.select(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
   // presets 8x2
   const pr=r.presets, cols=8, sw=pr.w/cols, sh=pr.h/2;
   for(let i=0;i<16;i++){ const cx=pr.x+(i%cols)*sw, cy=pr.y+((i/cols)|0)*sh;
-    if(sx>=cx&&sx<=cx+sw&&sy>=cy&&sy<=cy+sh){ setPaintColor(Object.assign({},TERRAIN_RGB[PRESET_ORDER[i]])); syncHexField(); SFX.ui(); spawnRepaintPuff(); pointers.set(id,{sx,sy,role:'ui'}); return true; } }
+    if(sx>=cx&&sx<=cx+sw&&sy>=cy&&sy<=cy+sh){ setActivePaintColor(Object.assign({},TERRAIN_RGB[PRESET_ORDER[i]])); syncHexField(); SFX.ui(); spawnRepaintPuff(); pointers.set(id,{sx,sy,role:'ui'}); return true; } }
   if(inRect(sx,sy,r.panel)){ pointers.set(id,{sx,sy,role:'ui'}); return true; } // consume within panel
   return false;
 }
-function studioSV(sx,sy){ const r=studioRects().sv;
-  player.paintHSV.s=clamp01((sx-r.x)/r.w); player.paintHSV.v=clamp01(1-(sy-r.y)/r.h);
+function studioSV(sx,sy,ptype){ const rc=studioRects(), r=rc.sv;
+  const oy=(ptype==='touch')?18*rc.scale:0;          // P8-2: lift the picked point above the fingertip
+  const H=activeHSV();
+  H.s=clamp01((sx-r.x)/r.w); H.v=clamp01(1-((sy-oy)-r.y)/r.h);
   setPaintFromHSV(); syncHexField(); }
 function studioHue(sx,sy){ const r=studioRects().hue;
-  player.paintHSV.h=clamp01((sy-r.y)/r.h)*360; setPaintFromHSV(); syncHexField(); }
+  activeHSV().h=clamp01((sy-r.y)/r.h)*360; setPaintFromHSV(); syncHexField(); }
 function toggleReticle(){ studio.reticleOn=!studio.reticleOn; SFX.ui();
   if(studio.reticleOn){ studio.reticle.x=player.x; studio.reticle.y=player.y; studio.reticle.active=true; studio.reticle.hideAt=nowMs()+3000; }
   else studio.reticle.active=false; }
@@ -941,18 +1066,18 @@ function studioReticleDrag(sx,sy){ const w=screenToWorld(sx,sy);
   else { studio.reticle.x=w.x; studio.reticle.y=w.y; }
   studio.reticle.active=true; studio.reticle.hideAt=nowMs()+3000; }
 function studioKey(code){
-  const H=player.paintHSV;
+  const H=activeHSV();
   if(code==='BracketLeft') H.h=(H.h+355)%360; else if(code==='BracketRight') H.h=(H.h+5)%360;
   else if(code==='Comma') H.v=clamp01(H.v-0.04); else if(code==='Period') H.v=clamp01(H.v+0.04);
   else if(code==='Minus') H.s=clamp01(H.s-0.04); else if(code==='Equal') H.s=clamp01(H.s+0.04);
   else if(code==='KeyM') doMatch();
-  else if(/^Digit[1-8]$/.test(code)){ const i=+code.slice(5)-1; setPaintColor(Object.assign({},TERRAIN_RGB[PRESET_ORDER[i]])); syncHexField(); SFX.ui(); return; }
+  else if(/^Digit[1-8]$/.test(code)){ const i=+code.slice(5)-1; setActivePaintColor(Object.assign({},TERRAIN_RGB[PRESET_ORDER[i]])); syncHexField(); SFX.ui(); return; }
   else return;
   setPaintFromHSV(); syncHexField();
 }
 // hex field wiring
-function syncHexField(){ if(document.activeElement!==hexInput) hexInput.value=rgb2hex(player.targetPaint).toUpperCase(); }
-hexInput.addEventListener('input', ()=>{ const c=hex2rgb(hexInput.value); if(c) setPaintColor(c); });
+function syncHexField(){ if(document.activeElement!==hexInput) hexInput.value=rgb2hex(activeTarget()).toUpperCase(); }
+hexInput.addEventListener('input', ()=>{ const c=hex2rgb(hexInput.value); if(c){ if(player.splitPaint&&studio.activeTone===1) setToneColor(1,c); else setPaintColor(c); } });
 hexInput.addEventListener('keydown', e=>{ if(e.code==='Enter'){ hexInput.blur(); } e.stopPropagation(); });
 hexInput.addEventListener('blur', ()=> syncHexField());
 
@@ -1147,11 +1272,15 @@ function drawStreaks(){ if(!FX.streaks.length) return; applyScreenTransform();
   ctx.globalAlpha=1; }
 
 const particles=[]; let PCAP=140;
+let dripEmitted=0, dripT=0;   // P8-4: wet-paint drip emitter (counter is monotonic for tests)
 function addParticle(p){ if(particles.length<PCAP) particles.push(p); }
 function spawnRepaintPuff(){ const css=rgb2hex(player.targetPaint); player.repaintT=0.4;
   for(let i=0;i<12;i++){ const a=Math.random()*TAU, s=24+Math.random()*46;
     addParticle({ x:player.x, y:player.y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:0, maxLife:0.5, color:css, r:2.5+Math.random()*3, type:'puff' }); }
-  addParticle({ x:player.x, y:player.y, vx:0, vy:0, life:0, maxLife:0.22, color:'#fff', r:PLAYER_DRAW_R, type:'ring' }); }
+  addParticle({ x:player.x, y:player.y, vx:0, vy:0, life:0, maxLife:0.22, color:'#fff', r:PLAYER_DRAW_R, type:'ring' });
+  // P8-4: a spray-can fan of droplets in the NEW color, kicked opposite facing
+  if(FX_MOTION>0){ for(let i=0;i<6;i++){ const a=player.facing+Math.PI+(Math.random()-0.5)*1.2, s=60+Math.random()*80;
+    addParticle({ x:player.x, y:player.y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:0, maxLife:0.35, color:css, r:1.6+Math.random()*1.8, type:'spray' }); } } }
 function spawnShards(x,y,color,n){ for(let i=0;i<(n||8);i++){ const a=Math.random()*TAU, s=60+Math.random()*90;
   addParticle({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:0, maxLife:0.4, color:color||COL.danger, r:2+Math.random()*2, type:'shard' }); } }
 let ripT=0;
@@ -1165,9 +1294,29 @@ function maybeFootstep(dt){ const sp=Math.hypot(player.vx,player.vy); ripT-=dt;
       addParticle({ x:bx, y:by, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:0, maxLife:0.4, color:dc, r:2+Math.random()*2, type:'puff' }); }
     footstepTick(player.ref?player.ref.dominantKey:'grass');
   } }
+// P8-4: while pigment is crawling (shifting), dribble wet-paint drops in the CURRENT color
+function maybePaintDrip(dt){ if(FX_MOTION<=0) return; dripT-=dt;
+  if(player.shifting && dripT<=0){ dripT=0.12; const css=rgb2hex(player.currentPaint);
+    addParticle({ x:player.x+(Math.random()-0.5)*PLAYER_DRAW_R, y:player.y+(Math.random()-0.5)*PLAYER_DRAW_R,
+      vx:(Math.random()-0.5)*10, vy:16+Math.random()*18, g:120, life:0, maxLife:0.5, color:css, r:1.8+Math.random()*1.3, type:'drip' });
+    dripEmitted++; } }
 function updateParticles(dt){ for(let i=particles.length-1;i>=0;i--){ const p=particles[i]; p.life+=dt;
-    if(p.type==='puff'||p.type==='shard'){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.88; p.vy*=0.88; }
+    if(p.type==='puff'||p.type==='shard'||p.type==='spray'){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.88; p.vy*=0.88; }
+    else if(p.type==='drip'){ p.vy+=(p.g||120)*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; }
     if(p.life>=p.maxLife) particles.splice(i,1); } }
+// P8-5: the melt-in payoff — an imploding ring the instant you cross into hidden while still
+function spawnBlendSnap(){ if(FX_MOTION<=0) return;
+  addParticle({ x:player.x, y:player.y, vx:0, vy:0, life:0, maxLife:0.42, color:PAL.hidden||COL.green, r:PLAYER_DRAW_R*2.4, type:'implode' }); }
+function updateBlendSnap(dt){
+  const c=player.conceal, pc=player.prevConceal;                 // snapCount is logic-only (motion-independent, for tests)
+  // gate on spawnGrace so a spawn that starts already-hidden primes prevConceal instead of false-firing
+  if(round.spawnGrace<=0 && player.snapArmed && pc<BLEND_SNAP_C && c>=BLEND_SNAP_C && player.m<0.15){
+    player.snapArmed=false; player.snapCount++; player.snapT=0.35;
+    spawnBlendSnap(); vibe(8); addTrauma(TRAUMA.repaint*0.5); if(typeof SFX!=='undefined') SFX.blend(); }
+  if(c<0.6) player.snapArmed=true;                                // hysteresis re-arm
+  player.prevConceal=c;
+  if(player.snapT>0) player.snapT=Math.max(0,player.snapT-dt);
+}
 
 /* ============================ CAMERA (lookahead + trauma shake + zoom punch) ============================ */
 function computeZoom(){ zoomBase=clamp(Math.min(vpW,vpH)/(TARGET_VISIBLE_TILES*TILE),ZOOM_MIN,ZOOM_MAX); zoom=zoomBase; }
@@ -1219,7 +1368,13 @@ function drawRound(alpha){
     else if(p.type==='ring'){ const k=p.life/p.maxLife; ctx.globalAlpha=1-k; ctx.strokeStyle=p.color; ctx.lineWidth=2;
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r*(1+k),0,Math.PI*2); ctx.stroke(); }
     else if(p.type==='shard'){ const k=1-p.life/p.maxLife; ctx.globalAlpha=k; ctx.strokeStyle=p.color; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*0.05,p.y-p.vy*0.05); ctx.stroke(); } }
+      ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*0.05,p.y-p.vy*0.05); ctx.stroke(); }
+    else if(p.type==='spray'){ const k=1-p.life/p.maxLife; ctx.globalAlpha=k*0.9; ctx.fillStyle=p.color;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r*k+0.5,0,Math.PI*2); ctx.fill(); }
+    else if(p.type==='drip'){ const k=1-p.life/p.maxLife; ctx.globalAlpha=k*0.85; ctx.fillStyle=p.color;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill(); }
+    else if(p.type==='implode'){ const k=p.life/p.maxLife; ctx.globalAlpha=(1-k)*0.7; ctx.strokeStyle=p.color; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r*(1-k)+2,0,Math.PI*2); ctx.stroke(); } }
   ctx.globalAlpha=1;
   if(round.mode==='HUNT'){ drawHunt(); }
   else {
@@ -1329,6 +1484,13 @@ function drawHumanoid(x,y,f,css,conceal,o){ o=o||{};
   // head (forward, overlapping shoulders)
   const hx=0.36*R+ (alien?0.08*R:0);
   ctx.beginPath(); ctx.arc(hx,0,headR,0,TAU); ctx.fill();
+  // P8-3 split camo: overpaint the lower half in the 2nd tone (one clip; only when css2 supplied)
+  if(o.css2){ ctx.save(); ctx.beginPath(); ctx.rect(-R*2,0,R*4,R*2); ctx.clip(); ctx.fillStyle=o.css2;
+    ctx.beginPath(); ctx.ellipse(-0.05*R,0,bodyRx,bodyRy,0,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(hx,0,headR,0,TAU); ctx.fill();
+    // seam line so the two tones read as deliberate
+    ctx.globalAlpha=bodyA*0.5; ctx.strokeStyle='rgba(10,12,22,0.5)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(-bodyRx,0); ctx.lineTo(hx+headR,0); ctx.stroke(); ctx.globalAlpha=bodyA;
+    ctx.restore(); }
   // dissolve edge-dither (terrain-colored specks, fade INTO ground) — max ~10 arcs; use THIS actor's ground ref
   const dref=o.ref||player.ref;
   if(dissolve>0.02 && dref){ const rc=dref.rgb; ctx.fillStyle='rgb('+(rc.r|0)+','+(rc.g|0)+','+(rc.b|0)+')';
@@ -1353,8 +1515,10 @@ function drawHumanoid(x,y,f,css,conceal,o){ o=o||{};
 }
 function drawChameleon(){
   const p=player; const sp=Math.hypot(p.vx,p.vy);
+  const snapPop=p.snapT>0?0.12*Math.sin((1-p.snapT/0.35)*Math.PI):0;   // P8-5 melt-in settle pop
   drawHumanoid(p.x,p.y,p.facing,rgb2hex(p.currentPaint),p.conceal,
-    { pose:p.pose, moving:sp>8, walkPhase:p.walkPhase, squash:p.squash, breathP:p.breathP, blinkE:p.blinkE, anim:p.animT, skin:PROGRESS.equipped.skin });
+    { pose:p.pose, moving:sp>8, walkPhase:p.walkPhase, squash:p.squash+snapPop, breathP:p.breathP, blinkE:p.blinkE, anim:p.animT, skin:PROGRESS.equipped.skin,
+      css2: p.splitPaint?rgb2hex(p.currentPaint2):null });
   // repaint shimmer ring
   if(p.repaintT>0){ const k=1-p.repaintT/0.4; ctx.globalAlpha=(1-k)*0.6; ctx.strokeStyle=rgb2hex(p.currentPaint); ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(p.x,p.y,PLAYER_DRAW_R*(1+k*1.5),0,TAU); ctx.stroke(); ctx.globalAlpha=1; }
@@ -1505,9 +1669,12 @@ function drawRoundHUD(){
   ctx.fillStyle=fillC; ctx.fillRect(mx,my, mw*(mq/100), mh);
   if(mq<50){ ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.lineWidth=3; for(let i=-mh;i<mw;i+=8){ ctx.beginPath(); ctx.moveTo(mx+i,my+mh); ctx.lineTo(mx+i+mh,my); ctx.stroke(); } }
   ctx.restore();
-  const word = mq>=85?'HIDDEN':(mq>=50?'BLENDING':'EXPOSED');
+  const word = player.conceal>=GHOST_C?'GHOST':(mq>=85?'HIDDEN':(mq>=50?'BLENDING':'EXPOSED'));
   txt(Math.round(mq)+'%', mx+mw/2, my+mh/2-1, 17, '#fff', 'center', '700');
-  txt(word, mx+mw/2, my+mh+8, 9, COL.muted, 'center', '700');
+  // advisory nudge tick beside the word while exposed (P8-1) — only if there's a real ground ref
+  if(mq<85 && player.ref && !studio.open){ const co=paintCoach();
+    txt(word+'  ·  '+co.glyph+' '+co.hint, mx+mw/2, my+mh+8, 9, COL.muted, 'center', '700'); }
+  else txt(word, mx+mw/2, my+mh+8, 9, word==='GHOST'?PAL.hidden:COL.muted, 'center', '700');
   // ---- Detection meter (below) ----
   const dy=my+mh+20, dh=8;
   ctx.fillStyle='#0A0E19'; rr(mx,dy,mw,dh,4); ctx.fill();
@@ -1642,39 +1809,74 @@ function drawStudio(){
   // close button
   ctx.strokeStyle=COL.muted; ctx.lineWidth=1.5; rr(r.close.x,r.close.y,r.close.w,r.close.h,6); ctx.stroke();
   txt('✕', r.close.x+r.close.w/2, r.close.y+r.close.h/2, 13, COL.muted, 'center','700');
-  // SV square
-  const sv=r.sv; const hueRGB=hsv2rgb(player.paintHSV.h,1,1);
+  // SV square (reflects the tone currently being edited — tone 0 by default)
+  const eH=activeHSV();
+  const sv=r.sv; const hueRGB=hsv2rgb(eH.h,1,1);
   ctx.fillStyle=rgb2hex(hueRGB); ctx.fillRect(sv.x,sv.y,sv.w,sv.h);
   let g=ctx.createLinearGradient(sv.x,0,sv.x+sv.w,0); g.addColorStop(0,'#fff'); g.addColorStop(1,'rgba(255,255,255,0)');
   ctx.fillStyle=g; ctx.fillRect(sv.x,sv.y,sv.w,sv.h);
   g=ctx.createLinearGradient(0,sv.y,0,sv.y+sv.h); g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'#000');
   ctx.fillStyle=g; ctx.fillRect(sv.x,sv.y,sv.w,sv.h);
   ctx.strokeStyle=COL.line; ctx.lineWidth=1; ctx.strokeRect(sv.x,sv.y,sv.w,sv.h);
-  const cx=sv.x+player.paintHSV.s*sv.w, cy=sv.y+(1-player.paintHSV.v)*sv.h;
+  const cx=sv.x+eH.s*sv.w, cy=sv.y+(1-eH.v)*sv.h;
   ctx.strokeStyle='#000'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(cx,cy,7,0,Math.PI*2); ctx.stroke();
   ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(cx,cy,7,0,Math.PI*2); ctx.stroke();
+  // P8-2 loupe: while a touch drag picks color, float a swatch+match% bubble above the cursor
+  let svTouch=false; for(const pp of pointers.values()){ if(pp.role==='sv'&&pp.ptype==='touch'){ svTouch=true; break; } }
+  if(svTouch && FX_MOTION>0){ const lx=clamp(cx, sv.x+22, sv.x+sv.w-22), ly=sv.y+26;
+    ctx.fillStyle=rgb2hex(hsv2rgb(eH.h,eH.s,eH.v)); ctx.beginPath(); ctx.arc(lx,ly,15,0,TAU); ctx.fill();
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(lx,ly,15,0,TAU); ctx.stroke();
+    txt(Math.round(activeAimMatch().mq*100)+'%', lx, ly, 10, eH.v>0.55?'#111':'#fff','center','800'); }   // match of the color being picked
   // hue strip
   const hu=r.hue; const hg=ctx.createLinearGradient(0,hu.y,0,hu.y+hu.h);
   for(let i=0;i<=6;i++){ const c=hsv2rgb(i*60,1,1); hg.addColorStop(i/6,rgb2hex(c)); }
   ctx.fillStyle=hg; ctx.fillRect(hu.x,hu.y,hu.w,hu.h); ctx.strokeStyle=COL.line; ctx.strokeRect(hu.x,hu.y,hu.w,hu.h);
-  const hy=hu.y+(player.paintHSV.h/360)*hu.h; ctx.strokeStyle='#fff'; ctx.lineWidth=2;
+  const hy=hu.y+(eH.h/360)*hu.h; ctx.strokeStyle='#fff'; ctx.lineWidth=2;
   ctx.strokeRect(hu.x-2,hy-2,hu.w+4,4);
   // MATCH button
   uiStudioBtn('MATCH', r.match, COL.cyan, ()=>{});
-  // split swatch YOU / GROUND
+  // swatch: default YOU|GROUND; when split camo is on it becomes the two tone chips (active one ringed)
   const sw=r.swatch; const ref=player.ref?player.ref.rgb:{r:0,g:0,b:0};
-  ctx.fillStyle=rgb2hex(player.currentPaint); ctx.fillRect(sw.x,sw.y,sw.w/2,sw.h);
-  ctx.fillStyle=rgb2hex(ref); ctx.fillRect(sw.x+sw.w/2,sw.y,sw.w/2,sw.h);
-  ctx.strokeStyle=COL.line; ctx.strokeRect(sw.x,sw.y,sw.w,sw.h);
-  txt('YOU', sw.x+sw.w*0.25, sw.y+sw.h-6, 8, '#000', 'center','700');
-  txt('GROUND', sw.x+sw.w*0.75, sw.y+sw.h-6, 8, '#000', 'center','700');
-  // match %
-  txt('match '+Math.round(player.mq*100)+'%', r.matchPct.x+r.matchPct.w/2, r.matchPct.y+12, 16, COL.txt,'center','700');
+  if(player.splitPaint){
+    ctx.fillStyle=rgb2hex(player.currentPaint); ctx.fillRect(sw.x,sw.y,sw.w/2,sw.h);
+    ctx.fillStyle=rgb2hex(player.currentPaint2); ctx.fillRect(sw.x+sw.w/2,sw.y,sw.w/2,sw.h);
+    ctx.strokeStyle=COL.line; ctx.strokeRect(sw.x,sw.y,sw.w,sw.h);
+    const ax=studio.activeTone===0?sw.x:sw.x+sw.w/2;      // ring the tone being edited
+    ctx.strokeStyle=COL.amber; ctx.lineWidth=2.5; ctx.strokeRect(ax+1,sw.y+1,sw.w/2-2,sw.h-2); ctx.lineWidth=1;
+    txt('TONE 1', sw.x+sw.w*0.25, sw.y+sw.h-6, 7.5, '#000', 'center','700');
+    txt('TONE 2', sw.x+sw.w*0.75, sw.y+sw.h-6, 7.5, '#000', 'center','700');
+  } else {
+    ctx.fillStyle=rgb2hex(player.currentPaint); ctx.fillRect(sw.x,sw.y,sw.w/2,sw.h);
+    ctx.fillStyle=rgb2hex(ref); ctx.fillRect(sw.x+sw.w/2,sw.y,sw.w/2,sw.h);
+    ctx.strokeStyle=COL.line; ctx.strokeRect(sw.x,sw.y,sw.w,sw.h);
+    txt('YOU', sw.x+sw.w*0.25, sw.y+sw.h-6, 8, '#000', 'center','700');
+    txt('GROUND', sw.x+sw.w*0.75, sw.y+sw.h-6, 8, '#000', 'center','700');
+  }
+  // match readout: NOW (crawled body) vs AIM (target color) — teaches that pigment crawls (P8-1)
+  const coach=paintCoach();
+  const nowPct=Math.round(coach.mqNow*100), aimPct=Math.round(coach.mqAim*100);
+  const nowC=coach.mqNow>=0.85?PAL.hidden:(coach.mqNow>=0.5?PAL.blend:PAL.exposed);
+  txt('NOW', r.matchPct.x, r.matchPct.y+7, 8, COL.muted,'left','700');
+  txt(nowPct+'%', r.matchPct.x+r.matchPct.w, r.matchPct.y+6, 14, nowC,'right','800');
+  txt('AIM', r.matchPct.x, r.matchPct.y+19, 8, COL.muted,'left','700');
+  txt(aimPct+'%', r.matchPct.x+r.matchPct.w, r.matchPct.y+18, 11, COL.txt,'right','700');
   // reticle toggle
   uiStudioBtn(studio.reticleOn?'◎ RETICLE':'◎ reticle', r.reticle, studio.reticleOn?COL.amber:COL.muted, ()=>{});
-  // hex field
+  // coach hint pill — names the single biggest nudge toward the ground color (colorblind-safe: glyph + word)
+  const cr=r.coach, matched=coach.mqNow>=0.85;
+  ctx.fillStyle=matched?'rgba(58,192,160,0.16)':'rgba(10,14,25,0.85)'; rr(cr.x,cr.y,cr.w,cr.h,7); ctx.fill();
+  ctx.strokeStyle=matched?PAL.hidden:COL.line; ctx.lineWidth=1; rr(cr.x,cr.y,cr.w,cr.h,7); ctx.stroke();
+  txt((matched?'✓ matched':coach.glyph+' '+coach.hint), cr.x+cr.w/2, cr.y+cr.h/2, 10.5, matched?PAL.hidden:COL.cyan,'center','700');
+  if(matched){ if(!studio.coachHidden){ studio.coachHidden=true; if(typeof SFX!=='undefined') SFX.confirm(); } }
+  else if(coach.mqNow<0.8) studio.coachHidden=false;
+  // 2-tone camo toggle (P8-3) — beats a two-terrain seam a single flat color caps out on
+  const sp2=r.split, on2=player.splitPaint;
+  ctx.fillStyle=on2?'rgba(242,179,61,0.18)':'rgba(10,14,25,0.85)'; rr(sp2.x,sp2.y,sp2.w,sp2.h,7); ctx.fill();
+  ctx.strokeStyle=on2?COL.amber:COL.line; ctx.lineWidth=1; rr(sp2.x,sp2.y,sp2.w,sp2.h,7); ctx.stroke();
+  txt((on2?'◧ 2-TONE ON':'▢ 2-tone'), sp2.x+sp2.w/2, sp2.y+sp2.h/2, 10, on2?COL.amber:COL.muted,'center','700');
+  // hex field (reflects the tone being edited)
   ctx.fillStyle='#0A0E19'; rr(r.hex.x,r.hex.y,r.hex.w,r.hex.h,6); ctx.fill(); ctx.strokeStyle=COL.line; rr(r.hex.x,r.hex.y,r.hex.w,r.hex.h,6); ctx.stroke();
-  txt(rgb2hex(player.targetPaint).toUpperCase(), r.hex.x+8, r.hex.y+r.hex.h/2, 13, COL.txt,'left','600');
+  txt(rgb2hex(activeTarget()).toUpperCase(), r.hex.x+8, r.hex.y+r.hex.h/2, 13, COL.txt,'left','600');
   txt('HEX', r.hex.x+2, r.hex.y-6, 8, COL.muted,'left','700');
   // rgb readout
   const c=player.currentPaint; txt('R'+Math.round(c.r)+' G'+Math.round(c.g)+' B'+Math.round(c.b), r.rgb.x, r.rgb.y+r.rgb.h/2, 12, COL.muted,'left','500');
@@ -1689,10 +1891,13 @@ function uiStudioBtn(label,r,color,fn){ ctx.fillStyle='rgba(10,14,25,0.9)'; rr(r
   txt(label, r.x+r.w/2, r.y+r.h/2, r.h>34?14:11, color, 'center','700'); }
 
 /* ============================ §2.7 CAMO STEP ============================ */
-function updatePaint(dt){ let maxd=0;
-  for(const ch of ['r','g','b']){ const step=PAINT_SHIFT_SPEED*dt;
+function updatePaint(dt){ let maxd=0; const step=PAINT_SHIFT_SPEED*dt;
+  for(const ch of ['r','g','b']){
     const diff=player.targetPaint[ch]-player.currentPaint[ch]; player.currentPaint[ch]+=clamp(diff,-step,step);
     maxd=Math.max(maxd, Math.abs(player.targetPaint[ch]-player.currentPaint[ch])); }
+  if(player.splitPaint){ for(const ch of ['r','g','b']){
+    const diff=player.targetPaint2[ch]-player.currentPaint2[ch]; player.currentPaint2[ch]+=clamp(diff,-step,step);
+    maxd=Math.max(maxd, Math.abs(player.targetPaint2[ch]-player.currentPaint2[ch])); } }
   player.shifting = maxd>SHIFT_DELTA_EPS;
 }
 // actor-generalized camo (player is actor #0; bot hiders in HUNT reuse this exactly)
@@ -1705,15 +1910,17 @@ function updateStillnessFor(a, dt, speed, onIce, inWater){
 }
 function computeCamoFor(a, dt, speed){
   const ref=terrainReference(a.x,a.y); a.ref=ref;
-  let mq=Math.min(matchQuality(a.currentPaint, ref.rgb), terrainMatchCap(ref.dominantKey));
+  // per-tone weighted match (== matchQuality on uniform ground); Split Camo lets 2 colors cover a seam
+  const em=effMatch(a.currentPaint, a.currentPaint2, a.splitPaint, ref);
+  const mqEff=em.mq; a.mq2=em.mq2;
   const onIce=ref.dominantKey==='ice', inWater=ref.dominantKey==='water';
   const m=updateStillnessFor(a, dt, speed, onIce, inWater);
   const cb=coverBonus(a.x,a.y);
   if(a.freeze) a.freezeCap=Math.min(FREEZE_CAP_MAX, (a.freezeCap||MAX_CONCEAL_OPEN)+dt/0.6); else a.freezeCap=MAX_CONCEAL_OPEN;
-  const conceal=concealment(mq, a.S, cb, terrainConcealCap(ref.dominantKey), a.freezeCap);
+  const conceal=concealment(mqEff, a.S, cb, terrainConcealCap(ref.dominantKey), a.freezeCap);
   let C=conspicuity(conceal,m,a.shifting);
   if(a.dashFlare>0){ C=clamp01(C+DASH_FLARE*(a.dashFlare/DASH_FLARE_TIME)); a.dashFlare=Math.max(0,a.dashFlare-dt); }
-  a.mq=mq; a.m=m; a.conceal=conceal; a.C=C;
+  a.mq=mqEff; a.m=m; a.conceal=conceal; a.C=C;
 }
 function computeCamo(dt, speed){ updatePaint(dt); computeCamoFor(player, dt, speed); }
 // paint crawl for any actor
@@ -1750,6 +1957,9 @@ function startRound(entry, mode, diff, fixedSeed){
     spottedReason:'', reasonUntil:0, spottedFlash:0, summaryT:0, seed, summary:null,
     decoys:[], inks:[], beacons:[], taBanked:0, heat:!!diff.heat, heatT:0, heatUfoT:0 };
   player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.cd={dash:0,decoy:0,ink:0};
+  player.splitPaint=false; studio.activeTone=0; player.mq2=0;
+  player.currentPaint2={...player.currentPaint}; player.targetPaint2={...player.targetPaint}; player.paintHSV2=rgb2hsv(player.currentPaint);
+  player.prevConceal=0; player.snapT=0; player.snapArmed=true;   // snapCount persists across a session (monotonic)
   rng=mulberry32(seed>>>0);
   setActiveMap(entry.data); buildOpenness();
   biomeKey=biomeOf(MAP.name); biome=BIOME[biomeKey]||BIOME.greenwood; round.biome=biomeKey;
@@ -1758,7 +1968,8 @@ function startRound(entry, mode, diff, fixedSeed){
   const hs=hiders.length?hiders[(rng()*hiders.length)|0]:{x:(mapCols/2)|0,y:(mapRows/2)|0};
   player.x=(hs.x+0.5)*TILE; player.y=(hs.y+0.5)*TILE; player.vx=0; player.vy=0; player.S=1; player.facing=0;
   player.alive=true; player.abductT=0; player.mqDisplay=0; player.detDisplay=0;
-  round.metrics={ survivalMs:0, blendAccum:0, lowDetectMs:0, streakBestMs:0, streakCur:0, spottedCount:0, nearMisses:0, timeMovingMs:0, timeStillMs:0 };
+  round.metrics={ survivalMs:0, blendAccum:0, lowDetectMs:0, streakBestMs:0, streakCur:0, spottedCount:0, nearMisses:0, timeMovingMs:0, timeStillMs:0, ghostMs:0 };
+  round._blendHold={ key:null, t:0 };   // P8-6 Blend Book dwell timer
   cam.x=player.x; cam.y=player.y; acc=0;
   if(mode==='HUNT'){
     // you ARE the alien: fly a UFO from a seeker spawn; bot chameleons hide
@@ -1909,7 +2120,8 @@ function stepSim(dt){
   gatherInput(); movePlayer(dt);
   const sp=Math.hypot(player.x-player.prevx, player.y-player.prevy)/Math.max(dt,1e-6);
   if(sp>0.5) player.facing=Math.atan2(player.y-player.prevy, player.x-player.prevx);
-  computeCamo(dt, sp); maybeFootstep(dt);
+  computeCamo(dt, sp); maybeFootstep(dt); maybePaintDrip(dt);
+  updateBlendSnap(dt);                              // P8-5 melt-in payoff
   if(round.spawnGrace>0) round.spawnGrace-=dt;
   // abilities: tick cooldowns + decoy/ink lifetimes
   for(const k in player.cd) if(player.cd[k]>0) player.cd[k]=Math.max(0,player.cd[k]-dt);
@@ -1918,8 +2130,10 @@ function stepSim(dt){
   updateBots(dt);
   const ms=dt*1000, M=round.metrics; M.survivalMs+=ms; M.blendAccum+=player.mq*dt;
   if(player.C<WELL_HIDDEN_C) M.lowDetectMs+=ms;
+  if(player.conceal>=GHOST_C) M.ghostMs+=ms;                     // P8-5 time spent as a ghost
   if(player.C<STREAK_C && (round.maxSusp||0)<ENTER_CHASE){ M.streakCur+=ms; M.streakBestMs=Math.max(M.streakBestMs,M.streakCur); } else M.streakCur=0;
   if(sp>10) M.timeMovingMs+=ms; else M.timeStillMs+=ms;
+  updateBlendBook(dt);                                          // P8-6 log terrain mastery
   if(!round.diff.practice && isFinite(round.timeLeft) && round.mode!=='TA'){ round.timeLeft-=dt; if(round.timeLeft<=0){ round.timeLeft=0; endRound(true); } }
   if(round.mode==='TA') stepTABeacons(dt);
   // HEAT: escalate over time (mutates the per-round diff clone, never the shared const)
@@ -1951,7 +2165,7 @@ function finishRound(outcome){
   const perf=0.6*survRatio+0.4*quality;
   const grade=perf>=GRADE.S?'S':perf>=GRADE.A?'A':perf>=GRADE.B?'B':perf>=GRADE.C?'C':perf>=GRADE.D?'D':'F';
   const summary={ outcome, score, grade, survSec, avgBlendPct:Math.round(avgBlend*100),
-    streak:M.streakBestMs/1000, near:M.nearMisses, spotted:M.spottedCount, isBest:false, prevBest:0, t0:nowMs() };
+    streak:M.streakBestMs/1000, near:M.nearMisses, spotted:M.spottedCount, ghostSec:M.ghostMs/1000, isBest:false, prevBest:0, t0:nowMs() };
   if(!round.diff.practice){ const key=round.entry.display+'|'+round.mode+'|'+round.diff.label;
     const b=best[key]||{bestScore:0,bestSurvivalMs:0,bestGrade:'F',plays:0};
     summary.prevBest=b.bestScore; summary.isBest=score>b.bestScore; b.plays++;
@@ -2106,6 +2320,7 @@ function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); re
   else {
   stat('Survived', s.survSec.toFixed(1)+'s');
   stat('Avg blend', s.avgBlendPct+'%');
+  stat('Time as ghost', (s.ghostSec||0).toFixed(1)+'s');
   stat('Longest hidden streak', s.streak.toFixed(1)+'s');
   stat('Near misses', String(s.near));
   stat('Times spotted', String(s.spotted));
@@ -2187,37 +2402,51 @@ function resetSettings(){ const keep={ lastMode:settings.lastMode, lastLevel:set
 function handleSettingsTap(sx,sy){ for(const h of settingsHits){ if(inRect(sx,sy,h)){ h.fn(sx,sy); return true; } } return false; }
 
 function drawWardrobe(){ const cx=vpW/2; navList=[];
-  txt('WARDROBE', cx, 38, 24, COL.txt,'center','800');
-  // hero preview with equipped skin
-  drawHumanoid(cx, vpH*0.24, 0, '#EDEFF4', 0, { pose:player.pose, r:32, skin:PROGRESS.equipped.skin, breathP:hueAnim*2, blinkE:0 });
-  // skin grid
-  const cols=Math.min(SKINS.length, vpW>560?5:3), cw=Math.min(88,(vpW-48)/cols), gap=12;
-  const gw=cols*cw+(cols-1)*gap, gx=(vpW-gw)/2, top=vpH*0.38;
-  SKINS.forEach((s,i)=>{ const col=i%cols,row=(i/cols)|0, x=gx+col*(cw+gap), y=top+row*(cw+34+gap);
-    const unlocked=s.unlock===null||hasUnlock(s.id), equipped=PROGRESS.equipped.skin===s.id;
-    ctx.fillStyle=equipped?'rgba(242,179,61,0.18)':'rgba(21,27,44,0.9)'; rr(x,y,cw,cw,10); ctx.fill();
-    ctx.strokeStyle=equipped?COL.amber:(unlocked?COL.line:'#242c44'); ctx.lineWidth=equipped?2:1; rr(x,y,cw,cw,10); ctx.stroke();
-    ctx.save(); ctx.translate(x+cw/2,y+cw*0.5); const R=cw*0.26;
+  txt('WARDROBE', cx, 26, 20, COL.txt,'center','800');
+  drawHumanoid(cx, 60, 0, '#EDEFF4', 0, { pose:player.pose, r:22, skin:PROGRESS.equipped.skin, breathP:hueAnim*2, blinkE:0 });
+  const gap=8;
+  const chip=(s,x,y,w)=>{ const unlocked=s.unlock===null||hasUnlock(s.id), equipped=PROGRESS.equipped.skin===s.id;
+    ctx.fillStyle=equipped?'rgba(242,179,61,0.18)':'rgba(21,27,44,0.9)'; rr(x,y,w,w,9); ctx.fill();
+    ctx.strokeStyle=equipped?COL.amber:(unlocked?COL.line:'#242c44'); ctx.lineWidth=equipped?2:1; rr(x,y,w,w,9); ctx.stroke();
+    ctx.save(); ctx.translate(x+w/2,y+w*0.5); const R=w*0.26;
     ctx.fillStyle=unlocked?'#EDEFF4':'#333a4e'; ctx.beginPath(); ctx.arc(0,0,R,0,TAU); ctx.fill();
     ctx.fillStyle='#0a0a12'; ctx.beginPath(); ctx.arc(R*0.35,-R*0.22,R*0.16,0,TAU); ctx.arc(R*0.35,R*0.22,R*0.16,0,TAU); ctx.fill();
     if(unlocked && s.draw){ s.draw(0,R,1); ctx.globalAlpha=1; } ctx.restore();
-    txt(unlocked?s.name:'🔒 '+s.name, x+cw/2, y+cw+11, 10.5, unlocked?(equipped?COL.amber:COL.txt):COL.muted,'center','600');
-    if(!unlocked) txt(s.hint, x+cw/2, y+cw+23, 7.5, COL.muted,'center','500');
-    if(unlocked) navList.push({x,y,w:cw,h:cw,fn:()=>{ PROGRESS.equipped.skin=s.id; saveProgress(); SFX.ui(); }});
-  });
-  txt('Poses — unlock more, cycle in-game with [ / ] or 🕺', cx, vpH-92, 10.5, COL.muted,'center','500');
-  const pcw=Math.min(64,(vpW-40)/POSE_KEYS.length), pgx=(vpW-POSE_KEYS.length*pcw)/2;
-  POSE_KEYS.forEach((k,i)=>{ const unlocked=UNLOCKABLE_POSES.indexOf(k)<0||hasUnlock(k);
-    txt((unlocked?'':'🔒')+POSE_NAMES[k], pgx+i*pcw+pcw/2, vpH-74, 9, unlocked?COL.txt:COL.muted,'center','500'); });
-  const bw=Math.min(200,vpW-48); navBtn('‹ Back', cx-bw/2, vpH-54, bw, 40, ()=>{ appState='TITLE'; menuIndex=0; }, {size:14});
+    if(unlocked) navList.push({x,y,w,h:w,fn:()=>{ PROGRESS.equipped.skin=s.id; saveProgress(); SFX.ui(); }}); };
+  let y=90;
+  // --- head accents ---
+  const accents=SKINS.filter(s=>!s.medal);
+  txt('HEAD ACCENTS', cx, y, 9, COL.amber,'center','700'); y+=12;
+  const cw=Math.min(52,(vpW-40)/accents.length), aw=accents.length*cw+(accents.length-1)*gap, axx=(vpW-aw)/2;
+  accents.forEach((s,i)=>{ const x=axx+i*(cw+gap); chip(s,x,y,cw);
+    txt(s.unlock===null||hasUnlock(s.id)?s.name:'🔒', x+cw/2, y+cw+8, 8, (PROGRESS.equipped.skin===s.id)?COL.amber:COL.muted,'center','600'); });
+  y+=cw+22;
+  // --- biome medals ---
+  const medals=SKINS.filter(s=>s.medal);
+  const loggedCount=BLENDBOOK_KEYS.filter(k=>PROGRESS.blendbook[k]&&PROGRESS.blendbook[k].logged).length;
+  const medalCount=Object.keys(PROGRESS.biomeMedals||{}).filter(b=>PROGRESS.biomeMedals[b]).length;
+  txt('BIOME MEDALS · '+medalCount+' / 6', cx, y, 9, COL.amber,'center','700'); y+=12;
+  const mcw=Math.min(46,(vpW-40)/6), mw=6*mcw+5*gap, mxx=(vpW-mw)/2;
+  medals.forEach((s,i)=> chip(s, mxx+i*(mcw+gap), y, mcw)); y+=mcw+20;
+  // --- Blend Book (single row of 14 terrain pages; logged only when the SIM says you vanished) ---
+  txt('BLEND BOOK · '+loggedCount+' / 14', cx, y, 9, COL.amber,'center','700'); y+=12;
+  const per=BLENDBOOK_KEYS.length, bcw=Math.min(34,(vpW-28)/per), bgap=Math.min(gap,(vpW-28-per*bcw)/(per-1)), bw2=per*bcw+(per-1)*bgap, bxx=(vpW-bw2)/2;
+  BLENDBOOK_KEYS.forEach((k,i)=>{ const x=bxx+i*(bcw+bgap), e=PROGRESS.blendbook[k], done=e&&e.logged;
+    ctx.globalAlpha=done?1:0.32; ctx.fillStyle=TERRAIN_HEX[k]||'#444'; rr(x,y,bcw,bcw,5); ctx.fill();
+    ctx.globalAlpha=1; ctx.strokeStyle=done?COL.amber:'#242c44'; ctx.lineWidth=done?1.5:1; rr(x,y,bcw,bcw,5); ctx.stroke();
+    if(done) txt(Math.round((e.bestMq||0)*100)+'', x+bcw/2, y+bcw/2, 8.5, '#000','center','800'); }); y+=bcw+18;
+  // --- poses (compact) + back ---
+  txt('Poses (cycle in-game with [ / ] or 🕺):  '+POSE_KEYS.map(k=>(UNLOCKABLE_POSES.indexOf(k)<0||hasUnlock(k)?'':'🔒')+POSE_NAMES[k]).join(' · '),
+    cx, y+4, 8.5, COL.muted,'center','500');
+  const bw=Math.min(200,vpW-48); navBtn('‹ Back', cx-bw/2, vpH-46, bw, 36, ()=>{ appState='TITLE'; menuIndex=0; }, {size:14});
 }
 
 function drawHelp(){ ctx.fillStyle='rgba(8,12,25,0.88)'; ctx.fillRect(0,0,vpW,vpH);
   const cx=vpW/2; let y=vpH*0.14;
   txt('HOW TO PLAY', cx, y, 24, COL.amber,'center','800'); y+=44;
   const lines=[
-    'You are a chameleon seen from above. UFOs scan the ground for anything',
-    'that does not match the terrain beneath it.',
+    'You are a person, seen from above — paint your body to match the ground.',
+    'UFOs scan for anything that does not match the terrain beneath it.',
     '',
     '🎨  Open the PAINT STUDIO (E / Tab / 🎨) and paint your body to match',
     '      the ground. MATCH (Q) instantly samples the terrain under you.',
@@ -2298,7 +2527,17 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   ability: round?{freeze:player.freeze,dashCd:+player.cd.dash.toFixed(2),decoyCd:+player.cd.decoy.toFixed(2),inkCd:+player.cd.ink.toFixed(2),freezeCap:+player.freezeCap.toFixed(3)}:null,
   decoys: round?round.decoys.length:0, inks: round?round.inks.length:0, pose: player.pose,
   ta: round&&round.mode==='TA'?{ beacons:round.beacons.length, banked:round.taBanked, timeLeft:Math.round(round.timeLeft), beaconPos:round.beacons.map(b=>({x:Math.round(b.x),y:Math.round(b.y),banked:b.banked})) }:null,
-  hunt: round&&round.mode==='HUNT'?{ bots: round.bots.length, caught: round.hunterCaught||0, pinged: round.bots.filter(b=>b.pinged>0).length, botStates: round.bots.map(b=>b.state), botC: round.bots.map(b=>+b.C.toFixed(2)), pulseCd:+player.pulseCd.toFixed(2), botPos: round.bots.map(b=>({x:Math.round(b.x),y:Math.round(b.y),caught:b.caught,C:+b.C.toFixed(2),pinged:+(b.pinged>0)})) }:null }; } }; }catch(_){}
+  hunt: round&&round.mode==='HUNT'?{ bots: round.bots.length, caught: round.hunterCaught||0, pinged: round.bots.filter(b=>b.pinged>0).length, botStates: round.bots.map(b=>b.state), botC: round.bots.map(b=>+b.C.toFixed(2)), pulseCd:+player.pulseCd.toFixed(2), botPos: round.bots.map(b=>({x:Math.round(b.x),y:Math.round(b.y),caught:b.caught,C:+b.C.toFixed(2),pinged:+(b.pinged>0)})) }:null,
+  // ---- P8 "Living Camo" (add-only) ----
+  paint:(function(){ const co=paintCoach(); return { mqNow:+co.mqNow.toFixed(3), mqAim:+co.mqAim.toFixed(3), word:co.word, hint:co.hint }; })(),   // mqAim mirrors effMatch (single or 2-tone)
+  studio:{ open:studio.open, svV:+player.paintHSV.v.toFixed(3), activeTone:studio.activeTone||0,
+           t0:rgb2hex(player.targetPaint), t1:rgb2hex(player.targetPaint2),
+           svRect: studio.open?studioRects().sv:null, splitRect: studio.open?studioRects().split:null },
+  split: !!player.splitPaint, mq2:+((player.mq2||0)).toFixed(3),
+  tones: player.ref&&player.ref.tones?player.ref.tones.map(t=>({key:t.key,w:+t.w.toFixed(2)})):null,
+  snapCount: player.snapCount||0, ghostMs: Math.round(round?(round.metrics.ghostMs||0):0),
+  particles: particles.length, dripEmitted: dripEmitted,
+  progress:{ blendbook:PROGRESS.blendbook||{}, biomeMedals:PROGRESS.biomeMedals||{}, unlocks:PROGRESS.unlocks } }; } }; }catch(_){}
 boot();
 
 </script>

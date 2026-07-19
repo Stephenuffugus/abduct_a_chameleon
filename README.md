@@ -30,7 +30,7 @@ Open **http://localhost:8000/** → **Play**. It also runs off `file://` (falls 
 - **Heat · Endless** — one UFO, difficulty escalates forever, more hunters join. Survive as long as you can.
 - **Daily Challenge** — one seeded run per day; same map/seed for everyone.
 - **🛸 Hunt** — *you fly the UFO.* Scan to reveal hidden chameleons, fly over them to abduct. Catch them all.
-- *Time Attack — coming soon.*
+- **⛯ Time Attack · Beacon Run** — bank 5 scattered beacons before the clock runs out; each is a mini hide-and-hold.
 
 ### Abilities (Survive / Heat)
 | | Key | What it does |
@@ -52,17 +52,25 @@ Open **http://localhost:8000/** → **Play**. It also runs off `file://` (falls 
 | Hunt: scan pulse | `Space` | **SCAN** button |
 | Pause · Mute | `Esc` · `M` | ⏸ · 🔊 |
 
-**The skill:** your painted color is compared to the terrain under you (real perceptual color metric).
-A close match + stillness + hugging cover makes you nearly invisible; moving always gives you away.
-**Match** samples the exact ground color, but your body *crawls* to it — timing matters. Every
+**The skill:** your painted color is compared to the terrain under you (real perceptual color metric),
+tone by tone. A close match + stillness + hugging cover makes you nearly invisible; moving always gives
+you away. **Match** samples the exact ground color, but your body *crawls* to it — timing matters. Every
 "spotted" tells you *why*, so getting caught feels fair.
+
+**Living Camo:** the Paint Studio *coaches* you — it shows your **NOW** vs **AIM** match and names the one
+nudge that closes the gap (*warmer, lighter, more vivid…*), then chimes when you vanish. Standing on a
+**terrain seam** (grass meeting dirt), a single flat color can't match both halves — flip on **2-tone camo**
+and paint each half its own terrain color to disappear where one color can't. The instant you melt in you
+feel a soft **blend-snap**; hold a perfect blend on new ground to fill your **Blend Book** and earn **biome
+mastery medals**.
 
 ### Comfort & unlocks
 - **Settings** (title or pause): master/SFX volume, **motion** (full/reduced/minimal), **screen shake**,
   **photosensitive-safe**, **colorblind** palettes + meter glyphs, **high contrast**, **text size**,
   **haptics**, **left/right-handed** touch layout.
-- **Wardrobe**: unlock cosmetic head accents (antenna, shades, crown, halo) and extra **poses** by
-  playing — all cosmetic, none break your camo (they fade as you hide).
+- **Wardrobe**: unlock cosmetic head accents (antenna, shades, crown, halo), **biome mastery medals**, and
+  extra **poses** by playing — all cosmetic, none break your camo (they fade as you hide). The **Blend Book**
+  logs every terrain you've truly vanished on; blend all of a biome's terrains to earn its medal.
 - Off-screen **threat arrows** point to nearby hunters; a first-run tutorial explains the basics.
 - **Drag a SCANNER `.json` onto the window** to instantly play-test a custom map.
 

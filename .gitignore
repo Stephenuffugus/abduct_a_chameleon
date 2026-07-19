@@ -1,4 +1,7 @@
 node_modules/
 test/node_modules/
+test/shots/
+test/*.jpg
+test/package-lock.json
 *.log
 .DS_Store

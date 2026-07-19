@@ -11,7 +11,10 @@ npm run smoke                 # boot → menu → round → studio → pause
 npm run survive               # a full Survive round into an abduction → SUMMARY
 npm run abilities             # fires Freeze/Dash/Decoy/Ink, checks effects
 npm run hunt                  # Hunt mode: fly the UFO, scan, catch a bot
+npm run timeattack            # Time Attack "Beacon Run": bank a beacon
 npm run math                  # camo colour-match math vs docs/BUILD_SPEC.md calibration
+npm run twotone               # P8 Split Camo oracle: per-tone match == uniform, two-tone beats a seam
+npm run pass8                 # P8 "Living Camo": coach, touch-offset, split toggle, drips, blend-snap, Blend Book
 npm run shots                 # render PNG/JPEG screenshots of each screen to test/shots/
 ```
 
