@@ -693,10 +693,12 @@ function updateGamepadEdges(){
   const b=pad.buttons; const edge=i=>{ const p=!!(b[i]&&b[i].pressed), e=p&&!gpPrev[i]; gpPrev[i]=p; return e; };
   if(b.some(x=>x&&x.pressed)) ensureAudio();
   if(appState==='ROUND' && roundState!=='PAUSED'){
-    if(edge(3)||edge(2)){ studio.open?closeStudio():openStudio(); }   // Y / X
-    if(edge(6)||edge(4)) instantMatch();                             // LB
+    const hunt = round && round.mode==='HUNT';
+    if(hunt){ if(edge(0)||edge(3)) huntPulse(); }                     // HUNT: A/Y scan pulse
+    else { if(edge(3)||edge(2)){ studio.open?closeStudio():openStudio(); }  // Y / X studio
+      if(edge(6)||edge(4)) instantMatch();                           // LB match
+      if(edge(1)&&studio.open) closeStudio(); }                      // B close studio
     if(edge(9)) togglePause();                                       // Start
-    if(edge(1)&&studio.open) closeStudio();                          // B
   } else {
     // menus AND the paused overlay (both use navList)
     if(edge(9) && roundState==='PAUSED'){ resumeRound(); return; }   // Start un-pauses
@@ -805,8 +807,10 @@ function onPointerDown(e){
   // round on-screen buttons first
   for(const h of roundHits){ if(inRect(sx,sy,h)){ h.fn(); pointers.set(id,{sx,sy,role:'ui'}); return; } }
   if(roundState==='CAUGHT'||roundState==='TIMEOUT'){ pointers.set(id,{sx,sy,role:'ui'}); return; }
-  // left half → joystick; right half → creep
-  if(sx < vpW*0.5){
+  // joystick goes on the movement-hand side (opposite the action buttons); creep on the other
+  const joyOnLeft = settings.handed!=='left';   // right-handed → move with left thumb; actions on right
+  const onJoySide = joyOnLeft ? (sx < vpW*0.5) : (sx >= vpW*0.5);
+  if(onJoySide){
     joystick={ id, cx:sx, cy:sy, dx:0, dy:0 };
     pointers.set(id,{sx,sy,role:'joystick'});
   } else {
@@ -1315,8 +1319,9 @@ function drawHumanoid(x,y,f,css,conceal,o){ o=o||{};
   // head (forward, overlapping shoulders)
   const hx=0.36*R+ (alien?0.08*R:0);
   ctx.beginPath(); ctx.arc(hx,0,headR,0,TAU); ctx.fill();
-  // dissolve edge-dither (terrain-colored specks, fade INTO ground) — max ~10 arcs
-  if(dissolve>0.02 && player.ref){ const rc=player.ref.rgb; ctx.fillStyle='rgb('+(rc.r|0)+','+(rc.g|0)+','+(rc.b|0)+')';
+  // dissolve edge-dither (terrain-colored specks, fade INTO ground) — max ~10 arcs; use THIS actor's ground ref
+  const dref=o.ref||player.ref;
+  if(dissolve>0.02 && dref){ const rc=dref.rgb; ctx.fillStyle='rgb('+(rc.r|0)+','+(rc.g|0)+','+(rc.b|0)+')';
     const n=Math.floor(dissolve*10); ctx.globalAlpha=dissolve*0.5;
     for(let i=0;i<n;i++){ const a=i*2.4+player.animT, rr=(0.3+0.7*((i*7)%5)/5)*R;
       ctx.beginPath(); ctx.arc(Math.cos(a)*rr, Math.sin(a)*rr*0.9, 1.6,0,TAU); ctx.fill(); } }
@@ -1384,8 +1389,8 @@ function drawReticle(){ const r=studio.reticle; ctx.save(); ctx.strokeStyle=COL.
 function drawHunt(){
   for(const b of round.bots){
     if(b.caught){ const k=clamp01(b.catchT/1.0); if(k>=1) continue; ctx.save(); ctx.globalAlpha=1-k;
-      drawHumanoid(b.x,b.y-34*k,b.facing,rgb2hex(b.currentPaint),b.conceal,{pose:b.pose,r:PLAYER_DRAW_R*(1-k*0.85),breathP:b.breathP,blinkE:b.blinkE}); ctx.restore(); continue; }
-    drawHumanoid(b.x,b.y,b.facing,rgb2hex(b.currentPaint),b.conceal,{pose:b.pose,moving:Math.hypot(b.vx,b.vy)>8,walkPhase:b.walkPhase,breathP:b.breathP,blinkE:b.blinkE});
+      drawHumanoid(b.x,b.y-34*k,b.facing,rgb2hex(b.currentPaint),b.conceal,{pose:b.pose,r:PLAYER_DRAW_R*(1-k*0.85),breathP:b.breathP,blinkE:b.blinkE,ref:b.ref}); ctx.restore(); continue; }
+    drawHumanoid(b.x,b.y,b.facing,rgb2hex(b.currentPaint),b.conceal,{pose:b.pose,moving:Math.hypot(b.vx,b.vy)>8,walkPhase:b.walkPhase,breathP:b.breathP,blinkE:b.blinkE,ref:b.ref});
     if(b.pinged>0){ ctx.globalAlpha=0.5+0.5*Math.sin(gfx.t*10); ctx.strokeStyle=PAL.danger; ctx.lineWidth=2;
       ctx.beginPath(); ctx.arc(b.x,b.y,PLAYER_DRAW_R+9+3*Math.sin(gfx.t*8),0,TAU); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(b.x,b.y-PLAYER_DRAW_R-16); ctx.lineTo(b.x-5,b.y-PLAYER_DRAW_R-24); ctx.lineTo(b.x+5,b.y-PLAYER_DRAW_R-24); ctx.closePath(); ctx.fillStyle=PAL.danger; ctx.fill(); ctx.globalAlpha=1; }
@@ -1461,7 +1466,7 @@ function drawVignette(){
 function rr(x,y,w,h,rad){ ctx.beginPath(); rad=Math.min(rad,w/2,h/2);
   ctx.moveTo(x+rad,y); ctx.arcTo(x+w,y,x+w,y+h,rad); ctx.arcTo(x+w,y+h,x,y+h,rad);
   ctx.arcTo(x,y+h,x,y,rad); ctx.arcTo(x,y,x+w,y,rad); ctx.closePath(); }
-function txt(s,x,y,size,color,align,weight){ ctx.font=(weight||'500')+' '+size+'px system-ui,sans-serif';
+function txt(s,x,y,size,color,align,weight){ ctx.font=(weight||'500')+' '+(size*hudScale)+'px system-ui,sans-serif';
   ctx.textAlign=align||'left'; ctx.textBaseline='middle'; ctx.fillStyle=color||COL.txt; ctx.fillText(s,x,y); }
 function panel(x,y,w,h,rad){ ctx.fillStyle='rgba(21,27,44,0.86)'; rr(x,y,w,h,rad||10); ctx.fill();
   ctx.strokeStyle=COL.line; ctx.lineWidth=1; rr(x,y,w,h,rad||10); ctx.stroke(); }
@@ -1721,9 +1726,11 @@ function startPlay(){ SFX.confirm(); if(!settings.tutorialSeen){ settings.tutori
 async function selectLevel(entry){ SFX.confirm(); const data=await fetchLevelData(entry); entry.data=data;
   if(pendingMode==='PRACTICE') startRound(entry,'PRACTICE',PRACTICE_DIFF);
   else if(pendingMode==='HEAT') startRound(entry,'HEAT',makeHeatDiff());
+  else if(pendingMode==='DAILY') startRound(entry,'DAILY',DIFF.NORMAL);   // seed re-derived in startRound
   else { pendingLevel=entry; appState='DIFFICULTY_SELECT'; menuIndex=1; } }
 
 function startRound(entry, mode, diff, fixedSeed){
+  if(mode==='DAILY' && fixedSeed==null) fixedSeed=dailySeed();   // DAILY is always the day's seed (retry can't reroll)
   const seed = fixedSeed!=null ? (fixedSeed>>>0) : (((performance.now()*1000 % 2147483647)|0 ^ (entry.display.length*2654435761))>>>0);
   round={ entry, mode, diff, ufos:[], timeLeft:diff.SURVIVE_TIME, countdown:COUNTDOWN_SEC, lastCount:null,
     caught:false, caughtBy:null, finalized:false, spawnGrace:SPAWN_GRACE, nearUfo:0, debug:false,
@@ -1739,7 +1746,7 @@ function startRound(entry, mode, diff, fixedSeed){
   player.x=(hs.x+0.5)*TILE; player.y=(hs.y+0.5)*TILE; player.vx=0; player.vy=0; player.S=1; player.facing=0;
   player.alive=true; player.abductT=0; player.mqDisplay=0; player.detDisplay=0;
   round.metrics={ survivalMs:0, blendAccum:0, lowDetectMs:0, streakBestMs:0, streakCur:0, spottedCount:0, nearMisses:0, timeMovingMs:0, timeStillMs:0 };
-  cam.x=player.x; cam.y=player.y; acc=0; seedAmbient();
+  cam.x=player.x; cam.y=player.y; acc=0;
   if(mode==='HUNT'){
     // you ARE the alien: fly a UFO from a seeker spawn; bot chameleons hide
     const ss=seekers.length?seekers[(rng()*seekers.length)|0]:{x:2,y:2};
@@ -1753,6 +1760,7 @@ function startRound(entry, mode, diff, fixedSeed){
     for(let i=0;i<diff.UFO_COUNT;i++){ const sp=seekers.length?seekers[i%seekers.length]:{x:2,y:2};
       round.ufos.push(makeUfo((sp.x+0.5)*TILE,(sp.y+0.5)*TILE)); }
   }
+  seedAmbient();   // AFTER gameplay entities — ambient must not consume the seeded RNG stream (keeps DAILY reproducible)
   appState='ROUND'; roundState='COUNTDOWN'; studio.open=false; studio.reticleOn=false;
   settings.lastMode=mode; settings.lastLevel=Math.max(0,LEVELS.indexOf(entry)); settings.lastDiff=diff.label||'NORMAL'; saveSettings();
 }
@@ -1826,7 +1834,7 @@ function stepHunt(dt){
       if(round.bots.every(x=>x.caught)) endHunt(true); } }
   else { player.beamCharge=Math.max(0,player.beamCharge-BEAM_DRAIN*dt); player.beamTarget=null; }
   round.timeLeft-=dt; round.metrics.survivalMs+=dt*1000;
-  if(round.timeLeft<=0){ round.timeLeft=0; endHunt(round.hunterCaught>0); }
+  if(round.timeLeft<=0){ round.timeLeft=0; endHunt(round.hunterCaught>=round.bots.length); }
 }
 function stepSim(dt){
   if(roundState==='COUNTDOWN'||roundState==='RESUME_COUNTDOWN'){
@@ -1865,7 +1873,7 @@ function stepSim(dt){
     if(round.heatUfoT>=HEAT_UFO_EVERY && round.ufos.length<HEAT_UFO_CAP){ round.heatUfoT=0;
       const sk=MAP.spawns.filter(s=>s.role==='seeker'), sp=sk[(rng()*sk.length)|0]||{x:2,y:2};
       round.ufos.push(makeUfo((sp.x+0.5)*TILE,(sp.y+0.5)*TILE)); showToast('A hunter joins the chase!'); }
-    if(round.ufos.length>=3) d.COORDINATE=true;
+    d.COORDINATE = round.ufos.length>=3;   // self-heals on retry (reuses the mutated clone)
   }
   round.spottedFlash=Math.max(0,round.spottedFlash-dt*2);
 }
@@ -1974,9 +1982,9 @@ function drawModeSelect(){ const cx=vpW/2;
   navBtn('‹ Back', gx, top+Math.ceil(modes.length/cols)*(ch+gap)+2, gridW, 40, ()=>gotoTitle(), {size:14});
 }
 function route(mode){ pendingMode=mode; appState='LEVEL_SELECT'; menuIndex=0; SFX.confirm(); }
-function makeHeatDiff(){ return Object.assign({}, DIFF.EASY, { label:'HEAT', heat:true, SURVIVE_TIME:Infinity, UFO_COUNT:1 }); }
-function startDaily(){ SFX.confirm(); const d=new Date();
-  const seed=(d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate())>>>0;
+function makeHeatDiff(){ return Object.assign({}, DIFF.EASY, { label:'HEAT', heat:true, COORDINATE:false, SURVIVE_TIME:Infinity, UFO_COUNT:1 }); }
+function dailySeed(){ const d=new Date(); return (d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate())>>>0; }
+function startDaily(){ SFX.confirm(); const seed=dailySeed();
   const pool=LEVELS.slice(0,Math.max(1,LEVELS.length-1)); const lv=pool[seed%pool.length]||LEVELS[0];
   pendingMode='DAILY'; fetchLevelData(lv).then(data=>{ lv.data=data; startRound(lv,'DAILY',DIFF.NORMAL,seed); }); }
 function levelBadge(entry){ if(entry.usedBaked) return ''; const key=entry.display+'|'+pendingMode+'|'+(pendingMode==='PRACTICE'?'PRACTICE':settings.lastDiff);
@@ -2046,8 +2054,10 @@ function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); re
   if(!round.diff.practice){ if(s.isBest){ txt('★ NEW BEST!', cx, sy+6, 16, COL.amber,'center','800'); }
     else if(s.prevBest){ txt('Best '+s.prevBest+'  ('+(s.score-s.prevBest>=0?'+':'')+(s.score-s.prevBest)+')', cx, sy+6, 12, COL.muted,'center','500'); } sy+=28; } else sy+=10;
   const by=Math.min(sy+10, vpH-64); const bw3=(bw-16)/3;
+  const fixedMode = round.mode==='DAILY';   // DAILY has a fixed level+seed — no re-pick
   navBtn('Retry', bx, by, bw3, 46, ()=>startRound(round.entry, round.mode, round.diff), {size:14});
-  navBtn('Change Level', bx+bw3+8, by, bw3, 46, ()=>{ appState='LEVEL_SELECT'; menuIndex=0; }, {size:13});
+  navBtn(fixedMode?'Modes':'Change Level', bx+bw3+8, by, bw3, 46,
+    ()=>{ if(fixedMode){ appState='MODE_SELECT'; } else { pendingMode=round.mode; appState='LEVEL_SELECT'; } menuIndex=0; }, {size:13});
   navBtn('Menu', bx+2*(bw3+8), by, bw3, 46, ()=>gotoTitle(), {size:14});
 }
 /* ---- Settings screen (comfort / accessibility) ---- */
