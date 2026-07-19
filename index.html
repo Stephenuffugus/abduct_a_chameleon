@@ -40,6 +40,11 @@ const IDLE_MAG = 0.12, SNEAK_MAG = 0.55;                       // stick magnitud
 const JOY_R = 70, JOY_DEAD = 10, JOY_KNOB = 22, JOY_MARGIN = 16;
 const MOVE_PEEK_MAX = 224, INSPECT_PAN_MAX = 384, PAN_HOME_RATE = 8, RECENTER_SHOW = 40;
 const INSPECT_NUDGE = 45, INSPECT_ZOOM_MUL = 0.78, INSPECT_ZOOM_RATE = 6;
+// P9 "Photo Loop" — free look-zoom + held camera (lock → look → zoom → hold → paint → unlock)
+const VZ_OUT = 0.55, VZ_IN = 1.6, VZ_SEEKER = INSPECT_ZOOM_MUL;    // user view-zoom bounds (multiplies zoomBase while looking)
+const VZ_DETENTS = [VZ_OUT, VZ_SEEKER, 1.0, VZ_IN];                // FAR / SEEKER / NORMAL / CLOSE
+const VZ_RATE = 7, WHEEL_K = 0.0012, PINCH_MIN_D = 32, TAP_SLOP = 12;
+const DIM_HELD = 0.35, HOLD_GLIDE_MUL = 1.5, THREAT_WARN_R = 1.5, RETICLE_HELD_R = 12*TILE;
 // camo / concealment
 const D_PERFECT = 12, D_EXPOSED = 220;
 const PAINT_SHIFT_SPEED = 300, SHIFT_DELTA_EPS = 4;
@@ -704,6 +709,7 @@ const SFX={
   match(q){ const f=560+(q||0)*380; tone(f,0.09,'triangle',0.22,f+240); },
   repaint(){ tone(300,0.06,'square',0.14); },
   ui(){ tone(560,0.04,'square',0.12); },
+  shutter(){ noise(0.05,0.16,3200); tone(1150,0.04,'square',0.10); setTimeout(()=>tone(760,0.03,'square',0.08),45); },
   confirm(){ tone(500,0.08,'triangle',0.2); setTimeout(()=>tone(720,0.1,'triangle',0.2),70); },
   back(){ tone(360,0.07,'sine',0.16,240); },
   spotted(){ tone(300,0.14,'sawtooth',0.22,180); },
@@ -759,9 +765,25 @@ let ctrlMode = 'MOVE';                       // 'MOVE' | 'PAINT' | 'INSPECT' (di
 const camPan = { x:0, y:0 };                 // camera peek/free-look offset (world units), added to camFollow
 const camFollow = { x:0, y:0 };              // eased follow anchor; cam = clamp(camFollow + camPan)
 let inspectZoomT = 0;                        // 0..1 ease into seeker-altitude zoom
+// P9 Photo Loop state — all render-side (multiplayer-safe: stays per-client, never touches the sim)
+let camLock = false;                         // "the shot is held" — set implicitly by 🎨 from INSPECT (the shutter IS the lock)
+let vz = VZ_SEEKER, vzTarget = VZ_SEEKER;    // user view-zoom on zoomBase; only bites while inspectZoomT>0
+let pinch = null;                            // {a,b,d0,vz0,wx,wy} two-finger zoom gesture
+let panBoost = 1;                            // spotted-while-held glides home faster (never snaps)
+let holdBracketT = 0;                        // viewfinder corner brackets ease 0..1
+const gpCam = { x:0, y:0 };                  // gamepad right-stick camera pan
 let _prevMoveTag = 'idle';
-const _hud = { modeButtons:[], pill:null, recenter:null };
+const _hud = { modeButtons:[], pill:null, recenter:null, zoom:null };
 function clampPan(max){ const m=Math.hypot(camPan.x,camPan.y); if(m>max){ const k=max/m; camPan.x*=k; camPan.y*=k; } }
+function heldCam(){ return ctrlMode==='INSPECT' || (ctrlMode==='PAINT' && camLock); }
+function vzMin(){ return qLevel>=2 ? 0.62 : VZ_OUT; }             // struggling tablets keep the zoom-out fill-rate sane
+function liveZoom(){ return Math.max(ZOOM_MIN*0.55, zoomBase*(1+FX.zoomPunch)*(1+(vz-1)*inspectZoomT)); }
+function panMaxNow(){ return heldCam() ? INSPECT_PAN_MAX*Math.min(1.8,Math.max(1,1/Math.max(vz,0.25))) : MOVE_PEEK_MAX; }
+function setVzTarget(v){ vzTarget = clamp(v, vzMin(), VZ_IN); }
+function stepDetent(dir){ let i=0, bd=1e9;                        // nearest detent, then step
+  VZ_DETENTS.forEach((d,j)=>{ const e=Math.abs(vzTarget-d); if(e<bd){ bd=e; i=j; } });
+  i = clamp(i+dir, 0, VZ_DETENTS.length-1); setVzTarget(VZ_DETENTS[i]); SFX.ui(); vibe(4); }
+function reanchorPans(){ for(const pp of pointers.values()){ if(pp.role==='pan'){ pp.sx0=pp.sx; pp.sy0=pp.sy; pp.px0=camPan.x; pp.py0=camPan.y; } } }
 function speedFromMag(m){ if(m<IDLE_MAG) return 0; if(m<SNEAK_MAG) return PLAYER_CREEP;
   return PLAYER_CREEP+(PLAYER_WALK-PLAYER_CREEP)*smoothstep(SNEAK_MAG,1,m); }
 
@@ -771,7 +793,7 @@ function worldToScreen(wx,wy){ return { x:(wx-cam.x)*zoom+vpW/2, y:(wy-cam.y)*zo
 function inRect(sx,sy,r){ return sx>=r.x && sx<=r.x+r.w && sy>=r.y && sy<=r.y+r.h; }
 
 function gatherInput(){
-  if(ctrlMode==='PAINT' && !studio.open) ctrlMode='MOVE';   // heal any close-without-exit desync (never leave the hider rooted)
+  if(ctrlMode==='PAINT' && !studio.open){ ctrlMode='MOVE'; camLock=false; }   // heal any close-without-exit desync (never leave the hider rooted)
   let mx=0, my=0;
   if(keys.has('KeyW')||keys.has('ArrowUp')) my-=1;
   if(keys.has('KeyS')||keys.has('ArrowDown')) my+=1;
@@ -781,7 +803,8 @@ function gatherInput(){
   if(joystick){ mx+=joystick.dx; my+=joystick.dy; }
   // gamepad
   const gp=pollGamepad();
-  if(gp){ mx+=gp.mx; my+=gp.my; if(gp.creep) creep=true; }
+  if(gp){ mx+=gp.mx; my+=gp.my; if(gp.creep) creep=true; gpCam.x=gp.rx||0; gpCam.y=gp.ry||0; }
+  else { gpCam.x=0; gpCam.y=0; }
   // direction (unit, magnitude-carrying ≤1) + analog magnitude → speed
   let mv=Math.hypot(mx,my); let moveMag=Math.min(1,mv); if(mv>1){ mx/=mv; my/=mv; }
   // touch freeze-toggle auto-releases when you steer the joystick
@@ -816,8 +839,9 @@ function pollGamepad(){
   if(!pad) return null;
   const dz=v=>Math.abs(v)<0.15?0:v;
   const mx=dz(pad.axes[0]||0), my=dz(pad.axes[1]||0);
+  const rx=dz(pad.axes[2]||0), ry=dz(pad.axes[3]||0);   // right stick = camera pan (P9)
   const b=pad.buttons; const down=i=>!!(b[i]&&b[i].pressed);
-  return { mx, my, creep:down(7), pad };
+  return { mx, my, creep:down(7), rx, ry, pad };
 }
 function updateGamepadEdges(){
   const pads=navigator.getGamepads?navigator.getGamepads():[]; let pad=null;
@@ -831,7 +855,8 @@ function updateGamepadEdges(){
     else { if(edge(3)||edge(2)) togglePaintMode();                   // Y / X → paint mode
       if(edge(5)) toggleInspect();                                   // RB → inspect mode
       if(edge(6)||edge(4)) instantMatch();                           // LB match
-      if(edge(1)){ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); } }  // B backs out a mode
+      if(ctrlMode==='INSPECT'){ if(edge(12)) stepDetent(1); if(edge(13)) stepDetent(-1); }   // dpad = zoom detents while looking
+      if(edge(1)){ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); } }  // B backs out one step
     if(edge(9)) togglePause();                                       // Start
   } else {
     // menus AND the paused overlay (both use navList)
@@ -865,6 +890,7 @@ addEventListener('keydown', e=>{
     }
     if(e.code==='KeyE'||e.code==='KeyP'||e.code==='Tab'){ togglePaintMode(); }
     else if(e.code==='KeyI') toggleInspect();
+    else if((e.code==='Minus'||e.code==='Equal') && ctrlMode==='INSPECT'){ stepDetent(e.code==='Minus'?-1:1); }   // zoom detents while looking (studio keeps these keys in PAINT)
     else if(e.code==='KeyQ') instantMatch();
     else if(e.code==='BracketLeft') cyclePose(-1);
     else if(e.code==='BracketRight'||e.code==='KeyR') cyclePose(1);
@@ -888,7 +914,7 @@ addEventListener('keydown', e=>{
 addEventListener('keyup', e=> keys.delete(e.code));
 // losing OS focus (Alt-Tab, click another window) never delivers keyup — clear held state so you don't walk off unattended
 addEventListener('blur', ()=>{ keys.clear(); joystick=null; pointers.clear();
-  ctrlMode='MOVE'; camPan.x=0; camPan.y=0;
+  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
   if(appState==='ROUND' && roundState==='PLAYING') togglePause(); });
 
 /* ---- pointer ---- */
@@ -898,6 +924,39 @@ cv.addEventListener('pointermove', onPointerMove, {passive:false});
 cv.addEventListener('pointerup', onPointerUp, {passive:false});
 cv.addEventListener('pointercancel', onPointerUp, {passive:false});
 cv.addEventListener('contextmenu', e=> e.preventDefault());
+cv.addEventListener('wheel', onWheel, {passive:false});
+
+/* ---- P9: wheel zoom (desktop; ctrl+wheel = trackpad pinch, handled identically) ---- */
+function onWheel(e){
+  e.preventDefault();                                            // always eat it — never page-zoom over the game
+  if(appState!=='ROUND'||roundState!=='PLAYING'||!round||round.mode==='HUNT'||!player.alive) return;
+  ensureAudio();
+  const dy=(e.deltaMode===1?e.deltaY*33:e.deltaY)*(e.ctrlKey?3:1);
+  if(ctrlMode==='MOVE'){ if(dy>0){ enterInspect(); vz=vzTarget=1; } else return; }   // pulling back = "let me look"
+  else if(ctrlMode==='PAINT'){ if(!camLock){ camLock=true; SFX.shutter(); composeNudge(); } }  // desktop graduates into the hold
+  const w=screenToWorld(e.clientX,e.clientY);                    // zoom toward the cursor: camPan-only edit, projections untouched
+  vz=clamp(vz*Math.exp(-dy*WHEEL_K), vzMin(), VZ_IN); vzTarget=vz;
+  const z=liveZoom();
+  camPan.x=(w.x-(e.clientX-vpW/2)/z)-camFollow.x; camPan.y=(w.y-(e.clientY-vpH/2)/z)-camFollow.y;
+  clampPan(panMaxNow()); reanchorPans();
+}
+/* ---- P9: two-finger pinch — a second non-UI pointer while a pan finger is live becomes a pinch pair ---- */
+function tryStartPinch(id,sx,sy){
+  if(pinch || !round || round.mode==='HUNT') return false;
+  let live=null; for(const [pid,pp] of pointers){ if(pp.role==='pan'){ live={id:pid,p:pp}; break; } }
+  if(!live) return false;
+  if(!heldCam()){                                               // in MOVE both fingers must be on the pan side (never conscript the joystick)
+    const joyOnLeft=settings.handed!=='left';
+    const onPanSide = joyOnLeft ? (sx>=vpW*0.5) : (sx<vpW*0.5);
+    if(!(ctrlMode==='MOVE' && onPanSide)) return false;
+  }
+  const d0=Math.hypot(sx-live.p.sx, sy-live.p.sy); if(d0<PINCH_MIN_D) return false;
+  if(ctrlMode==='MOVE'){ enterInspect(); vz=vzTarget=1; }       // pinch = look: the discovery moment
+  const mx=(sx+live.p.sx)/2, my=(sy+live.p.sy)/2, w=screenToWorld(mx,my);
+  live.p.role='pinch'; pointers.set(id,{sx,sy,role:'pinch'});
+  pinch={ a:live.id, b:id, d0, vz0:vz, wx:w.x, wy:w.y };
+  return true;
+}
 
 /* ---- drag & drop a SCANNER .json to playtest a custom map (Practice) ---- */
 addEventListener('dragover', e=>{ e.preventDefault(); });
@@ -937,13 +996,17 @@ function onPointerDown(e){
     const p=studioRects().panel;
     if(!inRect(sx,sy,p)){
       if(studio.reticleOn){ pointers.set(id,{sx,sy,role:'reticle'}); studioReticleDrag(sx,sy); return; }
-      exitPaint(); return;   // tapping empty space leaves paint → Move
+      if(camLock){                                                   // held shot: drag above the panel reframes, a clean tap hops back to LOOK
+        if(tryStartPinch(id,sx,sy)) return;
+        pointers.set(id,{sx,sy,role:'pan',sx0:sx,sy0:sy,px0:camPan.x,py0:camPan.y,tap:true,tx:sx,ty:sy}); return; }
+      exitPaint(); return;   // unlocked paint: tapping empty space leaves paint → Move (legacy path, tests ride this)
     }
     return;
   }
   // round on-screen buttons first
   for(const h of roundHits){ if(inRect(sx,sy,h)){ h.fn(); pointers.set(id,{sx,sy,role:'ui'}); return; } }
   if(roundState==='CAUGHT'||roundState==='TIMEOUT'){ pointers.set(id,{sx,sy,role:'ui'}); return; }
+  if(tryStartPinch(id,sx,sy)) return;           // second finger while a pan finger is live → pinch zoom (P9)
   // movement-hand side = floating analog stick; other side = camera pan (peek/free-look)
   const joyOnLeft = settings.handed!=='left';   // right-handed → move with left thumb; actions on right
   const onJoySide = joyOnLeft ? (sx < vpW*0.5) : (sx >= vpW*0.5);
@@ -968,8 +1031,16 @@ function onPointerMove(e){
     else { const cl=Math.min(mag,R); const nx=dx/mag, ny=dy/mag; const f=(cl-dead)/(R-dead);
       joystick.dx=nx*f; joystick.dy=ny*f; joystick.mag=f; }
   } else if(p.role==='pan'){                              // camera peek (world units, 1:1 grab via zoom)
+    if(p.tap && Math.hypot(sx-p.tx,sy-p.ty)>TAP_SLOP) p.tap=false;
     camPan.x=p.px0+(sx-p.sx0)/zoom; camPan.y=p.py0+(sy-p.sy0)/zoom;
-    clampPan(ctrlMode==='INSPECT'?INSPECT_PAN_MAX:MOVE_PEEK_MAX);
+    clampPan(panMaxNow());
+  } else if(p.role==='pinch'){                            // P9: fingers glue the grabbed world point under the moving midpoint
+    if(pinch){ const A=pointers.get(pinch.a), B=pointers.get(pinch.b);
+      if(A&&B){ const dd=Math.hypot(A.sx-B.sx,A.sy-B.sy);
+        if(dd>PINCH_MIN_D*0.5){ vz=clamp(pinch.vz0*dd/pinch.d0, vzMin(), VZ_IN); vzTarget=vz;
+          const mx=(A.sx+B.sx)/2, my=(A.sy+B.sy)/2, z=liveZoom();
+          camPan.x=(pinch.wx-(mx-vpW/2)/z)-camFollow.x; camPan.y=(pinch.wy-(my-vpH/2)/z)-camFollow.y;
+          clampPan(panMaxNow()); } } }
   } else if(p.role==='sv'){ studioSV(sx,sy,p.ptype); }
   else if(p.role==='hue'){ studioHue(sx,sy); }
   else if(p.role==='reticle'){ studioReticleDrag(sx,sy); }
@@ -980,6 +1051,13 @@ function onPointerUp(e){
   try{ cv.releasePointerCapture(e.pointerId); }catch(_){}
   if(!p) return;
   if(p.role==='joystick' && joystick && joystick.id===e.pointerId){ joystick=null; }  // don't kill a joystick a second finger still owns
+  else if(p.role==='pinch' && pinch){
+    const otherId = e.pointerId===pinch.a ? pinch.b : (e.pointerId===pinch.b ? pinch.a : null);
+    pinch=null;
+    const s=otherId!=null?pointers.get(otherId):null;              // survivor re-bases to a pan — zero jump (P9 re-seed rule)
+    if(s && s.role==='pinch'){ s.role='pan'; s.sx0=s.sx; s.sy0=s.sy; s.px0=camPan.x; s.py0=camPan.y; s.tap=false; }
+  }
+  else if(p.role==='pan' && p.tap && ctrlMode==='PAINT' && camLock && studio.open){ exitPaint(); }  // clean tap above the panel hops back to LOOK
 }
 
 /* ---- movement + collision (§5.3) ---- */
@@ -1044,14 +1122,33 @@ function toggleSplit(){ player.splitPaint=!player.splitPaint; SFX.ui();
 function openStudio(){ studio.open=true; studio.state='OPEN_IDLE'; SFX.ui(); syncHexField(); }
 function closeStudio(){ studio.open=false; studio.state='CLOSED'; studio.reticle.active=false; studio.coachHidden=false;
   if(document.activeElement===hexInput) hexInput.blur(); SFX.back(); }
-// ===== control-mode transitions (Move / Paint / Inspect) =====
+// ===== control-mode transitions (Move / Paint / Inspect) — P9 "Photo Loop" =====
+// The stillness law: hops between LOOK and PAINT never move the camera; only returning to MOVE does.
 function enterPaint(){ if(!round||roundState!=='PLAYING'||round.mode==='HUNT') return;
+  const fromLook = ctrlMode==='INSPECT';
   ctrlMode='PAINT'; player.vx=0; player.vy=0; input.mx=0; input.my=0; input.speed=0; input.moveMag=0;
-  joystick=null; freezeHeld=false; camPan.x=0; camPan.y=0; openStudio(); }
-function exitPaint(){ if(studio.open) closeStudio(); ctrlMode='MOVE'; }
+  joystick=null; freezeHeld=false;
+  if(fromLook){ camLock=true; SFX.shutter(); vibe(10); if(!settings.photosensitive) screenFlash(0.10);   // the shutter IS the lock
+    composeNudge(); coachOnce('seenHoldHint','📌 View held — the pill takes you home'); }
+  else { camPan.x=0; camPan.y=0; }
+  openStudio(); }
+function exitPaint(){ if(studio.open) closeStudio();
+  if(camLock){ camLock=false; ctrlMode='INSPECT'; }              // one step back to LOOK — framing pixel-identical
+  else ctrlMode='MOVE'; }
 function enterInspect(){ if(!round||roundState!=='PLAYING'||round.mode==='HUNT') return;
-  if(studio.open) closeStudio(); ctrlMode='INSPECT'; joystick=null; camPan.x=0; camPan.y=0; SFX.ui(); }
-function exitInspect(){ ctrlMode='MOVE'; SFX.back(); }
+  const fromHold = ctrlMode==='PAINT' && camLock;
+  if(studio.open) closeStudio(); camLock=false; ctrlMode='INSPECT'; joystick=null;
+  if(!fromHold){ vz=vzTarget=VZ_SEEKER; }                        // fresh look always eases out to seeker altitude
+  SFX.ui(); coachOnce('seenLookHint','🤏 pinch or scroll to zoom · drag to look'); }
+function exitInspect(){ ctrlMode='MOVE'; camLock=false; SFX.back(); }
+function goHome(){ if(studio.open) closeStudio(); camLock=false; pinch=null; ctrlMode='MOVE'; SFX.back(); }  // the pill: ALL the way home
+function coachOnce(flag,msg){ if(settings[flag]) return; settings[flag]=true; saveSettings(); showToast(msg); }
+function composeNudge(){ const r=studioRects(), s=worldToScreen(player.x,player.y);   // held paint: keep your body visible above the panel
+  if(s.y > r.panel.y-30 && s.x > r.panel.x-20 && s.x < r.panel.x+r.panel.w+20){
+    const z=liveZoom(); const want=player.y-(r.panel.y-56-vpH/2)/z;                   // cam.y that sits the body 56px above the panel
+    const ty=clamp(want-camFollow.y, -INSPECT_PAN_MAX*1.8, INSPECT_PAN_MAX*1.8);
+    // the setter self-disarms if the hold ends mid-tween — a leftover nudge must never move a hopped-back LOOK frame
+    if(FX_MOTION>0) tw(camPan.y, ty, 0.26, easeOutCubic, v=>{ if(ctrlMode==='PAINT'&&camLock) camPan.y=v; }); else camPan.y=ty; } }
 function togglePaintMode(){ ctrlMode==='PAINT' ? exitPaint() : enterPaint(); }
 function toggleInspect(){ ctrlMode==='INSPECT' ? exitInspect() : enterInspect(); }
 function samplePos(){ return studio.reticleOn && studio.reticle.active ? {x:studio.reticle.x,y:studio.reticle.y} : {x:player.x,y:player.y}; }
@@ -1109,7 +1206,8 @@ function toggleReticle(){ studio.reticleOn=!studio.reticleOn; SFX.ui();
   if(studio.reticleOn){ studio.reticle.x=player.x; studio.reticle.y=player.y; studio.reticle.active=true; studio.reticle.hideAt=nowMs()+3000; }
   else studio.reticle.active=false; }
 function studioReticleDrag(sx,sy){ const w=screenToWorld(sx,sy);
-  const maxR=6*TILE, dx=w.x-player.x, dy=w.y-player.y, d=Math.hypot(dx,dy);
+  // P9: over a held frame you can sample anything you can see (practice) / a generous radius (scored modes)
+  const maxR=camLock ? (round&&round.diff.practice ? 1e9 : RETICLE_HELD_R) : 6*TILE, dx=w.x-player.x, dy=w.y-player.y, d=Math.hypot(dx,dy);
   if(d>maxR){ studio.reticle.x=player.x+dx/d*maxR; studio.reticle.y=player.y+dy/d*maxR; }
   else { studio.reticle.x=w.x; studio.reticle.y=w.y; }
   studio.reticle.active=true; studio.reticle.hideAt=nowMs()+3000; }
@@ -1288,8 +1386,9 @@ function updateUfo(u,dt,D){
   if(prev!=='CHASE'&&prev!=='BEAM' && (u.state==='CHASE'||u.state==='BEAM')){
     round.metrics.spottedCount++; round.spottedReason=spottedReason(player.mq,player.m,player.S,player.ref.dominantKey);
     round.reasonUntil=nowMs()+2600; SFX.spotted(); addTrauma(TRAUMA.spotted); punchZoom(-0.05,90,420); FX.spottedV=1; spawnShards(player.x,player.y,COL.danger,9); vibe([30,50,30]);
-    // forgiving: a kid caught mid-paint/inspect is popped back to Move with a warning
-    if(ctrlMode!=='MOVE' && !round.diff.practice){ ctrlMode==='PAINT'?exitPaint():exitInspect(); showToast('Spotted — move!'); }
+    // forgiving: a kid caught mid-paint/look is sent home with a warning — the camera GLIDES back (never snaps)
+    if(ctrlMode!=='MOVE' && !round.diff.practice){ if(holdBracketT>0.3) spawnShards(player.x,player.y,COL.amber,6);
+      goHome(); panBoost=HOLD_GLIDE_MUL; showToast('Spotted — move!'); }
   }
   if((prev==='CHASE'||prev==='SCAN'||prev==='INVESTIGATE') && u.suspicion<EXIT_SUSPECT && u.state==='PATROL') SFX.relief();
 }
@@ -1371,9 +1470,11 @@ function updateBlendSnap(dt){
 /* ============================ CAMERA (lookahead + trauma shake + zoom punch) ============================ */
 function computeZoom(){ zoomBase=clamp(Math.min(vpW,vpH)/(TARGET_VISIBLE_TILES*TILE),ZOOM_MIN,ZOOM_MAX); zoom=zoomBase; }
 function updateCamera(dt){
-  // (1) zoom + inspect ease (pull back to seeker altitude in INSPECT)
-  const zt=ctrlMode==='INSPECT'?1:0; inspectZoomT+=(zt-inspectZoomT)*Math.min(1,dt*INSPECT_ZOOM_RATE);
-  zoom=Math.max(ZOOM_MIN*0.8, zoomBase*(1+FX.zoomPunch)*(1+(INSPECT_ZOOM_MUL-1)*inspectZoomT));
+  // (1) zoom: user view-zoom vz generalizes INSPECT_ZOOM_MUL inside the inspect ease; held PAINT keeps altitude (P9)
+  const zt=heldCam()?1:0; inspectZoomT+=(zt-inspectZoomT)*Math.min(1,dt*INSPECT_ZOOM_RATE*panBoost);
+  if(!pinch) vz+=(vzTarget-vz)*Math.min(1,dt*VZ_RATE);            // pinch/wheel drive vz 1:1; buttons/keys ease
+  zoom=liveZoom();
+  holdBracketT+=((camLock?1:0)-holdBracketT)*Math.min(1,dt*(camLock?10:14));
   // (2) eased follow anchor (velocity lookahead ONLY in MOVE)
   const lead=ctrlMode==='MOVE'?1:0;
   const lx=clamp(player.vx*CAM_LOOK_K,-CAM_LOOK_MAX,CAM_LOOK_MAX)*lead, ly=clamp(player.vy*CAM_LOOK_K,-CAM_LOOK_MAX,CAM_LOOK_MAX)*lead;
@@ -1381,12 +1482,16 @@ function updateCamera(dt){
   const tx=player.x+FX.camLeadX, ty=player.y+FX.camLeadY;
   const d=Math.hypot(tx-camFollow.x, ty-camFollow.y);
   if(d>CAM_DEADZONE){ const t=1-Math.exp(-CAM_STIFFNESS*dt); camFollow.x+=(tx-camFollow.x)*t; camFollow.y+=(ty-camFollow.y)*t; }
-  // (3) pan: PAINT forces 0; MOVE springs home when no pan finger; INSPECT holds the free-look offset
-  if(ctrlMode==='PAINT'){ camPan.x=0; camPan.y=0; }
-  else if(ctrlMode==='MOVE'){ let panActive=false; for(const pp of pointers.values()){ if(pp.role==='pan'){ panActive=true; break; } }
-    if(!panActive){ const t=1-Math.exp(-PAN_HOME_RATE*dt); camPan.x+=(0-camPan.x)*t; camPan.y+=(0-camPan.y)*t;
+  // (2.5) gamepad right stick pans the camera (rate-based) in MOVE peek and while looking/held
+  const gpm=Math.hypot(gpCam.x,gpCam.y);
+  if(gpm>0.02 && (ctrlMode==='MOVE'||heldCam())){ camPan.x+=gpCam.x*420*dt; camPan.y+=gpCam.y*420*dt; }
+  // (3) pan: unlocked PAINT pins to the body; MOVE springs home when idle; LOOK / held PAINT hold the framing
+  if(ctrlMode==='PAINT' && !camLock){ camPan.x=0; camPan.y=0; }
+  else if(ctrlMode==='MOVE'){ let panActive=gpm>0.02; if(!panActive) for(const pp of pointers.values()){ if(pp.role==='pan'||pp.role==='pinch'){ panActive=true; break; } }
+    if(!panActive){ const t=1-Math.exp(-PAN_HOME_RATE*panBoost*dt); camPan.x+=(0-camPan.x)*t; camPan.y+=(0-camPan.y)*t;
       if(Math.hypot(camPan.x,camPan.y)<0.5){ camPan.x=0; camPan.y=0; } } }
-  clampPan(ctrlMode==='INSPECT'?INSPECT_PAN_MAX:MOVE_PEEK_MAX);
+  clampPan(panMaxNow());
+  if(panBoost>1 && ctrlMode==='MOVE' && inspectZoomT<0.05 && Math.hypot(camPan.x,camPan.y)<1) panBoost=1;
   // (4) derive the true rendered center (cam) = clamp(follow + pan) — projections read cam only
   const halfW=(vpW/2)/zoom, halfH=(vpH/2)/zoom;
   const cx=camFollow.x+camPan.x, cy=camFollow.y+camPan.y;
@@ -1418,7 +1523,7 @@ function drawRound(alpha){
     const sw=Math.min(worldW,Math.ceil(vx1))-sx, sh=Math.min(worldH,Math.ceil(vy1))-sy;
     if(sw>0&&sh>0) ctx.drawImage(terrainCanvas,sx,sy,sw,sh,sx,sy,sw,sh); }
   // 3. ambient ground emissive (under entities)
-  drawAmbientGround(v);
+  if(zoom>=zoomBase*0.8) drawAmbientGround(v);   // P9: shed ambient sprite cost at survey altitude (3× the tiles on screen)
   // 4. footstep ripples
   for(const p of particles){ if(p.type==='ripple'){ const k=p.life/p.maxLife; ctx.globalAlpha=0.30*(1-k);
       ctx.strokeStyle=p.color; ctx.lineWidth=2; ctx.beginPath();
@@ -1463,7 +1568,7 @@ function drawRound(alpha){
     ctx.fillStyle=g; ctx.beginPath(); ctx.arc(ik.x,ik.y,rad,0,TAU); ctx.fill(); }
   }
   // 9. ambient overhead drifters (over entities, additive)
-  drawAmbientOverhead();
+  if(zoom>=zoomBase*0.8) drawAmbientOverhead();
   // 10. reticle
   if(studio.reticleOn && studio.reticle.active) drawReticle();
   // 11-14. screen-space post: grade multiply -> vignette/CA -> danger pulse -> scanlines
@@ -1777,38 +1882,63 @@ function drawRoundHUD(){
   txt(POSE_NAMES[player.pose], ax+30, ay-8, 9, COL.muted, 'center', '600');
   uiBtn('⏸', edge, 14, 40, 40, ()=> togglePause(), {rad:9, size:16});
   uiBtn(settings.muted?'🔇':'🔊', edge+46, 14, 40, 40, ()=> setMuted(!settings.muted), {rad:9, size:14});
-  // MODE pill (always visible, always a "get me back to Move" target)
-  { const mc = ctrlMode==='PAINT'?COL.amber:(ctrlMode==='INSPECT'?COL.green:COL.cyan);
-    const label = ctrlMode==='PAINT'?'🎨 PAINT':(ctrlMode==='INSPECT'?'👁 INSPECT':'🕹 MOVE');
+  // MODE pill (always visible, always the one road ALL the way home to Move)
+  { const held = ctrlMode==='PAINT' && camLock;
+    const mc = ctrlMode==='PAINT'?COL.amber:(ctrlMode==='INSPECT'?COL.green:COL.cyan);
+    const label = ctrlMode==='PAINT'?(held?'📌 PAINT':'🎨 PAINT'):(ctrlMode==='INSPECT'?'👁 LOOK':'🕹 MOVE');
     const pw=Math.round(96*hudScale), ph=Math.round(Math.max(40,40*hudScale)), pxp=edge, pyp=62;
     ctx.fillStyle='rgba(21,27,44,0.92)'; rr(pxp,pyp,pw,ph,10); ctx.fill();
     ctx.strokeStyle=mc; ctx.lineWidth=2; rr(pxp,pyp,pw,ph,10); ctx.stroke();
     txt(label, pxp+pw/2, pyp+ph/2, 12, mc, 'center', '800');
     _hud.pill={x:pxp,y:pyp,w:pw,h:ph};
-    roundHits.push({x:pxp,y:pyp,w:pw,h:ph,fn:()=>{ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); }}); }
-  // recenter button — only while panned; on the MOVE side (opposite the ability column) so they never overlap
-  if(Math.hypot(camPan.x,camPan.y)>RECENTER_SHOW){ const rc = right?14:vpW-14-56, ry=Math.round(vpH*0.5-28);
+    roundHits.push({x:pxp,y:pyp,w:pw,h:ph,fn:()=>{ if(ctrlMode!=='MOVE') goHome(); }}); }
+  // P9 camera cluster while looking / holding a shot: ＋ ⌖ － on the MOVE-hand side (buttons cover everything gestures do)
+  _hud.zoom=null;
+  if(heldCam()){
+    const rc = right?14:vpW-14-56; let ry=Math.round(vpH*0.5-96);
+    uiBtn('＋', rc, ry, 56, 56, ()=>stepDetent(1), {rad:14, size:22}); const zin={x:rc,y:ry,w:56,h:56};
+    ry+=66;
+    uiBtn('⌖', rc, ry, 56, 56, ()=>{ setVzTarget(VZ_SEEKER); camPan.x=0; camPan.y=0; reanchorPans(); vibe(8); }, {rad:14, size:22});
+    _hud.recenter={x:rc,y:ry,w:56,h:56};
+    ry+=66;
+    uiBtn('－', rc, ry, 56, 56, ()=>stepDetent(-1), {rad:14, size:22}); const zout={x:rc,y:ry,w:56,h:56};
+    _hud.zoom={ zin, zout };
+    // detent dots — which named altitude you're nearest (FAR · SEEKER · NORMAL · CLOSE)
+    { const dx0=rc+(right?-14:56+8), dyc=Math.round(vpH*0.5-3);
+      let ni=0, bd=1e9; VZ_DETENTS.forEach((d,j)=>{ const e=Math.abs(vz-d); if(e<bd){ bd=e; ni=j; } });
+      for(let j=0;j<VZ_DETENTS.length;j++){ const y=dyc+(VZ_DETENTS.length-1-j)*12-18;
+        ctx.globalAlpha=j===ni?0.95:0.35; ctx.fillStyle=j===1?COL.green:COL.txt;
+        ctx.beginPath(); ctx.arc(dx0,y,j===ni?4:2.5,0,TAU); ctx.fill(); }
+      ctx.globalAlpha=1; }
+  } else if(Math.hypot(camPan.x,camPan.y)>RECENTER_SHOW){
+    // MOVE: recenter appears only while panned (unchanged legacy behavior)
+    const rc = right?14:vpW-14-56, ry=Math.round(vpH*0.5-28);
     uiBtn('⌖', rc, ry, 56, 56, ()=>{ camPan.x=0; camPan.y=0; vibe(8); }, {rad:14, size:22}); _hud.recenter={x:rc,y:ry,w:56,h:56}; }
-  // ---- ability bar (vertical column, action-hand side) — greyed outside MOVE ----
-  const gatedAbil = ctrlMode!=='MOVE';
+  else _hud.recenter=null;
+  // ---- ability bar (vertical column, action-hand side) — hidden under a held shot; ❄ stays live while looking ----
+  if(!studio.open){
   const abx = right ? vpW-edge-44 : edge; const cdMax={dash:DASH_CD,decoy:DECOY_CD,ink:INK_CD};
   const aby = ay-14-44*ABILITIES.length-10*(ABILITIES.length-1);
   ABILITIES.forEach((ab,i)=>{ const y=aby+i*54;
-    const cd = ab.key==='freeze'?0:(player.cd[ab.key]||0), ready=cd<=0 && !gatedAbil;
+    const gated = ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');   // P9: hard-anchor while scouting
+    const cd = ab.key==='freeze'?0:(player.cd[ab.key]||0), ready=cd<=0 && !gated;
     const on = ab.key==='freeze' && player.freeze;
-    ctx.globalAlpha = gatedAbil?0.4:1;
+    ctx.globalAlpha = gated?0.4:1;
     ctx.fillStyle=on?'rgba(63,208,224,0.28)':(ready?'rgba(21,27,44,0.88)':'rgba(21,27,44,0.5)'); rr(abx,y,44,44,11); ctx.fill();
     ctx.strokeStyle=on?COL.cyan:(ready?COL.line:'#242c44'); ctx.lineWidth=on?2:1; rr(abx,y,44,44,11); ctx.stroke();
     txt(ab.glyph, abx+22, y+21, 17, ready?COL.txt:COL.muted, 'center','700');
-    if(cd>0){ ctx.fillStyle='#05070d'; ctx.globalAlpha=(gatedAbil?0.4:1)*0.55; ctx.beginPath(); ctx.moveTo(abx+22,y+22);
+    if(cd>0){ ctx.fillStyle='#05070d'; ctx.globalAlpha=(gated?0.4:1)*0.55; ctx.beginPath(); ctx.moveTo(abx+22,y+22);
       ctx.arc(abx+22,y+22,23,-Math.PI/2,-Math.PI/2+TAU*clamp01(cd/(cdMax[ab.key]||1)),false); ctx.closePath(); ctx.fill(); }
     ctx.globalAlpha=1;
-    roundHits.push({x:abx,y,w:44,h:44,fn:()=>{ if(ctrlMode!=='MOVE') return; if(ab.key==='freeze') freezeHeld=!freezeHeld; else useAbility(ab.key); }});
+    roundHits.push({x:abx,y,w:44,h:44,fn:()=>{ const g=ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');
+      if(g) return; if(ab.key==='freeze') freezeHeld=!freezeHeld; else useAbility(ab.key); }});
   });
+  }
   // debug overlay (practice)
   if(round.debug){ drawDebug(); }
-  // seeker's-eye inspect overlay
-  if(inspectZoomT>0.01) drawInspectOverlay();
+  // seeker's-eye inspect overlay (lite while painting over a held shot: rings + YOU only, no chrome)
+  if(inspectZoomT>0.01) drawInspectOverlay(ctrlMode!=='INSPECT');
+  drawHoldBrackets();
   // joystick visual — sneak/walk knob with a magnitude arc
   if(joystick){ const sneak = input.moveTag!=='walk';
     const kc = (input.speed>0 && !sneak) ? COL.amber : COL.cyan;
@@ -1828,32 +1958,49 @@ function drawRoundHUD(){
   if(round.spottedFlash>0){ ctx.globalAlpha=round.spottedFlash; txt('SPOTTED!', vpW/2, vpH*0.3, 40, COL.danger, 'center','800'); ctx.globalAlpha=1; }
 }
 // INSPECT: "see yourself as the hunter's ship does" — reach rings + a YOU marker + your live blend
-function drawInspectOverlay(){
+// lite=true (held PAINT): rings + YOU only, no chrome — the framed shot stays clean while painting
+function drawInspectOverlay(lite){
   const a=inspectZoomT; applyScreenTransform();
   // each ship's scan reach, projected to screen
   if(round.ufos){ ctx.lineWidth=2; for(const u of round.ufos){ const s=worldToScreen(u.x,u.y);
     ctx.strokeStyle=PAL.warn; ctx.globalAlpha=0.32*a;
     ctx.beginPath(); ctx.arc(s.x,s.y,round.diff.SCAN_R*zoom,0,TAU); ctx.stroke(); } ctx.globalAlpha=1; }
+  // P9 threat pre-warning: a ship closing on your BODY while it's off your framed view must never be a cheap shot
+  let warn=0; if(round.ufos && round.ufos.length && !round.diff.practice){ let bd=1e9;
+    for(const u of round.ufos){ const d=Math.hypot(u.x-player.x,u.y-player.y); if(d<bd) bd=d; }
+    warn=clamp01(1 - bd/(round.diff.SCAN_R*THREAT_WARN_R)); }
+  const youCol = warn>0.55?PAL.danger:(warn>0.2?PAL.warn:COL.cyan);
   // YOU marker: pulsing ring if on-screen, else an edge arrow so you never lose yourself
   const ps=worldToScreen(player.x,player.y), on=ps.x>=0&&ps.x<=vpW&&ps.y>=0&&ps.y<=vpH;
   if(on){ const pr=22+((FX_MOTION>0&&!settings.photosensitive)?3*Math.sin(gfx.t*6):0);
-    ctx.globalAlpha=0.9; ctx.strokeStyle=COL.cyan; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(ps.x,ps.y,pr,0,TAU); ctx.stroke();
-    txt('YOU', ps.x, ps.y-pr-8, 9, COL.cyan,'center','800'); ctx.globalAlpha=1; }
+    ctx.globalAlpha=0.9; ctx.strokeStyle=youCol; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(ps.x,ps.y,pr,0,TAU); ctx.stroke();
+    txt('YOU', ps.x, ps.y-pr-8, 9, youCol,'center','800'); ctx.globalAlpha=1; }
   else { const cx=vpW/2, cy=vpH/2, inset=40, ang=Math.atan2(player.y-cam.y, player.x-cam.x);
     const hw=vpW/2-inset, hh=vpH/2-inset;
     const t=Math.min(Math.abs(hw/(Math.cos(ang)||1e-6)), Math.abs(hh/(Math.sin(ang)||1e-6)));
     const ex=cx+Math.cos(ang)*t, ey=cy+Math.sin(ang)*t;
-    ctx.save(); ctx.translate(ex,ey); ctx.rotate(ang); ctx.globalAlpha=0.9; ctx.fillStyle=COL.cyan;
-    ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-8,-10); ctx.lineTo(-8,10); ctx.closePath(); ctx.fill(); ctx.restore(); ctx.globalAlpha=1; }
+    const pulse=(warn>0.2 && FX_MOTION>0 && !settings.photosensitive)?0.55+0.45*Math.sin(gfx.t*(6+warn*6)):0.9;
+    ctx.save(); ctx.translate(ex,ey); ctx.rotate(ang); ctx.globalAlpha=pulse; ctx.fillStyle=youCol;
+    ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-8,-10); ctx.lineTo(-8,10); ctx.closePath(); ctx.fill(); ctx.restore(); ctx.globalAlpha=1;
+    if(warn>0.2){ txt('⚠ ship near you', ex-Math.cos(ang)*46, ey-Math.sin(ang)*20, 9, youCol,'center','800'); } }
+  if(lite) return;
   // framing label + your blend readout, top-center
   const co=paintCoach(), mqn=Math.round(co.mqNow*100), wc=mqn>=85?PAL.hidden:(mqn>=50?PAL.blend:PAL.exposed);
-  ctx.globalAlpha=a; panel(vpW/2-120, 8, 240, 46, 10);
-  txt("👁 SEEKER'S VIEW", vpW/2, 22, 12, COL.green, 'center','800');
+  const dn = vz<0.66?'FAR':(vz<0.9?'SEEKER':(vz<1.3?'NORMAL':'CLOSE'));
+  ctx.globalAlpha=a; panel(vpW/2-130, 8, 260, 46, 10);
+  txt("👁 SEEKER'S VIEW · "+dn, vpW/2, 22, 12, dn==='SEEKER'?COL.green:COL.muted, 'center','800');
   txt(co.word+'  ·  '+mqn+'%  —  '+(mqn>=85?'you blend!':'still visible'), vpW/2, 42, 13, wc, 'center','700');
   ctx.globalAlpha=1;
   // hint to exit
-  txt('drag to look · 👁 or Esc when done', vpW/2, vpH-70, 10, COL.muted, 'center','600');
+  txt('drag to look · pinch/scroll to zoom · 🎨 holds the shot · 👁 done', vpW/2, vpH-70, 10, COL.muted, 'center','600');
 }
+// P9: viewfinder corner brackets — "the shot is held" (non-breathing; photosensitive-safe)
+function drawHoldBrackets(){ const a=holdBracketT; if(a<=0.02) return; applyScreenTransform();
+  const inset=12+(1-a)*26, L=26;
+  ctx.strokeStyle=COL.amber; ctx.globalAlpha=0.7*a; ctx.lineWidth=3;
+  const cs=[[inset,inset,1,1],[vpW-inset,inset,-1,1],[inset,vpH-inset,1,-1],[vpW-inset,vpH-inset,-1,-1]];
+  for(const [x,y,dx,dy] of cs){ ctx.beginPath(); ctx.moveTo(x+dx*L,y); ctx.lineTo(x,y); ctx.lineTo(x,y+dy*L); ctx.stroke(); }
+  ctx.globalAlpha=1; }
 function drawHuntHUD(){
   const caught=round.hunterCaught||0, total=round.bots.length;
   panel(vpW/2-84,10,168,44,10); txt('CAUGHT  '+caught+' / '+total, vpW/2, 26, 15, COL.cyan,'center','700');
@@ -1921,7 +2068,9 @@ function drawPause(){ ctx.fillStyle='rgba(8,12,25,0.7)'; ctx.fillRect(0,0,vpW,vp
 let hueGradCache=null;
 function drawStudio(){
   const r=studioRects();
-  ctx.fillStyle='rgba(6,10,20,0.72)'; ctx.fillRect(0,0,vpW,vpH);
+  // P9: over a held shot the world stays visible — you paint INSIDE your framed view and watch yourself melt in
+  ctx.fillStyle='rgba(6,10,20,'+(camLock?DIM_HELD:0.72)+')'; ctx.fillRect(0,0,vpW,vpH);
+  if(camLock){ ctx.fillStyle='rgba(10,14,25,0.85)'; rr(r.panel.x,r.panel.y,r.panel.w,r.panel.h,14); ctx.fill(); }  // solid backing keeps slider contrast on bright biomes
   panel(r.panel.x,r.panel.y,r.panel.w,r.panel.h,14);
   txt('PAINT STUDIO', r.title.x, r.title.y+8, 12, COL.amber, 'left','700');
   txt(round.diff.practice?'· slow-mo':'', r.title.x+118, r.title.y+8, 10, COL.muted,'left','500');
@@ -2050,14 +2199,14 @@ function crawlPaint(a,dt){ let maxd=0; for(const ch of ['r','g','b']){ const ste
 /* ============================ §8 SESSION / ROUND ============================ */
 let pendingMode='SURVIVE', pendingLevel=null, showHelp=false;
 function triggerAbduction(u){ if(round.finalized||!player.alive) return;
-  if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0;   // reset BEFORE the TA respawn so mode never leaks
+  if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;   // reset BEFORE the TA respawn so mode never leaks
   if(round.mode==='TA'){ respawnTA(); return; }   // Time Attack: respawn with a time penalty, not game over
   player.alive=false; round.caught=true; round.caughtBy=u; roundState='CAUGHT'; player.abductT=0;
   addTrauma(TRAUMA.abduct); hitstopMs(110); punchZoom(0.12,200,600); screenFlash(0.85); vibe([80,60,120]); SFX.lose(); tone(180,0.9,'sine',0.34,1500); noise(0.9,0.12,2400); }
 function endRound(win){ if(round.finalized||roundState==='TIMEOUT'||roundState==='CAUGHT') return;
-  if(win){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; roundState='TIMEOUT'; round.summaryT=0; SFX.win(); } }
+  if(win){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null; roundState='TIMEOUT'; round.summaryT=0; SFX.win(); } }
 function togglePause(){ if(appState!=='ROUND') return;
-  if(roundState==='PLAYING'){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; roundState='PAUSED'; menuIndex=0; SFX.ui(); stopAllLoops(); }
+  if(roundState==='PLAYING'){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null; roundState='PAUSED'; menuIndex=0; SFX.ui(); stopAllLoops(); }
   else if(roundState==='PAUSED') resumeRound(); }
 function resumeRound(){ roundState='RESUME_COUNTDOWN'; round.countdown=RESUME_COUNTDOWN; round.lastCount=null; SFX.ui(); }
 function gotoTitle(){ appState='TITLE'; menuIndex=0; showHelp=false; stopAllLoops(); }
@@ -2117,6 +2266,7 @@ function startRound(entry, mode, diff, fixedSeed){
   seedAmbient();   // AFTER gameplay entities — ambient must not consume the seeded RNG stream (keeps DAILY reproducible)
   appState='ROUND'; roundState='COUNTDOWN'; studio.open=false; studio.reticleOn=false;
   ctrlMode='MOVE'; camFollow.x=cam.x; camFollow.y=cam.y; camPan.x=0; camPan.y=0; inspectZoomT=0; joystick=null;
+  camLock=false; pinch=null; vz=vzTarget=VZ_SEEKER; panBoost=1; holdBracketT=0;   // P9: fresh round, fresh camera
   settings.lastMode=mode; settings.lastLevel=Math.max(0,LEVELS.indexOf(entry)); settings.lastDiff=diff.label||'NORMAL'; saveSettings();
 }
 
@@ -2664,6 +2814,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   mode:ctrlMode, cam:{x:Math.round(cam.x),y:Math.round(cam.y)}, camFollow:{x:Math.round(camFollow.x),y:Math.round(camFollow.y)},
   camPan:{x:Math.round(camPan.x),y:Math.round(camPan.y)}, zoom:+zoom.toFixed(3),
   inspect:{active:ctrlMode==='INSPECT',zoomT:+inspectZoomT.toFixed(2)},
+  hold:{locked:camLock, vz:+vz.toFixed(3), vzTarget:+vzTarget.toFixed(3), pinch:!!pinch, brackets:+holdBracketT.toFixed(2)},
   move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},
   speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
   perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; } }; }catch(_){}
