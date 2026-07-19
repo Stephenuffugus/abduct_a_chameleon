@@ -2299,7 +2299,8 @@ function startRound(entry, mode, diff, fixedSeed){
   player.prevConceal=0; player.snapT=0; player.snapArmed=true;   // snapCount persists across a session (monotonic)
   rng=mulberry32(seed>>>0);
   setActiveMap(entry.data); buildOpenness();
-  biomeKey=biomeOf(MAP.name); biome=BIOME[biomeKey]||BIOME.greenwood; round.biome=biomeKey;
+  biomeKey=(MAP.biome && BIOME[MAP.biome]) ? MAP.biome : biomeOf(MAP.name);   // P11: maps may declare their mood explicitly
+  biome=BIOME[biomeKey]||BIOME.greenwood; round.biome=biomeKey;
   buildSky();
   const hiders=MAP.spawns.filter(s=>s.role==='hider'), seekers=MAP.spawns.filter(s=>s.role==='seeker');
   const hs=hiders.length?hiders[(rng()*hiders.length)|0]:{x:(mapCols/2)|0,y:(mapRows/2)|0};
@@ -2318,7 +2319,11 @@ function startRound(entry, mode, diff, fixedSeed){
     for(let i=0;i<n;i++){ const hp=hiders.length?hiders[(i*2+1)%hiders.length]:{x:5+i*4,y:5}; round.bots.push(makeBotHider((hp.x+0.5)*TILE,(hp.y+0.5)*TILE)); }
     cam.x=player.x; cam.y=player.y;
   } else {
-    for(let i=0;i<diff.UFO_COUNT;i++){ const sp=seekers.length?seekers[i%seekers.length]:{x:2,y:2};
+    // P11: the expansion maps are ~35-60% larger than the originals — one extra hunter keeps
+    // patrol pressure honest on big ground (never in practice; heat ramps its own fleet)
+    const bigMap = mapCols*mapRows>=4800 ? 1 : 0;
+    const ufoN = diff.UFO_COUNT + (diff.practice||diff.heat?0:bigMap);
+    for(let i=0;i<ufoN;i++){ const sp=seekers.length?seekers[i%seekers.length]:{x:2,y:2};
       round.ufos.push(makeUfo((sp.x+0.5)*TILE,(sp.y+0.5)*TILE)); }
   }
   if(mode==='TA'){   // Beacon Run: scatter beacons on open ground away from the spawn

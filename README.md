@@ -24,6 +24,10 @@ python3 -m http.server 8000      # or: npx serve
 
 Open **http://localhost:8000/** → **Play**. It also runs off `file://` (falls back to a baked level).
 
+> **New in v0.2 "Photo Loop":** plant yourself, free-look at the hunters' altitude with pinch/scroll **zoom**,
+> then tap 🎨 to **hold the shot** and paint inside your framed view — seamless lock → look → zoom → hold →
+> paint → unlock. Plus 6 new expansion maps, XP levels, challenges, and new cosmetics.
+
 ### Modes
 - **Practice / Zen** — no fail, free-roam. Learn to paint & blend. (`H` toggles a debug readout.)
 - **Survive** — 1–3 UFOs hunt you; outlast the timer (Easy / Normal / Hard — Hard UFOs coordinate).
@@ -40,27 +44,33 @@ Open **http://localhost:8000/** → **Play**. It also runs off `file://` (falls 
 | 👥 **Decoy** | `C` | Drop a painted twin that steals a UFO's attention |
 | 💨 **Ink** | `V` | A cloud that blocks a hunter's line of sight |
 
-### Controls — a comfortable, mode-based scheme (built for tablets)
+### Controls — the Photo Loop (built for tablets)
 
-Three modes, always shown by a **MODE pill** (top-left) that's also your one-tap way back to Move:
+Three modes, always shown by a **MODE pill** (top-left) that's also your one-tap road ALL the way back to Move.
+The loop that makes the game: **plant → look → zoom → hold the shot → paint → unlock**. One law makes it
+seamless: *hops between Look and Paint never move the camera; only returning to Move does.*
 
-- **🕹 Move** — drag the **move side** as a floating analog stick: **push gently to *sneak*, far to *walk*** (the
-  knob shows SNEAK/WALK). Drag the **other side** to **pan the camera** and peek toward the ships; it springs back,
-  or tap **⌖ recenter**.
-- **🎨 Paint** — tap **🎨**: you strike a pose, stop, and paint yourself in the Studio (live coach, one-tap
-  **MATCH**, 2-tone). Tap the pill, 👁, or empty space to leave.
-- **👁 Inspect** — tap **👁**: the camera pulls back to the **hunters' top-down view** so you can see whether you
-  actually blend, then nudge your position. Tap 👁 / Esc when done.
+- **🕹 Move** — drag the **move side** as a floating analog stick: **push gently to *sneak*, far to *walk***.
+  Drag the **other side** to **peek** the camera; it springs back, or tap **⌖ recenter**.
+- **👁 Look** — tap **👁** (or just *pinch* / *scroll out*): you plant in place and the camera airlifts to the
+  **hunters' altitude**. Drag to look around, **pinch / scroll / ＋－ buttons to zoom** (FAR · SEEKER · NORMAL ·
+  CLOSE detents). A threat-aware **YOU** marker means you never lose yourself — and never get cheap-shotted.
+- **🎨 Paint** — tap **🎨** from Look and the view is **HELD like a photo** (shutter click, corner brackets,
+  📌 on the pill): the studio opens *over your framed shot* with a light dim so you watch your tiny faraway
+  self repaint live. Tap empty space to hop back to Look — **framing pixel-identical**. Paint from Move works
+  like always (camera pinned on your body).
 
 | | Keyboard / Mouse | Touch |
 |---|---|---|
 | Move (analog speed) | `WASD` / arrows · hold `Shift` = sneak | drag move side (light = sneak) |
-| Look around | drag mouse on action side | drag the other side |
-| **Paint** mode | `E` / `Tab` / 🎨 | 🎨 |
-| **Inspect** mode | `I` / 👁 | 👁 |
+| Look around | drag on action side · **scroll-out = Look** | drag the other side · **pinch = Look** |
+| **Zoom** (in Look / held Paint) | scroll wheel · `-` `=` detents | pinch · ＋／－ buttons |
+| **Paint** (holds the shot from Look) | `E` / `Tab` / 🎨 | 🎨 |
+| **Look** mode | `I` / 👁 | 👁 |
 | **Match** (sample ground) | `Q` | **MATCH** |
-| Pose · Abilities | `[` `]` `R` · Space/Ctrl/C/V | 🕺 · ❄ ⚡ 👥 💨 |
-| Back out one mode · Pause | `Esc` | MODE pill · ⏸ |
+| Pose · Abilities | `[` `]` `R` · Space/Ctrl/C/V | 🕺 · ❄ ⚡ 👥 💨 (❄ works while Looking) |
+| Back one step · all the way home | `Esc` · — | tap empty space · MODE pill |
+| Gamepad | right stick pans · dpad zooms · B backs out one step | |
 
 **Performance** is tunable in Settings (Auto / Smooth / Full) and auto-scales if a device struggles, so it stays
 smooth on modest tablets.
@@ -76,6 +86,21 @@ nudge that closes the gap (*warmer, lighter, more vivid…*), then chimes when y
 and paint each half its own terrain color to disappear where one color can't. The instant you melt in you
 feel a soft **blend-snap**; hold a perfect blend on new ground to fill your **Blend Book** and earn **biome
 mastery medals**.
+
+### Maps — 12 handcrafted-feel levels
+
+Six original biome maps plus a **serious expansion set** (bigger, denser, each with a hiding identity):
+**Riverline** (valley of three bridges), **Sunken Ruins** (flooded walled courtyards), **Cinderfield**
+(seam causeways through lava), **Frostharbor** (docks, crate rows, ice floes — the big one), **Scrapline**
+(junkyard alleys), **Twin Gardens** (a deliberate 2-tone mosaic playground). Expansion maps unlock along
+the XP arc (Lv 2–7); large maps field an extra hunter so patrol pressure stays honest.
+
+### Progression — XP · challenges · cosmetics
+
+Every scored round pays **XP** (score-based + win bonus) toward levels; the summary shows your gain and
+the bar to the next level. **Challenges** (Untouchable, Ghost Hunter, Quick Banker, Marathon Ghost,
+Field Guide) grant skins or bonus XP. The wardrobe now tracks Level, challenge count, ten head accents,
+biome medals, and the Blend Book.
 
 ### Comfort & unlocks
 - **Settings** (title or pause): master/SFX volume, **motion** (full/reduced/minimal), **screen shake**,
@@ -108,8 +133,9 @@ shared across the game, the editor, and the generator — keep them in sync if y
 ```
 index.html                  ← the game (top-down, offline, single file)
 scanner-level-editor.html   ← SCANNER — top-down level editor
-maps/                       ← 6 themed levels + levels.json manifest (generated)
-tools/generate-levels.mjs   ← regenerates the maps
+maps/                       ← 12 themed levels + levels.json manifest (generated)
+tools/generate-levels.mjs   ← regenerates the maps (crafted design() API for the expansion set)
+tools/validate-maps.mjs     ← contract + playability validator (run after any map change)
 docs/
   BUILD_SPEC.md             ← the master design/build spec this game was built from
   HANDOFF-3d.md, README-3d.md  ← the original 3D multiplayer prototype notes
@@ -120,6 +146,7 @@ abduct-3d.html              ← the earlier 3D multiplayer prototype (reference)
 
 ```json
 { "format":"scanner-map", "version":1, "name":"greenwood",
+  "biome": "greenwood",                                  // optional: explicit mood (else inferred from name)
   "grid": { "cols":72, "rows":54 },
   "terrain": [["grass","water", "..."], "..."],       // row-major, one key per cell
   "objects": [{ "x":12, "y":7, "type":"tree" }],       // cover; blocks line-of-sight
