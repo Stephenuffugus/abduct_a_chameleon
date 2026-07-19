@@ -894,9 +894,9 @@ addEventListener('keydown', e=>{
     else if(e.code==='KeyQ') instantMatch();
     else if(e.code==='BracketLeft') cyclePose(-1);
     else if(e.code==='BracketRight'||e.code==='KeyR') cyclePose(1);
-    else if(e.code==='ControlLeft'||e.code==='ControlRight') useAbility('dash');
-    else if(e.code==='KeyC') useAbility('decoy');
-    else if(e.code==='KeyV') useAbility('ink');
+    else if((e.code==='ControlLeft'||e.code==='ControlRight') && ctrlMode==='MOVE') useAbility('dash');   // P10: no dashing out of a rooted pose
+    else if(e.code==='KeyC' && ctrlMode==='MOVE') useAbility('decoy');
+    else if(e.code==='KeyV' && ctrlMode==='MOVE') useAbility('ink');
     else if(e.code==='Escape'){ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); else togglePause(); }
     else if(e.code==='KeyH' && round && round.diff.practice) round.debug=!round.debug;
     else if(e.code==='KeyM') setMuted(!settings.muted);
@@ -914,6 +914,7 @@ addEventListener('keydown', e=>{
 addEventListener('keyup', e=> keys.delete(e.code));
 // losing OS focus (Alt-Tab, click another window) never delivers keyup — clear held state so you don't walk off unattended
 addEventListener('blur', ()=>{ keys.clear(); joystick=null; pointers.clear();
+  if(studio.open) closeStudio();                       // P10: never resume from alt-tab into a dead panel
   ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
   if(appState==='ROUND' && roundState==='PLAYING') togglePause(); });
 
@@ -929,9 +930,11 @@ cv.addEventListener('wheel', onWheel, {passive:false});
 /* ---- P9: wheel zoom (desktop; ctrl+wheel = trackpad pinch, handled identically) ---- */
 function onWheel(e){
   e.preventDefault();                                            // always eat it — never page-zoom over the game
+  const dy=(e.deltaMode===1?e.deltaY*33:e.deltaY)*(e.ctrlKey?3:1);
+  if(appState==='LEVEL_SELECT'){ levelScroll=clamp(levelScroll+dy*0.6,0,levelMaxScroll); return; }
+  if(appState==='SETTINGS'){ settingsScroll=clamp(settingsScroll+dy*0.6,0,settingsMaxScroll); return; }
   if(appState!=='ROUND'||roundState!=='PLAYING'||!round||round.mode==='HUNT'||!player.alive) return;
   ensureAudio();
-  const dy=(e.deltaMode===1?e.deltaY*33:e.deltaY)*(e.ctrlKey?3:1);
   if(ctrlMode==='MOVE'){ if(dy>0){ enterInspect(); vz=vzTarget=1; } else return; }   // pulling back = "let me look"
   else if(ctrlMode==='PAINT'){ if(!camLock){ camLock=true; SFX.shutter(); composeNudge(); } }  // desktop graduates into the hold
   const w=screenToWorld(e.clientX,e.clientY);                    // zoom toward the cursor: camPan-only edit, projections untouched
@@ -973,8 +976,17 @@ addEventListener('drop', e=>{ e.preventDefault();
   }catch(_){ showToast('That is not a SCANNER map export'); } };
   r.readAsText(f);
 });
-function showToast(t){ toast={ text:t, until:nowMs()+2400 }; }
-function drawToast(){ if(!toast) return; if(nowMs()>toast.until){ toast=null; return; }
+// P10: toasts queue instead of clobbering each other (unlock + bank + coach can land together)
+const toastQ=[];
+function showToast(t){
+  if(!toast || nowMs()>toast.until){ toast={ text:t, until:nowMs()+2400 }; return; }
+  if(toast.text===t || toastQ.includes(t)) return;
+  if(toastQ.length<4) toastQ.push(t);
+  toast.until=Math.min(toast.until, nowMs()+900);      // shorten the current one so the queue flows
+}
+function drawToast(){
+  if(toast && nowMs()>toast.until) toast = toastQ.length ? { text:toastQ.shift(), until:nowMs()+2400 } : null;
+  if(!toast) return;
   applyScreenTransform(); ctx.globalAlpha=Math.min(1,(toast.until-nowMs())/400);
   panel(vpW/2-170, vpH-70, 340, 36, 9); txt(toast.text, vpW/2, vpH-52, 13, COL.txt,'center','600'); ctx.globalAlpha=1; }
 
@@ -985,7 +997,10 @@ function onPointerDown(e){
   if(appState==='SETTINGS'){ if(showHelp){ showHelp=false; return; }
     if(handleSettingsTap(sx,sy)) pointers.set(id,{sx,sy,role:'ui'});
     else pointers.set(id,{sx,sy,role:'sscroll',sy0:sy,scroll0:settingsScroll}); return; }
-  if(appState!=='ROUND'){ handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
+  if(appState!=='ROUND'){
+    if(appState==='LEVEL_SELECT' && levelMaxScroll>0 && !showHelp){    // P10: a serious map set scrolls — tap fires on release if the finger didn't drag
+      pointers.set(id,{sx,sy,role:'lvscroll',sy0:sy,scroll0:levelScroll,moved:false}); return; }
+    handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
   // ROUND — paused overlay is a menu (uses navList)
   if(roundState==='PAUSED'){ handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
   if(studio.open){
@@ -1045,6 +1060,8 @@ function onPointerMove(e){
   else if(p.role==='hue'){ studioHue(sx,sy); }
   else if(p.role==='reticle'){ studioReticleDrag(sx,sy); }
   else if(p.role==='sscroll'){ settingsScroll=clamp(p.scroll0-(sy-p.sy0),0,settingsMaxScroll); }
+  else if(p.role==='lvscroll'){ if(Math.abs(sy-p.sy0)>TAP_SLOP) p.moved=true;
+    if(p.moved) levelScroll=clamp(p.scroll0-(sy-p.sy0),0,levelMaxScroll); }
 }
 function onPointerUp(e){
   const p=pointers.get(e.pointerId); pointers.delete(e.pointerId);
@@ -1058,6 +1075,7 @@ function onPointerUp(e){
     if(s && s.role==='pinch'){ s.role='pan'; s.sx0=s.sx; s.sy0=s.sy; s.px0=camPan.x; s.py0=camPan.y; s.tap=false; }
   }
   else if(p.role==='pan' && p.tap && ctrlMode==='PAINT' && camLock && studio.open){ exitPaint(); }  // clean tap above the panel hops back to LOOK
+  else if(p.role==='lvscroll' && !p.moved){ handleMenuTap(p.sx,p.sy); }                            // level-select tap fires on clean release
 }
 
 /* ---- movement + collision (§5.3) ---- */
@@ -1167,7 +1185,8 @@ function instantMatch(){ applyMatch(player.x,player.y); }   // Q / RT / long-pre
 function studioRects(){
   const LW=360, LH=330; const scale=Math.min(1, vpW/400)*(vpH<520?0.86:1);
   const pw=LW*scale, ph=LH*scale;
-  const px=(vpW-pw)/2; const py=vpH-ph-16;
+  // P10: on narrow (portrait) screens the mode dock owns the bottom band — lift the panel above it
+  const px=(vpW-pw)/2; const py=vpH-ph-16-(vpW<700?78:0);
   const R=(lx,ly,lw,lh)=>({ x:px+lx*scale, y:py+ly*scale, w:lw*scale, h:lh*scale });
   return { scale, panel:{x:px,y:py,w:pw,h:ph},
     sv:R(14,44,200,200), hue:R(222,44,30,200), match:R(262,44,84,40),
@@ -2458,8 +2477,12 @@ function navBtn(label,x,y,w,h,fn,opts){ opts=opts||{}; const idx=navList.length;
   txt(label,x+w/2,y+h/2-(opts.sub?7:0),opts.size||17,opts.disabled?COL.muted:(sel?COL.amber:(opts.color||COL.txt)),'center',opts.weight||'700');
   if(opts.sub) txt(opts.sub,x+w/2,y+h/2+13,10,COL.muted,'center','500');
   if(!opts.disabled) navList.push({x,y,w,h,fn}); }
-function menuNav(dx,dy){ if(!navList.length) return; const d=(dy||dx||1); menuIndex=(menuIndex+d+navList.length)%navList.length; SFX.ui(); }
-function menuConfirm(){ if(showHelp){ showHelp=false; return; } const n=navList[menuIndex]; if(n){ n.fn(); } }
+function menuNav(dx,dy){
+  if(appState==='SETTINGS' && !showHelp){ if(dx) settingsAdjust(dx); else settingsNav(dy||1); return; }   // P10: settings is keyboard-first now
+  if(!navList.length) return; const d=(dy||dx||1); menuIndex=(menuIndex+d+navList.length)%navList.length; SFX.ui(); }
+function menuConfirm(){ if(showHelp){ showHelp=false; return; }
+  if(appState==='SETTINGS'){ settingsConfirm(); return; }
+  const n=navList[menuIndex]; if(n){ n.fn(); } }
 function menuBack(){ if(showHelp){ showHelp=false; SFX.back(); return; }
   if(appState==='SETTINGS'){ closeSettings(); return; }
   if(appState==='WARDROBE'){ appState='TITLE'; menuIndex=0; SFX.back(); return; } SFX.back();
@@ -2475,7 +2498,13 @@ function drawMenuBg(){ ctx.fillStyle=COL.bg; ctx.fillRect(0,0,vpW,vpH);
   g.addColorStop(0,'rgba(63,208,224,0.05)'); g.addColorStop(1,'rgba(63,208,224,0)'); ctx.fillStyle=g; ctx.fillRect(0,0,vpW,vpH);
   const g2=ctx.createRadialGradient(vpW*0.1,vpH+40,60, vpW*0.1,vpH+40, Math.max(vpW,vpH));
   g2.addColorStop(0,'rgba(242,179,61,0.05)'); g2.addColorStop(1,'rgba(242,179,61,0)'); ctx.fillStyle=g2; ctx.fillRect(0,0,vpW,vpH); }
+let _menuPrev=null, _menuT0=0;
 function drawMenu(){ applyScreenTransform(); drawMenuBg(); navList=[];
+  // P10: screens fade-slide in (180ms, reduced-motion → fade only) — hit rects land with the settle
+  if(appState!==_menuPrev){ _menuPrev=appState; _menuT0=nowMs(); }
+  const ta=clamp01((nowMs()-_menuT0)/180);
+  ctx.save(); ctx.globalAlpha=ta;
+  if(FX_MOTION>0 && ta<1) ctx.translate(0,(1-easeOutCubic(ta))*14);
   if(appState==='BOOT') drawBoot();
   else if(appState==='TITLE') drawTitle();
   else if(appState==='MODE_SELECT') drawModeSelect();
@@ -2484,30 +2513,34 @@ function drawMenu(){ applyScreenTransform(); drawMenuBg(); navList=[];
   else if(appState==='SUMMARY') drawSummary();
   else if(appState==='SETTINGS') drawSettings();
   else if(appState==='WARDROBE') drawWardrobe();
+  ctx.restore(); ctx.globalAlpha=1;
   if(showHelp) drawHelp();
 }
 function drawBoot(){ txt('ABDUCT A CHAMELEON', vpW/2, vpH/2-10, 26, COL.amber,'center','800');
   txt('loading…', vpW/2, vpH/2+24, 13, COL.muted,'center','500'); }
 function drawTitle(){
   const cx=vpW/2; hueAnim+=0;
-  // animated chameleon + ufo
-  const chx=cx-120, chy=vpH*0.30; const hue=(hueAnim*40)%360; const cc=hsv2rgb(hue,0.6,0.8);
-  ctx.save(); ctx.translate(chx,chy); ctx.fillStyle=rgb2hex(cc); ctx.beginPath();
-  ctx.ellipse(0,0,26,18,0,0,Math.PI*2); ctx.fill(); ctx.fillStyle='#0a0a12'; ctx.beginPath(); ctx.arc(14,-6,3,0,Math.PI*2); ctx.fill(); ctx.restore();
+  // P10: our actual characters — the person hider slowly repainting to the ground hue, waving; the alien under its ship
+  const chx=cx-120, chy=vpH*0.30; const hue=(hueAnim*40)%360; const cc=hsv2rgb(hue,0.45,0.72);
+  drawHumanoid(chx, chy, 0, rgb2hex(cc), 0.15, { pose:'wave', r:20, breathP:hueAnim*2.2, skin:PROGRESS.equipped&&PROGRESS.equipped.skin });
   const ux=cx+130, uy=vpH*0.22+Math.sin(hueAnim*2)*8;
   ctx.save(); ctx.translate(ux,uy); ctx.fillStyle='rgba(63,208,224,0.15)'; ctx.beginPath(); ctx.moveTo(-24,0); ctx.lineTo(24,0); ctx.lineTo(14,70); ctx.lineTo(-14,70); ctx.closePath(); ctx.fill();
   ctx.fillStyle='#1b2337'; ctx.strokeStyle=COL.cyan; ctx.lineWidth=2; ctx.beginPath(); ctx.ellipse(0,0,26,15,0,0,Math.PI*2); ctx.fill(); ctx.stroke(); ctx.restore();
-  txt('ABDUCT A', cx, vpH*0.44, Math.min(56,vpW*0.11), COL.txt,'center','800');
-  txt('CHAMELEON', cx, vpH*0.44+Math.min(56,vpW*0.11), Math.min(60,vpW*0.12), COL.amber,'center','800');
-  txt('Paint yourself to vanish. Outlast the hunters.', cx, vpH*0.44+Math.min(56,vpW*0.11)+40, 14, COL.muted,'center','500');
-  const bw=Math.min(300,vpW-60), bx=cx-bw/2; let by=vpH*0.62;
-  navBtn('▶  PLAY', bx,by,bw,54, ()=>{ startPlay(); }, {size:20}); by+=64;
+  drawHumanoid(ux, uy+84, 0, '#EDEFF4', 0, { pose:'point', r:13, alien:true, breathP:hueAnim*1.7 });
+  const t1=Math.min(56,vpW*0.11,vpH*0.10), t2=Math.min(60,vpW*0.12,vpH*0.107);   // P10: scale the wordmark to short viewports too
+  txt('ABDUCT A', cx, vpH*0.40, t1, COL.txt,'center','800');
+  txt('CHAMELEON', cx, vpH*0.40+t1, t2, COL.amber,'center','800');
+  const tagY=vpH*0.40+t1+t2*0.62+22;
+  txt('Paint yourself to vanish. Outlast the hunters.', cx, tagY, Math.min(14,vpH*0.032), COL.muted,'center','500');
+  const k=clamp(vpH/560,0.68,1);                                  // compress the button stack on short viewports
+  const bw=Math.min(300,vpW-60), bx=cx-bw/2; let by=Math.max(vpH*0.62, tagY+22*k);
+  navBtn('▶  PLAY', bx,by,bw,Math.round(54*k), ()=>{ startPlay(); }, {size:20}); by+=Math.round(64*k);
   const hw=(bw-10)/2;
-  navBtn('👕  Wardrobe', bx,by,hw,44, ()=>{ appState='WARDROBE'; menuIndex=0; SFX.ui(); }, {size:14});
-  navBtn('⚙  Settings', bx+hw+10,by,hw,44, ()=>{ openSettings('TITLE'); }, {size:14}); by+=54;
-  navBtn('How to Play', bx,by,hw,42, ()=>{ showHelp=true; SFX.ui(); }, {size:13});
-  navBtn(settings.muted?'🔇  Muted':'🔊  Sound', bx+hw+10,by,hw,42, ()=>{ setMuted(!settings.muted); }, {size:13});
-  txt('v0.1 · offline · drag a SCANNER .json onto the window to playtest it', cx, vpH-22, 11, COL.muted,'center','500');
+  navBtn('👕  Wardrobe', bx,by,hw,Math.round(44*k), ()=>{ appState='WARDROBE'; menuIndex=0; SFX.ui(); }, {size:14});
+  navBtn('⚙  Settings', bx+hw+10,by,hw,Math.round(44*k), ()=>{ openSettings('TITLE'); }, {size:14}); by+=Math.round(54*k);
+  navBtn('How to Play', bx,by,hw,Math.round(42*k), ()=>{ showHelp=true; SFX.ui(); }, {size:13});
+  navBtn(settings.muted?'🔇  Muted':'🔊  Sound', bx+hw+10,by,hw,Math.round(42*k), ()=>{ setMuted(!settings.muted); }, {size:13});
+  txt('v0.2 "Photo Loop" · offline · drag a SCANNER .json onto the window to playtest it', cx, vpH-22, 11, COL.muted,'center','500');
 }
 function drawModeSelect(){ const cx=vpW/2;
   txt('CHOOSE MODE', cx, vpH*0.16, 24, COL.txt,'center','800');
@@ -2533,34 +2566,50 @@ function startDaily(){ SFX.confirm(); const seed=dailySeed();
   pendingMode='DAILY'; fetchLevelData(lv).then(data=>{ lv.data=data; startRound(lv,'DAILY',DIFF.NORMAL,seed); }); }
 function levelBadge(entry){ if(entry.usedBaked) return ''; const key=entry.display+'|'+pendingMode+'|'+(pendingMode==='PRACTICE'?'PRACTICE':settings.lastDiff);
   const b=best[key]; return b?('PB '+b.bestScore+' ('+b.bestGrade+')'):''; }
+let levelScroll=0, levelMaxScroll=0;
 function drawLevelSelect(){ const cx=vpW/2;
   txt('SELECT LEVEL', cx, 40, 22, COL.txt,'center','800');
-  txt(pendingMode==='PRACTICE'?'Practice / Zen':'Survive', cx, 64, 12, COL.amber,'center','600');
-  // adaptive grid: choose cols + card height so ALL levels fit (and stay reachable) on any viewport
+  const sub = pendingMode==='PRACTICE'?'Practice / Zen' : pendingMode==='HEAT'?'Heat · Endless'
+    : pendingMode==='HUNT'?'🛸 Hunt' : pendingMode==='TA'?'Time Attack · Beacon Run' : 'Survive';
+  txt(sub, cx, 64, 12, COL.amber,'center','600');
+  // adaptive grid; with a serious map set it SCROLLS when it can't fit (drag or keyboard-follow)
   const n=LEVELS.length, pad=14, top=84, bottomReserve=62;
   const cols=clamp(Math.floor(vpW/240),1,4);
   const rows=Math.ceil(n/cols);
   const availW=Math.min(vpW-32, cols*300), availH=Math.max(120, vpH-top-bottomReserve);
   const cw=(availW-(cols-1)*pad)/cols;
-  const chh=clamp((availH-(rows-1)*pad)/rows, 66, 138);
+  const chh=clamp((availH-(rows-1)*pad)/rows, 84, 138);
   const gridW=cols*cw+(cols-1)*pad, gx=(vpW-gridW)/2;
-  const gridH=rows*chh+(rows-1)*pad, gy=top+Math.max(0,(availH-gridH)/2);
+  const gridH=rows*chh+(rows-1)*pad;
+  levelMaxScroll=Math.max(0, gridH-availH); if(!levelMaxScroll) levelScroll=0; levelScroll=clamp(levelScroll,0,levelMaxScroll);
+  // keyboard/gamepad: keep the selected card in view
+  if(menuIndex>=0 && menuIndex<n && levelMaxScroll){ const ry=((menuIndex/cols)|0)*(chh+pad);
+    if(ry-levelScroll<0) levelScroll=ry; else if(ry+chh-levelScroll>availH) levelScroll=ry+chh-availH; }
+  const gy=top+Math.max(0,(availH-gridH)/2)-levelScroll;
+  ctx.save(); ctx.beginPath(); ctx.rect(0,top-4,vpW,availH+8); ctx.clip();
   for(let i=0;i<LEVELS.length;i++){ const e=LEVELS[i]; const col=i%cols, row=(i/cols)|0;
     const x=gx+col*(cw+pad), y=gy+row*(chh+pad);
     const idx=navList.length; const sel=idx===menuIndex;
-    ctx.fillStyle=sel?'rgba(242,179,61,0.14)':'rgba(21,27,44,0.9)'; rr(x,y,cw,chh,10); ctx.fill();
-    ctx.strokeStyle=sel?COL.amber:COL.line; ctx.lineWidth=sel?2.5:1.5; rr(x,y,cw,chh,10); ctx.stroke();
-    // thumb
-    const tw=cw-20, th=chh-46, tx=x+10, ty=y+10;
-    const thumb=ensureThumb(e);
-    ctx.save(); rr(tx,ty,tw,th,6); ctx.clip();
-    if(thumb){ ctx.imageSmoothingEnabled=false; ctx.drawImage(thumb, tx,ty,tw,th); ctx.imageSmoothingEnabled=true; }
-    else { ctx.fillStyle='#0A0E19'; ctx.fillRect(tx,ty,tw,th); txt('loading…',tx+tw/2,ty+th/2,11,COL.muted,'center','500'); }
-    ctx.restore();
-    txt(e.display.split('—')[0].trim(), x+12, y+chh-20, 14, sel?COL.amber:COL.txt,'left','700');
-    const badge=levelBadge(e); if(badge) txt(badge, x+cw-12, y+chh-20, 10, COL.green,'right','600');
-    navList.push({ x,y,w:cw,h:chh, fn:()=>selectLevel(e) });
+    if(y+chh>top-6 && y<top+availH+6){
+      ctx.fillStyle=sel?'rgba(242,179,61,0.14)':'rgba(21,27,44,0.9)'; rr(x,y,cw,chh,10); ctx.fill();
+      ctx.strokeStyle=sel?COL.amber:COL.line; ctx.lineWidth=sel?2.5:1.5; rr(x,y,cw,chh,10); ctx.stroke();
+      const tw=cw-20, th=chh-46, tx=x+10, ty=y+10;
+      const thumb=ensureThumb(e);
+      ctx.save(); rr(tx,ty,tw,th,6); ctx.clip();
+      if(thumb){ ctx.imageSmoothingEnabled=false; ctx.drawImage(thumb, tx,ty,tw,th); ctx.imageSmoothingEnabled=true; }
+      else { ctx.fillStyle='#0A0E19'; ctx.fillRect(tx,ty,tw,th); txt('loading…',tx+tw/2,ty+th/2,11,COL.muted,'center','500'); }
+      ctx.restore();
+      txt(e.display.split('—')[0].trim(), x+12, y+chh-20, 14, sel?COL.amber:COL.txt,'left','700');
+      const badge=levelBadge(e); if(badge) txt(badge, x+cw-12, y+chh-20, 10, COL.green,'right','600');
+    }
+    // hit rect clipped to the viewport band so an off-screen card can never shadow the Back button
+    const vy0=Math.max(y,top-4), vy1=Math.min(y+chh,top+availH+4);
+    navList.push({ x, y:vy0, w:cw, h:Math.max(0,vy1-vy0), fn:()=>selectLevel(e) });
   }
+  ctx.restore();
+  if(levelMaxScroll){ const sbH=availH*availH/gridH, sbY=top+(availH-sbH)*(levelScroll/levelMaxScroll);
+    ctx.fillStyle='rgba(255,255,255,0.14)'; rr(vpW-8,sbY,4,sbH,2); ctx.fill();
+    if(levelScroll<levelMaxScroll-4) txt('▾ more', cx, top+availH+2, 10, COL.muted,'center','600'); }
   const bw=Math.min(200,vpW-48); navBtn('‹ Back', (vpW-bw)/2, vpH-56, bw, 42, ()=>menuBack(), {size:14});
 }
 function ensureThumb(e){ if(e.thumb) return e.thumb; if(e._loading) return null;
@@ -2607,8 +2656,19 @@ function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); re
   navBtn('Menu', bx+2*(bw3+8), by, bw3, 46, ()=>gotoTitle(), {size:14});
 }
 /* ---- Settings screen (comfort / accessibility) ---- */
-let settingsReturn='TITLE', settingsScroll=0, settingsHits=[], settingsMaxScroll=0;
-function openSettings(from){ settingsReturn=from||'TITLE'; appState='SETTINGS'; settingsScroll=0; SFX.ui(); }
+let settingsReturn='TITLE', settingsScroll=0, settingsHits=[], settingsMaxScroll=0, settingsSel=-1;
+function openSettings(from){ settingsReturn=from||'TITLE'; appState='SETTINGS'; settingsScroll=0; settingsSel=-1; SFX.ui(); }
+// P10: full keyboard/gamepad support for SETTINGS (was pointer-only)
+function settingsNav(d){ const n=settingsHits.length; if(!n) return;
+  settingsSel=((settingsSel<0?(d>0?-1:0):settingsSel)+d+n)%n;
+  const h=settingsHits[settingsSel], top=74, bottom=vpH-64;
+  if(h && h.ry!=null){ if(h.ry<top) settingsScroll=Math.max(0, settingsScroll-(top-h.ry)-4);
+    else if(h.ry+(h.rh||44)>bottom) settingsScroll=Math.min(settingsMaxScroll, settingsScroll+(h.ry+(h.rh||44)-bottom)+4); }
+  SFX.ui(); }
+function settingsAdjust(d){ const h=settingsHits[settingsSel];
+  if(h && h.kind==='slider' && h.adj){ h.adj(d*0.06); SFX.ui(); } else settingsNav(d); }
+function settingsConfirm(){ const h=settingsHits[settingsSel]; if(!h) return;
+  if(h.kind==='slider') return; h.fn(h.x+h.w/2); }
 function closeSettings(){ saveSettings(); applySettingsRuntime();
   if(settingsReturn==='PAUSE'){ appState='ROUND'; roundState='PAUSED'; menuIndex=0; } else { appState='TITLE'; menuIndex=0; } SFX.back(); }
 function drawSettings(){
@@ -2619,25 +2679,32 @@ function drawSettings(){
   const section=(t)=>{ if(y+20>top-4 && y<bottom) txt(t.toUpperCase(), px, y+8, 10, COL.amber,'left','700'); y+=26; };
   const rowVisible=()=> y+rowH>top-4 && y<bottom;
   const label=(t)=>{ if(rowVisible()) txt(t, px, y+rowH/2, 13.5, COL.txt,'left','600'); };
-  const seg=(t,opts,cur,fn)=>{ if(rowVisible()){ label(t); const sw=Math.min(230,panelW*0.56), sx=px+panelW-sw, ew=sw/opts.length;
+  // hits are ALWAYS pushed (stable keyboard order) with rects clipped to the visible band (taps can't reach hidden rows)
+  const pushHit=(x,yy,w,h,fn,kind,adj)=>{ const vy0=Math.max(yy,top-4), vy1=Math.min(yy+h,bottom+4);
+    settingsHits.push({x, y:vy0, w, h:Math.max(0,vy1-vy0), ry:yy, rh:h, kind:kind||'btn', fn, adj}); };
+  const seg=(t,opts,cur,fn)=>{ const sw=Math.min(230,panelW*0.56), sx=px+panelW-sw, ew=sw/opts.length;
+    if(rowVisible()){ label(t);
       opts.forEach((o,i)=>{ const on=o.v===cur; const bx=sx+i*ew;
         ctx.fillStyle=on?'rgba(242,179,61,0.18)':'rgba(10,14,25,0.7)'; rr(bx+1,y+7,ew-2,rowH-14,6); ctx.fill();
         ctx.strokeStyle=on?COL.amber:COL.line; ctx.lineWidth=1; rr(bx+1,y+7,ew-2,rowH-14,6); ctx.stroke();
-        txt(o.t, bx+ew/2, y+rowH/2, 11.5, on?COL.amber:COL.muted,'center','600');
-        settingsHits.push({x:bx,y:y+4,w:ew,h:rowH-8,fn:()=>{ fn(o.v); SFX.ui(); applySettingsRuntime(); }}); }); }
+        txt(o.t, bx+ew/2, y+rowH/2, 11.5, on?COL.amber:COL.muted,'center','600'); }); }
+    opts.forEach((o,i)=> pushHit(sx+i*ew,y+4,ew,rowH-8,()=>{ fn(o.v); SFX.ui(); applySettingsRuntime(); },'opt'));
     y+=rowH; };
-  const slider=(t,val,fn)=>{ if(rowVisible()){ label(t); const sw=Math.min(230,panelW*0.56), sx=px+panelW-sw, cyy=y+rowH/2;
+  const slider=(t,val,fn)=>{ const sw=Math.min(230,panelW*0.56), sx=px+panelW-sw;
+    if(rowVisible()){ label(t); const cyy=y+rowH/2;
       ctx.strokeStyle=COL.line; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(sx,cyy); ctx.lineTo(sx+sw,cyy); ctx.stroke();
       ctx.strokeStyle=COL.amber; ctx.beginPath(); ctx.moveTo(sx,cyy); ctx.lineTo(sx+sw*clamp01(val),cyy); ctx.stroke();
       ctx.fillStyle=COL.amber; ctx.beginPath(); ctx.arc(sx+sw*clamp01(val),cyy,7,0,TAU); ctx.fill();
-      txt(Math.round(val*100)+'', px+panelW-sw-8, cyy, 11, COL.muted,'right','600');
-      settingsHits.push({x:sx-6,y:y,w:sw+12,h:rowH,fn:(mx)=>{ fn(clamp01((mx-sx)/sw)); applySettingsRuntime(); }}); }
+      txt(Math.round(val*100)+'', px+panelW-sw-8, cyy, 11, COL.muted,'right','600'); }
+    pushHit(sx-6,y,sw+12,rowH,(mx)=>{ fn(clamp01((mx-sx)/sw)); applySettingsRuntime(); },'slider',
+      d=>{ fn(clamp01(val+d)); applySettingsRuntime(); });
     y+=rowH; };
-  const toggle=(t,on,fn)=>{ if(rowVisible()){ label(t); const tw=48,tx=px+panelW-tw, cyy=y+rowH/2;
+  const toggle=(t,on,fn)=>{ const tw=48,tx=px+panelW-tw;
+    if(rowVisible()){ label(t); const cyy=y+rowH/2;
       ctx.fillStyle=on?'rgba(242,179,61,0.3)':'rgba(10,14,25,0.8)'; rr(tx,cyy-11,tw,22,11); ctx.fill();
       ctx.strokeStyle=on?COL.amber:COL.line; rr(tx,cyy-11,tw,22,11); ctx.stroke();
-      ctx.fillStyle=on?COL.amber:COL.muted; ctx.beginPath(); ctx.arc(tx+(on?tw-11:11),cyy,8,0,TAU); ctx.fill();
-      settingsHits.push({x:tx,y:cyy-14,w:tw,h:28,fn:()=>{ fn(!on); SFX.ui(); applySettingsRuntime(); }}); }
+      ctx.fillStyle=on?COL.amber:COL.muted; ctx.beginPath(); ctx.arc(tx+(on?tw-11:11),cyy,8,0,TAU); ctx.fill(); }
+    pushHit(tx,y+rowH/2-14,tw,28,()=>{ fn(!on); SFX.ui(); applySettingsRuntime(); });
     y+=rowH; };
   section('Audio');
   toggle('Muted', settings.muted, v=>{ setMuted(v); });
@@ -2657,16 +2724,22 @@ function drawSettings(){
   seg('Handedness', [{t:'Left',v:'left'},{t:'Right',v:'right'}], settings.handed, v=>settings.handed=v);
   section('Help');
   if(rowVisible()){ ctx.fillStyle='rgba(10,14,25,0.8)'; rr(px,y+6,panelW,rowH-12,7); ctx.fill(); ctx.strokeStyle=COL.line; rr(px,y+6,panelW,rowH-12,7); ctx.stroke();
-    txt('How to Play', cx, y+rowH/2, 13, COL.cyan,'center','600'); settingsHits.push({x:px,y:y+4,w:panelW,h:rowH-8,fn:()=>{ showHelp=true; }}); } y+=rowH;
+    txt('How to Play', cx, y+rowH/2, 13, COL.cyan,'center','600'); }
+  pushHit(px,y+4,panelW,rowH-8,()=>{ showHelp=true; }); y+=rowH;
   settingsMaxScroll=Math.max(0, (y+settingsScroll) - bottom + 8);
   ctx.restore();
-  // footer buttons
+  // footer buttons (outside the scroll region — ry:null keeps keyboard auto-scroll off them)
   const bw=(panelW-12)/2;
   navList=[]; menuIndex=-1;
   ctx.fillStyle='rgba(10,14,25,0.9)'; rr(px,vpH-52,bw,40,8); ctx.fill(); ctx.strokeStyle=COL.line; rr(px,vpH-52,bw,40,8); ctx.stroke();
-  txt('Reset', px+bw/2, vpH-32, 13, COL.danger,'center','600'); settingsHits.push({x:px,y:vpH-52,w:bw,h:40,fn:()=>{ resetSettings(); }});
+  txt('Reset', px+bw/2, vpH-32, 13, COL.danger,'center','600'); settingsHits.push({x:px,y:vpH-52,w:bw,h:40,ry:null,kind:'btn',fn:()=>{ resetSettings(); }});
   ctx.fillStyle='rgba(242,179,61,0.16)'; rr(px+bw+12,vpH-52,bw,40,8); ctx.fill(); ctx.strokeStyle=COL.amber; rr(px+bw+12,vpH-52,bw,40,8); ctx.stroke();
-  txt('Done', px+bw+12+bw/2, vpH-32, 13, COL.amber,'center','700'); settingsHits.push({x:px+bw+12,y:vpH-52,w:bw,h:40,fn:()=>{ closeSettings(); }});
+  txt('Done', px+bw+12+bw/2, vpH-32, 13, COL.amber,'center','700'); settingsHits.push({x:px+bw+12,y:vpH-52,w:bw,h:40,ry:null,kind:'btn',fn:()=>{ closeSettings(); }});
+  // keyboard/gamepad selection ring
+  if(settingsSel>=settingsHits.length) settingsSel=settingsHits.length-1;
+  if(settingsSel>=0){ const h=settingsHits[settingsSel];
+    if(h && h.h>2){ ctx.strokeStyle=COL.cyan; ctx.lineWidth=2; rr(h.x-3,h.y-3,h.w+6,h.h+6,9); ctx.stroke();
+      txt('↑↓ select · ←→ adjust · Enter apply · Esc done', cx, vpH-62, 9.5, COL.muted,'center','500'); } }
 }
 function resetSettings(){ const keep={ lastMode:settings.lastMode, lastLevel:settings.lastLevel, lastDiff:settings.lastDiff, tutorialSeen:settings.tutorialSeen };
   settings={ muted:false, volMaster:0.85, volSfx:1.0, volMusic:0.6, motion:'full', screenShake:'full', photosensitive:false,
@@ -2721,15 +2794,17 @@ function drawHelp(){ ctx.fillStyle='rgba(8,12,25,0.88)'; ctx.fillRect(0,0,vpW,vp
     'UFOs scan from their ships for anything that does not match the terrain.',
     '',
     '🕹  MOVE: drag the move side — push gently to SNEAK, far to walk.',
-    '      Drag the other side to look around toward the ships.',
-    '🎨  PAINT: tap 🎨 to strike a pose and paint yourself. MATCH samples',
-    '      the ground under you; nudge the color until you read “HIDDEN”.',
-    '👁  INSPECT: tap 👁 to see yourself the way the hunters do — then adjust.',
-    '⏱  HOLD STILL to settle. 🌳 Hug cover to hide even better.',
+    '      Drag the other side to peek toward the ships.',
+    '👁  LOOK: tap 👁 to plant yourself and rise to the hunters’ altitude.',
+    '      Drag to look around · pinch or scroll to zoom in and out.',
+    '🎨  PAINT: tap 🎨 — the view is HELD like a photo while you paint.',
+    '      MATCH samples the ground; nudge the color until you read “HIDDEN”.',
+    '      Tap empty space to look again — your framing stays put.',
+    '⏱  HOLD STILL to settle. 🌳 Hug cover. The MODE pill takes you home.',
     '',
-    'Desktop: WASD/arrows move · Shift sneak · E paint · I inspect · Q match · Esc back',
+    'Desktop: WASD move · Shift sneak · E paint · I look · scroll zoom · Q match · Esc back',
   ];
-  for(const l of lines){ txt(l, cx, y, 13.5, /^(🕹|🎨|👁|⏱)/.test(l)?COL.txt:COL.muted, 'center', '500'); y+=26; }
+  for(const l of lines){ txt(l, cx, y, 13.5, /^(🕹|🎨|👁|⏱)/.test(l)?COL.txt:COL.muted, 'center', '500'); y+=Math.min(26,(vpH*0.62)/lines.length); }
   y+=14; const bw=Math.min(220,vpW-48); navList=[]; menuIndex=0;
   navBtn('Got it', cx-bw/2, y, bw, 46, ()=>{ showHelp=false; }, {size:15, weight:'700'});
 }
