@@ -125,8 +125,11 @@ function makeMap(cfg){
   // courtyard: wall ring + doorway(s) + interior floor + interior cover.
   // Interior cover starts 2 cells in, so a ring corridor always stays walkable.
   const courtyard = (x0, y0, w, h, opts = {}) => {
-    const { floor = 'concrete', doors = ['s'], doorW = 2, inner = null, innerDensity = 0, mossy = null } = opts;
+    const { floor = 'concrete', doors = ['s'], doorW = 2, inner = null, innerDensity = 0, mossy = null, flood = 0 } = opts;
     fillRect(x0, y0, w + 1, h + 1, floor);
+    // flood: sink the interior under water, inset by `flood` tiles — a dry floor ring
+    // stays inside the walls, and the pool is a slow, conceal-rich risk/reward room.
+    if (flood) fillRect(x0 + flood, y0 + flood, w + 1 - flood * 2, h + 1 - flood * 2, 'water');
     const mx = x0 + (w >> 1), my = y0 + (h >> 1);
     const gaps = new Set();
     const addGap = (x, y) => { gaps.add(x + ',' + y); clearCells.add(x + ',' + y); };
@@ -163,6 +166,9 @@ function makeMap(cfg){
       put(Math.round(x0 + dx * i), Math.round(y0 + dy * i), type);
     }
   };
+  // coverPair: two pieces offset with a slip gap — the minimal composed LoS-shadow unit
+  // (critique pass: pairs 1 tile apart make real shadows; singleton scatter reads as noise).
+  const coverPair = (x, y, type, dx = 2, dy = 1) => { put(x, y, type); put(x + dx, y + dy, type); };
   // bridge: a hard strip crossing water/lava. opts.clear (default true) keeps it cover-free.
   const bridge = (x, y, dir, len, width = 2, key = 'concrete', opts = {}) => {
     const { clear = true } = opts;
@@ -173,7 +179,7 @@ function makeMap(cfg){
 
   if (cfg.design) cfg.design({
     paint, fillRect, carvePath, seamStrip, checkerboard, stripes, clearing,
-    courtyard, coverCluster, coverRow, bridge, clearDisc, put, drng, cols, rows,
+    courtyard, coverCluster, coverRow, coverPair, bridge, clearDisc, put, drng, cols, rows,
   });
 
   // scatter cover by rule ({ type, on:[terrainKeys], density })
@@ -269,9 +275,12 @@ const THEMES = [
   // bridges are the only dry crossings, and every bank is a grass/dirt/water seam.
   { name: 'riverline', display: 'Riverline — valley of three bridges', biome: 'greenwood',
     cols: 92, rows: 64, base: 'grass', seed: 111, spawnMode: 'spread', hiderCount: 20,
+    // 6th seeker on the south edge: 92x64 is ~50% bigger than the shipped six, so
+    // five sweepers left the south bank under-pressured (validator allows 4-6).
+    seekerAnchors: [[0.06, 0.06], [0.94, 0.06], [0.94, 0.94], [0.06, 0.94], [0.5, 0.05], [0.33, 0.97]],
     patches: [ { key: 'foliage', count: 6, minR: 4, maxR: 7 }, { key: 'dirt', count: 4, minR: 2, maxR: 4 }, { key: 'rock', count: 3, minR: 2, maxR: 4 } ],
     cover: [ { type: 'tree', on: ['foliage'], density: 0.20 }, { type: 'tree', on: ['grass'], density: 0.035 }, { type: 'boulder', on: ['rock'], density: 0.28 }, { type: 'crate', on: ['dirt'], density: 0.03 }, { type: 'dead_tree', on: ['foliage'], density: 0.03 } ],
-    design({ carvePath, bridge, seamStrip, coverCluster }) {
+    design({ carvePath, bridge, seamStrip, clearing, coverCluster, coverPair }) {
       carvePath([[46, -2], [38, 10], [50, 22], [40, 34], [52, 46], [44, 58], [48, 66]], 4, 'water', { bank: { key: 'dirt', extra: 1 }, jitter: 1.1 });
       carvePath([[-2, 21], [14, 24], [30, 26], [42, 27]], 3, 'water', { bank: { key: 'dirt', extra: 1 }, jitter: 0.8 });
       bridge(33, 12, 'h', 15, 2);
@@ -284,29 +293,56 @@ const THEMES = [
       coverCluster(72, 38, 'tree', 6, 3);
       coverCluster(78, 8, 'boulder', 5, 2.5);
       coverCluster(12, 58, 'boulder', 4, 2.5);
+      // NW start shelf: the west-edge spawn pocket was naked uniform grass — give it
+      // a dirt fringe to paint against and two shadow pairs to break LoS.
+      clearing(5, 9, 2.5, 'dirt');
+      coverPair(3, 7, 'boulder'); coverPair(6, 12, 'tree');
+      // river-corridor banks: paired boulders so the mid-river spawn shelves have
+      // day-one cover, not just seams-after-painting.
+      coverPair(46, 38, 'boulder'); coverPair(54, 21, 'boulder'); coverPair(37, 24, 'tree', 2, -1);
+      // south river-mouth pocket (the pinched SE-of-mouth spawn)
+      coverCluster(53, 59, 'tree', 4, 2);
+      // dead-air fixes: NE grass shelf, east notch, SE grass half — seams + pairs so
+      // patrol sweeps through them have stakes.
+      seamStrip(63, 2, 73, 4, 'grass', 'dirt', 1);
+      coverPair(65, 4, 'boulder'); coverPair(70, 2, 'tree');
+      coverPair(67, 46, 'boulder', 2, 2);
+      seamStrip(57, 60, 67, 61, 'grass', 'dirt', 1);
+      coverPair(60, 58, 'tree');
+      // midfield east of the river: composed pairs where lone trees read as noise
+      coverPair(62, 26, 'tree'); coverPair(67, 31, 'tree', 2, -1); coverPair(59, 36, 'tree');
+      coverPair(72, 24, 'boulder'); coverPair(64, 41, 'tree'); coverPair(75, 44, 'tree', 2, -1);
+      // bridges stay bare on purpose: crossing under patrol is the designed danger beat
     } },
 
   // IDENTITY: walled courtyards with narrow doorways — moss creeps over the
   // concrete floors, so the best hiding is a 2-tone crouch inside the walls.
   { name: 'ruins', display: 'Sunken Ruins — flooded courtyards', biome: 'bog',
     cols: 84, rows: 62, base: 'grass', seed: 222, spawnMode: 'spread', hiderCount: 20,
+    // south-center seeker replaces the old top-center one: all five sat on the
+    // top/bottom corner edges, leaving the mid-south spawns 30+ tiles from pressure.
+    seekerAnchors: [[0.06, 0.06], [0.94, 0.06], [0.94, 0.94], [0.06, 0.94], [0.5, 0.93]],
     patches: [ { key: 'moss', count: 8, minR: 3, maxR: 6 }, { key: 'foliage', count: 5, minR: 3, maxR: 5 }, { key: 'dirt', count: 3, minR: 2, maxR: 4 } ],
     cover: [ { type: 'tree', on: ['foliage'], density: 0.18 }, { type: 'dead_tree', on: ['moss'], density: 0.03 }, { type: 'boulder', on: ['grass'], density: 0.012 }, { type: 'boulder', on: ['moss'], density: 0.02 }, { type: 'crate', on: ['concrete'], density: 0.035 }, { type: 'barrel', on: ['concrete'], density: 0.015 } ],
-    design({ carvePath, courtyard, clearing, seamStrip, coverCluster, coverRow }) {
+    design({ carvePath, courtyard, clearing, seamStrip, coverCluster, coverRow, coverPair }) {
       // old processional roads — kept clear so patrols sweep the ruin lanes
       carvePath([[-2, 31], [42, 31], [86, 31]], 2, 'dirt', { jitter: 0.6, clear: true });
       carvePath([[42, -2], [42, 31], [42, 64]], 2, 'dirt', { jitter: 0.6, clear: true });
-      // courtyards (roads breach the central plaza on purpose — it is a ruin)
+      // courtyards (roads breach the central plaza on purpose — it is a ruin).
+      // Three are SUNKEN: interiors flooded with a dry ring inside the walls —
+      // slow, conceal-rich rooms that earn the "flooded courtyards" name.
       courtyard(7, 5, 12, 9, { floor: 'concrete', doors: ['s', 'e'], inner: 'crate', innerDensity: 0.05, mossy: 'moss' });
-      courtyard(26, 7, 11, 9, { floor: 'concrete', doors: ['s', 'w'], inner: 'barrel', innerDensity: 0.04 });
+      courtyard(26, 7, 11, 9, { floor: 'concrete', doors: ['s', 'w'], inner: 'barrel', innerDensity: 0.04, flood: 2 });
       courtyard(60, 6, 13, 9, { floor: 'concrete', doors: ['s', 'w'], inner: 'crate', innerDensity: 0.05, mossy: 'moss' });
-      courtyard(8, 40, 11, 9, { floor: 'concrete', doors: ['n', 'e'], inner: 'crate', innerDensity: 0.05 });
+      courtyard(8, 40, 11, 9, { floor: 'concrete', doors: ['n', 'e'], inner: 'crate', innerDensity: 0.05, flood: 2 });
       courtyard(48, 38, 13, 10, { floor: 'concrete', doors: ['n', 'w'], inner: 'barrel', innerDensity: 0.04, mossy: 'moss' });
-      courtyard(66, 44, 12, 9, { floor: 'concrete', doors: ['n', 'w'], inner: 'crate', innerDensity: 0.05 });
+      courtyard(66, 44, 12, 9, { floor: 'concrete', doors: ['n', 'w'], inner: 'crate', innerDensity: 0.05, flood: 2 });
       courtyard(36, 24, 14, 12, { floor: 'concrete', doors: ['e', 'w'], inner: 'crate', innerDensity: 0.04, mossy: 'moss' }); // the broken forum
-      // flood pools
-      clearing(22, 20, 3, 'water'); clearing(58, 22, 2.5, 'water');
-      clearing(30, 50, 3, 'water'); clearing(72, 26, 2.5, 'water');
+      // flood pools — each wears a mud shore ring so the shoreline is a seam to
+      // hide on, not a bare-grass trap.
+      const pool = (cx, cy, r) => { clearing(cx, cy, r + 1.7, 'mud'); clearing(cx, cy, r, 'water'); };
+      pool(22, 20, 3); pool(58, 22, 2.5);
+      pool(30, 50, 3); pool(72, 26, 2.5);
       // rubble lines + snags outside the walls
       coverRow(20, 17, 1, 0, 6, 'boulder', 3);
       coverRow(56, 54, 1, 0, 6, 'boulder', 3);
@@ -315,6 +351,23 @@ const THEMES = [
       // deliberate moss seams in the open ground between courtyards
       seamStrip(10, 26, 22, 26, 'grass', 'moss', 1);
       seamStrip(62, 36, 78, 38, 'grass', 'moss', 1);
+      // dead-margin fixes: SW moss tongue off the road + rubble, east-edge moss
+      // band, west-edge strip — each barren margin gets a seam AND paired cover.
+      seamStrip(13, 58, 40, 58, 'grass', 'moss', 1);
+      coverCluster(22, 58, 'boulder', 4, 2); coverPair(11, 55, 'boulder');
+      // north margin above the courtyards (either side of the processional road)
+      seamStrip(20, 2, 37, 2, 'grass', 'moss', 1); seamStrip(47, 2, 56, 2, 'grass', 'moss', 1);
+      coverPair(22, 1, 'boulder', 2, 1); coverPair(50, 1, 'boulder', 2, 1);
+      seamStrip(81, 8, 81, 24, 'grass', 'moss', 1);
+      coverPair(79, 11, 'boulder'); coverPair(80, 18, 'boulder', 2, 2); coverPair(81, 50, 'boulder', 1, 2);
+      seamStrip(1, 6, 1, 22, 'grass', 'moss', 1);
+      coverPair(2, 10, 'boulder', 1, 2);
+      seamStrip(1, 44, 1, 60, 'grass', 'moss', 1);
+      coverPair(2, 47, 'boulder', 1, 2); coverPair(2, 55, 'boulder', 1, 2);
+      // pair up the open-field rubble into real LoS shadows (lone boulders cast none)
+      coverPair(29, 40, 'boulder'); coverPair(23, 34, 'boulder', 2, -1);
+      coverPair(55, 28, 'boulder'); coverPair(33, 14, 'boulder', 2, -1);
+      coverPair(68, 21, 'boulder'); coverPair(30, 27, 'boulder', 2, -1);
     } },
 
   // IDENTITY: lava ribbons cross the field, broken by narrow causeways — every
@@ -323,7 +376,7 @@ const THEMES = [
     cols: 88, rows: 62, base: 'ash', seed: 333, spawnMode: 'spread', hiderCount: 20,
     patches: [ { key: 'rock', count: 6, minR: 3, maxR: 5 }, { key: 'crystal', count: 2, minR: 2, maxR: 3 }, { key: 'dirt', count: 2, minR: 2, maxR: 3 } ],
     cover: [ { type: 'boulder', on: ['rock'], density: 0.22 }, { type: 'boulder', on: ['ash'], density: 0.02 }, { type: 'dead_tree', on: ['ash'], density: 0.03 }, { type: 'alien_pod', on: ['crystal'], density: 0.08 } ],
-    design({ carvePath, seamStrip, clearing, coverCluster }) {
+    design({ carvePath, seamStrip, clearing, coverCluster, coverPair, bridge, fillRect, clearDisc }) {
       const lava = (pts) => carvePath(pts, 3, 'lava', { bank: { key: 'rock', extra: 1 }, jitter: 0.9 });
       // upper ribbon, two causeway gaps
       lava([[-2, 15], [14, 18], [28, 14]]);
@@ -335,11 +388,27 @@ const THEMES = [
       // vertical connector with one causeway
       lava([[58, 18], [54, 26]]);
       lava([[54, 32], [58, 40]]);
+      // SECOND southern crossing (east, cols 77-79): a rock causeway punched through
+      // the lower ribbon so one camped seeker can't gate the whole south field.
+      bridge(77, 38, 'v', 11, 3, 'rock');
+      // the original south gap is patrol ground now — reserved so no hider spawns
+      // inside the most-trafficked cells on the map.
+      clearDisc(46, 44, 3.5);
+      // NE crossing of the upper ribbon: widen the 2-tile pinch to a full 3 dry columns
+      fillRect(66, 11, 3, 8, 'rock');
       // rock seams threading the safe mid-field
       seamStrip(8, 28, 30, 30, 'ash', 'rock', 1);
       seamStrip(36, 26, 50, 24, 'ash', 'rock', 1);
       seamStrip(66, 26, 82, 30, 'ash', 'rock', 1);
       seamStrip(20, 52, 40, 56, 'ash', 'dirt', 1);
+      // SE field was flat single-tone ash: terrain paint only (openPct3 sits at the
+      // shipped floor, so no new cover objects out here — seams, not props).
+      clearing(74, 55, 3.5, 'dirt');
+      seamStrip(63, 52, 71, 57, 'ash', 'dirt', 1);
+      // NE top strip: bare ash shelf above the upper ribbon — a rock seam + one
+      // boulder pair so the strip's spawns aren't naked.
+      seamStrip(72, 3, 84, 5, 'ash', 'rock', 1);
+      coverPair(76, 2, 'boulder', 2, -1);
       clearing(44, 31, 3, 'crystal'); // the vent
       coverCluster(10, 8, 'boulder', 5, 2.5);
       coverCluster(80, 54, 'boulder', 5, 2.5);
@@ -353,11 +422,17 @@ const THEMES = [
     cols: 96, rows: 66, base: 'snow', seed: 444, spawnMode: 'spread', hiderCount: 22,
     seekerAnchors: [[0.05, 0.06], [0.5, 0.05], [0.95, 0.06], [0.06, 0.7], [0.94, 0.7]],
     patches: [ { key: 'ice', count: 5, minR: 3, maxR: 5 }, { key: 'rock', count: 3, minR: 2, maxR: 4 }, { key: 'dirt', count: 2, minR: 2, maxR: 3 } ],
-    cover: [ { type: 'ice_spike', on: ['ice'], density: 0.05 }, { type: 'ice_spike', on: ['snow'], density: 0.015 }, { type: 'dead_tree', on: ['snow'], density: 0.015 }, { type: 'boulder', on: ['rock'], density: 0.25 }, { type: 'crate', on: ['concrete'], density: 0.02 }, { type: 'barrel', on: ['metal'], density: 0.05 } ],
-    design({ fillRect, carvePath, bridge, coverRow, courtyard, clearing, checkerboard, coverCluster }) {
+    cover: [ { type: 'ice_spike', on: ['ice'], density: 0.05 }, { type: 'ice_spike', on: ['snow'], density: 0.02 }, { type: 'dead_tree', on: ['snow'], density: 0.02 }, { type: 'boulder', on: ['rock'], density: 0.25 }, { type: 'crate', on: ['concrete'], density: 0.02 }, { type: 'barrel', on: ['metal'], density: 0.05 } ],
+    design({ fillRect, carvePath, bridge, coverRow, courtyard, clearing, checkerboard, coverCluster, coverPair, clearDisc, put }) {
       // the harbor: south water with a wavy shoreline
       fillRect(0, 50, 96, 16, 'water');
       carvePath([[-2, 50], [12, 51], [30, 49], [52, 51], [70, 49], [90, 51], [98, 50]], 3, 'water', { jitter: 1.2 });
+      // quay crate stacks go down BEFORE the wharf lane is reserved: three small
+      // stacks are the only cover allowed on the quay, breaking the sterile
+      // 96-tile sightline into readable segments without killing the danger road.
+      put(30, 44, 'crate'); put(31, 45, 'crate');
+      put(48, 45, 'crate'); put(49, 46, 'crate');
+      put(65, 45, 'crate'); put(66, 44, 'crate');
       // wharf boardwalk — the main patrol lane, kept clear
       carvePath([[-2, 45], [98, 45]], 3, 'concrete', { clear: true });
       // piers (not cleared: crate rows live on them)
@@ -369,9 +444,21 @@ const THEMES = [
       coverRow(36, 49, 0, 1, 13, 'crate', 4);
       coverRow(57, 49, 0, 1, 10, 'crate', 3);
       coverRow(82, 49, 0, 1, 12, 'crate', 4);
+      // pier tips + the far-corner floe were spawn death traps (14+ walk-tiles from
+      // land, one catwalk out) — reserve them so hider spawns pull shoreward.
+      clearDisc(12, 59, 2.5); clearDisc(35, 60, 2.5); clearDisc(58, 58, 2.5);
+      clearDisc(81, 60, 2.5); clearDisc(90, 60, 3);
       // ice floes drifting between the piers
       clearing(22, 56, 2.5, 'ice'); clearing(46, 58, 3, 'ice');
       clearing(70, 57, 2.5, 'ice'); clearing(90, 60, 2, 'ice');
+      // outer harbor was 300+ cells of featureless water: stepping-stone floes and
+      // moored buoy crates give the deep rows hides and swim waypoints. The floes
+      // are reserved (clearDisc) so they read as relocation hides, not far-water
+      // spawn traps like the old pier tips.
+      clearing(7, 61, 2, 'ice'); clearing(20, 62, 2, 'ice');
+      clearing(55, 63, 2, 'ice'); clearing(78, 63, 2, 'ice');
+      clearDisc(7, 61, 2.5); clearDisc(20, 62, 2.5); clearDisc(55, 63, 2.5); clearDisc(78, 63, 2.5);
+      put(33, 64, 'crate'); put(68, 62, 'crate'); put(12, 64, 'crate');
       // shore yards: crate rows with slip gaps north of the wharf
       coverRow(6, 41, 1, 0, 10, 'crate', 4);
       coverRow(20, 39, 1, 0, 12, 'crate', 3);
@@ -384,6 +471,15 @@ const THEMES = [
       checkerboard(38, 20, 14, 10, ['concrete', 'snow'], 2);
       coverCluster(30, 12, 'ice_spike', 5, 2.5);
       coverCluster(56, 30, 'crate', 5, 2.5);
+      // west margin + NE snowfield leaned on lone ice spikes over uniform snow:
+      // small dirt/rock patches for seams, plus paired spikes for real shadows.
+      clearing(3, 18, 2, 'dirt'); coverPair(2, 15, 'ice_spike', 1, 2);
+      clearing(89, 6, 2.5, 'rock'); coverPair(91, 11, 'ice_spike', 2, 1);
+      clearing(90, 23, 2.2, 'dirt'); coverPair(86, 22, 'ice_spike', 2, 1);
+      clearing(12, 23, 2, 'rock'); coverPair(9, 20, 'dead_tree', 2, 1);
+      clearing(78, 2, 1.8, 'dirt'); coverPair(75, 3, 'ice_spike', 2, 1);
+      clearing(92, 36, 2.5, 'rock'); coverPair(88, 34, 'dead_tree', 2, 1);
+      clearing(20, 2, 1.8, 'dirt'); coverPair(16, 2, 'ice_spike', 2, 1);
     } },
 
   // IDENTITY: a crate-maze junkyard cut by wide, cover-free patrol lanes — dart
@@ -392,7 +488,14 @@ const THEMES = [
     cols: 84, rows: 60, base: 'dirt', seed: 555, spawnMode: 'spread', hiderCount: 20,
     patches: [ { key: 'metal', count: 5, minR: 2, maxR: 4 }, { key: 'mud', count: 2, minR: 2, maxR: 3 }, { key: 'rock', count: 2, minR: 2, maxR: 3 } ],
     cover: [ { type: 'crate', on: ['metal'], density: 0.06 }, { type: 'crate', on: ['dirt'], density: 0.015 }, { type: 'barrel', on: ['metal'], density: 0.04 }, { type: 'barrel', on: ['dirt'], density: 0.008 }, { type: 'boulder', on: ['rock'], density: 0.2 } ],
-    design({ carvePath, clearing, seamStrip, coverRow, coverCluster, courtyard }) {
+    design({ carvePath, clearing, seamStrip, coverRow, coverCluster, coverPair, courtyard }) {
+      // lane-break clusters go down FIRST (the lanes are reserved right after, so
+      // these four are the only cover on the bands): crossing a lane becomes a
+      // read past a known shadow, not a full-map-length coin flip.
+      coverCluster(27, 10, 'crate', 3, 1.5);
+      coverCluster(70, 19, 'barrel', 3, 1.5);
+      coverCluster(13, 41, 'crate', 3, 1.5);
+      coverCluster(56, 45, 'barrel', 3, 1.5);
       // the lanes: a concrete grid kept clear so hunters sweep believably
       carvePath([[-2, 19], [86, 19]], 3, 'concrete', { clear: true });
       carvePath([[-2, 41], [86, 41]], 3, 'concrete', { clear: true });
@@ -400,30 +503,45 @@ const THEMES = [
       carvePath([[56, -2], [56, 62]], 3, 'concrete', { clear: true });
       clearing(27, 19, 4, 'concrete', { clear: true }); // patrol hub plazas
       clearing(56, 41, 4, 'concrete', { clear: true });
-      // block A/B/C (top): crate alleys with slip gaps
-      coverRow(4, 4, 1, 0, 18, 'crate', 4); coverRow(4, 7, 1, 0, 18, 'crate', 5);
-      coverRow(4, 10, 1, 0, 18, 'crate', 4); coverRow(4, 13, 1, 0, 18, 'crate', 3);
-      coverRow(32, 5, 1, 0, 20, 'crate', 5); coverRow(32, 8, 1, 0, 20, 'crate', 4);
-      coverRow(32, 11, 1, 0, 20, 'crate', 3); coverRow(32, 14, 1, 0, 20, 'crate', 5);
-      coverRow(62, 4, 0, 1, 12, 'crate', 4); coverRow(65, 5, 0, 1, 12, 'crate', 5);
-      coverRow(68, 4, 0, 1, 12, 'crate', 4); coverRow(71, 5, 0, 1, 12, 'crate', 3);
-      coverRow(74, 4, 0, 1, 12, 'crate', 4);
-      // block D (mid-left): alleys; block E: the crusher shed; block F: barrel field
-      coverRow(4, 25, 1, 0, 18, 'crate', 3); coverRow(4, 28, 1, 0, 18, 'crate', 4);
-      coverRow(4, 31, 1, 0, 18, 'crate', 5); coverRow(4, 34, 1, 0, 18, 'crate', 3);
+      // Each yard gets its own stamp signature (the old yards were 2-3 byte-identical
+      // motifs repeated nine times).
+      // yard A (NW): tight horizontal crate alleys, offset starts, one barrel run
+      coverRow(4, 4, 1, 0, 18, 'crate', 4); coverRow(6, 7, 1, 0, 16, 'crate', 3);
+      coverRow(4, 10, 1, 0, 18, 'barrel', 5); coverRow(7, 13, 1, 0, 15, 'crate', 4);
+      // yard B (N): vertical columns — reads opposite of A from the lanes
+      coverRow(33, 5, 0, 1, 10, 'crate', 3); coverRow(37, 6, 0, 1, 9, 'crate', 4);
+      coverRow(41, 5, 0, 1, 10, 'barrel', 5); coverRow(45, 6, 0, 1, 9, 'crate', 3);
+      coverRow(49, 5, 0, 1, 10, 'crate', 4);
+      // yard C (NE): diagonal scrap drifts + a metal strip feeding the weak pocket
+      coverRow(62, 4, 1, 1, 9, 'crate', 4); coverRow(67, 4, 1, 1, 9, 'barrel', 3);
+      coverRow(72, 4, 1, 1, 9, 'crate', 5);
+      seamStrip(75, 9, 83, 12, 'dirt', 'metal', 1);
+      coverPair(79, 8, 'crate');
+      // yard D (mid-left): barrel-heavy, wider alley pitch than A
+      coverRow(4, 25, 1, 0, 18, 'crate', 3); coverRow(4, 29, 1, 0, 18, 'barrel', 4);
+      coverRow(5, 33, 1, 0, 17, 'crate', 5); coverPair(10, 36, 'barrel');
+      // block E: the crusher shed (the landmark compound — untouched)
       courtyard(34, 24, 12, 9, { floor: 'metal', doors: ['e', 's'], inner: 'barrel', innerDensity: 0.06 });
       seamStrip(62, 26, 80, 26, 'dirt', 'metal', 1);
       seamStrip(62, 32, 80, 34, 'dirt', 'metal', 1);
       coverCluster(66, 29, 'barrel', 6, 3);
       coverCluster(76, 36, 'crate', 5, 2.5);
-      // bottom blocks: alleys, tire piles, mud seam
-      coverRow(4, 46, 1, 0, 18, 'crate', 3); coverRow(4, 49, 1, 0, 18, 'crate', 4);
-      coverRow(4, 52, 1, 0, 18, 'crate', 5); coverRow(4, 55, 1, 0, 18, 'crate', 3);
+      // yard E (SW): sparse crate runs woven with boulder tire-piles
+      coverRow(4, 46, 1, 0, 18, 'crate', 5); coverCluster(9, 50, 'boulder', 4, 2);
+      coverRow(6, 53, 1, 0, 16, 'crate', 4); coverCluster(17, 56, 'boulder', 3, 1.5);
+      coverRow(4, 57, 1, 0, 12, 'barrel', 3);
+      // south-center yard: mud wash + a sump puddle + crate pairs (was bare dirt)
       coverCluster(36, 48, 'boulder', 5, 2.5); coverCluster(46, 53, 'boulder', 5, 2.5);
       seamStrip(32, 50, 52, 50, 'dirt', 'mud', 1);
-      coverRow(62, 46, 0, 1, 11, 'crate', 4); coverRow(65, 47, 0, 1, 11, 'crate', 3);
-      coverRow(68, 46, 0, 1, 11, 'crate', 4); coverRow(71, 47, 0, 1, 11, 'crate', 5);
-      coverRow(74, 46, 0, 1, 11, 'crate', 4); coverRow(77, 47, 0, 1, 11, 'crate', 3);
+      seamStrip(33, 56, 49, 57, 'dirt', 'mud', 1);
+      clearing(43, 55, 2.2, 'mud'); clearing(43, 55, 1.2, 'water');
+      coverPair(38, 55, 'crate'); coverPair(47, 57, 'crate', -2, 1); coverPair(30, 57, 'barrel', 2, -1);
+      // thin pockets flanking the compound and below the east metal strips
+      coverPair(51, 26, 'barrel', 2, 1); coverPair(64, 37, 'crate', 2, -1);
+      // yard F (SE): loose crate/barrel lattice, offset from E's rhythm
+      coverRow(62, 46, 0, 1, 11, 'crate', 3); coverRow(66, 47, 0, 1, 10, 'barrel', 4);
+      coverRow(70, 46, 0, 1, 11, 'crate', 5); coverRow(74, 48, 0, 1, 9, 'barrel', 3);
+      coverRow(78, 46, 0, 1, 11, 'crate', 4);
     } },
 
   // IDENTITY: a deliberate 2-tone mosaic — checkerboard and striped plots behind
@@ -432,23 +550,26 @@ const THEMES = [
     cols: 80, rows: 60, base: 'grass', seed: 666, spawnMode: 'spread', hiderCount: 20,
     patches: [ { key: 'foliage', count: 3, minR: 2, maxR: 4 } ],
     cover: [ { type: 'tree', on: ['foliage'], density: 0.15 }, { type: 'tree', on: ['grass'], density: 0.012 }, { type: 'boulder', on: ['moss'], density: 0.02 } ],
-    design({ carvePath, checkerboard, stripes, clearing, coverRow, coverCluster }) {
+    design({ carvePath, checkerboard, stripes, clearing, seamStrip, coverRow, coverCluster, coverPair, fillRect }) {
       // sand walks — the patrol grid, kept clear
       carvePath([[-2, 15], [82, 15]], 2, 'sand', { clear: true });
       carvePath([[-2, 44], [82, 44]], 2, 'sand', { clear: true });
       carvePath([[20, -2], [20, 62]], 2, 'sand', { clear: true });
       carvePath([[59, -2], [59, 62]], 2, 'sand', { clear: true });
-      // the mosaic plots — a different 2-tone pairing in every bed
-      checkerboard(4, 3, 13, 9, ['grass', 'dirt'], 2);
-      checkerboard(25, 3, 13, 9, ['moss', 'grass'], 3);
-      checkerboard(64, 3, 13, 9, ['dirt', 'sand'], 2);
-      stripes(4, 20, 13, 10, 'h', ['dirt', 'grass'], 2);
-      checkerboard(25, 20, 13, 10, ['dirt', 'moss'], 3);
-      checkerboard(64, 20, 13, 10, ['grass', 'moss'], 2);
-      checkerboard(4, 48, 13, 9, ['sand', 'grass'], 3);
-      stripes(25, 48, 13, 9, 'v', ['moss', 'dirt'], 2);
-      checkerboard(45, 48, 11, 9, ['dirt', 'grass'], 2);
-      stripes(64, 48, 13, 9, 'h', ['grass', 'sand'], 2);
+      // the plots — a different 2-tone pairing in every bed, but each bed now has
+      // solid 3-5 wide interiors (bordered plots, wide stripes, coarse checkers):
+      // seams are the bed BORDERS you travel to, not a tax on every standing cell.
+      const bed = (x, y, w, h, outer, inner) => { fillRect(x, y, w, h, outer); fillRect(x + 2, y + 2, w - 4, h - 4, inner); };
+      bed(4, 3, 13, 9, 'dirt', 'grass');
+      stripes(25, 3, 13, 9, 'h', ['moss', 'grass'], 4);
+      checkerboard(64, 3, 13, 9, ['dirt', 'sand'], 4);
+      stripes(4, 20, 13, 10, 'h', ['dirt', 'grass'], 5);
+      bed(25, 20, 13, 10, 'moss', 'dirt');
+      checkerboard(64, 20, 13, 10, ['grass', 'moss'], 5);
+      stripes(4, 48, 13, 9, 'v', ['sand', 'grass'], 4);
+      stripes(25, 48, 13, 9, 'v', ['moss', 'dirt'], 4);
+      bed(45, 48, 11, 9, 'dirt', 'grass');
+      stripes(64, 48, 13, 9, 'h', ['grass', 'sand'], 4);
       // central pond with a sand beach ring
       clearing(40, 30, 6, 'sand'); clearing(40, 30, 4, 'water');
       // hedgerows with slip gaps between the beds
@@ -456,6 +577,25 @@ const THEMES = [
       coverRow(64, 12, 1, 0, 14, 'tree', 4); coverRow(4, 41, 1, 0, 14, 'tree', 5);
       coverRow(64, 41, 1, 0, 14, 'tree', 4);
       coverRow(23, 20, 0, 1, 10, 'tree', 4); coverRow(62, 20, 0, 1, 10, 'tree', 5);
+      // southern third was cover-starved (0.8-1.9% vs 4.5-7.1% up north): dashed
+      // hedgerows mirroring rows 12/41, south of the row-44 walk.
+      coverRow(4, 47, 1, 0, 14, 'tree', 4); coverRow(25, 47, 1, 0, 14, 'tree', 5);
+      coverRow(45, 47, 1, 0, 11, 'tree', 4); coverRow(64, 47, 1, 0, 14, 'tree', 4);
+      // west margin: the (1,36)/(1,51)-style edge spawns were naked uniform grass
+      // next to the SW seeker — dirt fringes to paint against + shadow pairs.
+      seamStrip(1, 30, 1, 42, 'grass', 'dirt', 1);
+      coverPair(2, 33, 'tree'); coverPair(2, 38, 'boulder', 1, 2);
+      seamStrip(1, 48, 1, 58, 'grass', 'dirt', 1);
+      coverPair(2, 52, 'tree', 1, 2);
+      // staggered pairs where lone singles read as noise: a second dashed column
+      // beside the col-23 trees, plus paired strays around the pond and the south beds
+      coverRow(24, 21, 0, 1, 10, 'tree', 4);
+      coverPair(33, 38, 'tree'); coverPair(45, 41, 'tree', 2, -1); coverPair(50, 37, 'tree');
+      coverPair(9, 53, 'tree'); coverPair(30, 52, 'tree', 2, -1); coverPair(48, 53, 'boulder');
+      coverPair(69, 54, 'tree'); coverPair(37, 58, 'tree', 2, -1);
+      // margin strays (N + S edges) + a garden stone pair on the pond's north shore
+      coverPair(30, 1, 'tree'); coverPair(55, 2, 'tree', 2, -1); coverPair(42, 24, 'boulder', 2, -1);
+      coverPair(14, 2, 'tree', 2, -1); coverPair(69, 1, 'boulder', 2, 1); coverPair(24, 58, 'tree', 2, -1);
       // topiary + garden stones
       coverCluster(10, 31, 'boulder', 4, 2); coverCluster(70, 33, 'boulder', 4, 2);
       coverCluster(48, 8, 'tree', 5, 2.5); coverCluster(32, 55, 'tree', 4, 2);
