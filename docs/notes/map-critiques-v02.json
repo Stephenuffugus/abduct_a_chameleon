@@ -1,0 +1,102 @@
+[
+ {
+  "map": "/workspaces/abduct_a_chameleon/maps/riverline.json",
+  "verdict": "FIX",
+  "hidingScore": 7,
+  "patrolScore": 8,
+  "identityScore": 9,
+  "issues": [
+   "Hider spawn (1,8) is the closest thing to a dead spawn in the whole pool: uniform grass in every direction within 6 tiles, only 2 trees ((3,7),(5,10)), and zero terrain seams within 3 tiles - nothing to paint against and nothing to break LoS. Nudge it to ~(5,12) toward the NW foliage block, or add a dirt patch + boulder pair beside it.",
+   "Hider spawns (48,39) and (52,20) have exactly ONE cover object within 6 tiles (trees at (51,39) and (56,24)) and sit inside the map's 284-cell cover barren (bbox x35-57,y9-42 - the river corridor, up to 9 tiles from any cover). They are seam-rich (dirt/water/grass/concrete) so they work AFTER painting, but at round start they are spawn-lottery losers. Shipped six floor is 2+ cover with 0-1 thin spawns per map; riverline has 4. Add 1-2 boulders on each bank near these spawns.",
+   "Hider spawn (49,62) is pinched against the south edge at the river mouth with only 2 trees ((51,56),(50,62)) within 6 tiles and water on two sides - weakest corner of the spawn set after the three above.",
+   "Dead-air zones with no cover, no seams, nothing to do for hider OR seeker: pure-grass blobs at x63-73/y0-5 (34 cells, 7 tiles from any cover) and x68-70/y46-48, plus the grass half of x55-69/y58-63. Sprinkle 2-3 boulders or a dirt scatter so patrol sweeps through them have stakes.",
+   "153 of 204 cover clusters are singleton trees - mid-map cover reads as random noise rather than composed hiding spots. Consolidating ~20 of the scattered singles (e.g. the lone trees across y24-40 east of the river) into 6-8 pairs spaced 1 tile apart would add real LoS-shadow slots (map currently has 147 shadow-slot pairs, fine but corner-loaded).",
+   "Scale mismatch: 92x64 = 5888 cells, ~50% larger than every shipped map (3536-3996), but still only 5 seeker spawns - per-seeker sweep coverage drops sharply and Hunt rounds will run long. Add a 6th seeker spawn on the south edge (e.g. ~(30,62), grass, 13+ tiles from nearest hider spawn; validator allows 4-6).",
+   "Not a defect but confirm intent: all three bridges are bare 15-wide concrete strips with zero cover - crossing under UFO patrol is a designed danger moment, and concrete is paintable, but if playtests show cross-river movement is suicidal, one crate mid-bridge on ONE bridge would give an asymmetric safe-ish route."
+  ]
+ },
+ {
+  "map": "maps/ruins.json",
+  "verdict": "FIX",
+  "hidingScore": 6,
+  "patrolScore": 8,
+  "identityScore": 7,
+  "issues": [
+   "Dead hider spawn at (18,60): uniform grass within r6, nearest cover is a lone boulder 8 tiles away at (10,60), no seam within 3 tiles — exactly the dead-spawn pattern, and it sits inside the map's largest dead zone.",
+   "Bottom-left dead zone rows 55-61, x17-29: worst cell (21,61) is 11 tiles from ANY hide option (cover or seam). Map has 144 walkable cells >6 tiles from any hide option vs 32 on the worst shipped map (tundra) and 0 on greenwood. Fix: extend a dirt/moss tongue from the x41-44 road westward along row ~58, or drop a 3-4 boulder cluster near (22,58).",
+   "East-edge dead zone x79-83, rows 7-24: a 17-row uniform grass band; hider spawn (82,23) at its south end is uniform-terrain within r6. Add a moss or dirt fringe along the east edge or 2-3 paired boulders around (81,12).",
+   "SW pond (x27-35, rows 47-53) is a hider trap, not a feature: its shores are bare uniform grass >6 from any hide option. Ring it with a 1-2 tile moss/mud shore strip — that creates the shoreline seam this game rewards and helps the 'flooded' theme.",
+   "West-edge barren strip x0-2, rows 43-61; hider spawn (1,53) is uniform grass within r6 with a seeker spawned 6.4 tiles away at (5,58) — worst spawn-fairness combo on the map.",
+   "Identity mismatch: levels.json bills it as 'Sunken Ruins — flooded courtyards' but water is 1.9% of cells (less than greenwood's 2.7%; bog has 8.2%) and NONE of the eight courtyards contains water — moss strips only. Flood 2-3 courtyard floors with water (slow 0.55x but conceal-rich interiors = designed risk/reward) or rename the display line.",
+   "Uneven early seeker pressure: all 5 seekers are on the top/bottom edges; hider spawns (39,43) and (37,60) start 37.2 and 32.1 tiles from the nearest seeker (shipped-six max is ~22.6) while six other spawns start <10 away. Move the (42,3) seeker to south-center (~42,58) or mid-map, matching greenwood's corner+center pattern.",
+   "Weak cover clustering: only 43 of 123 non-wall cover pieces have another piece within 1 tile (~35% vs ~50% on shipped maps) — lone boulders in the open field (e.g. (30,41), (23,35), (55,28)) cast single-line LoS shadows. Pair up the field boulders into 2-3 piece clusters with 1-tile gaps.",
+   "Scale vs tuning: 84x62 = 5208 cells is 30% larger than the largest shipped map (dunes 74x54) while UFO_COUNT is fixed per difficulty (index.html lines 78-86), so patrol density is diluted on every difficulty. Either trim toward ~76x56 or accept it as the deliberate 'big map' and note it in the display name."
+  ]
+ },
+ {
+  "map": "maps/cinderfield.json",
+  "verdict": "FIX",
+  "hidingScore": 8,
+  "patrolScore": 7,
+  "identityScore": 9,
+  "issues": [
+   "South lava band (rows 39-47) has exactly ONE dry crossing, cols ~44-49: the entire southern field (rows 48-61, 7 of 20 hider spawns) connects to the rest of the map through a single gate. One seeker camping ~(46,44) bottlenecks every southern relocation in Hunt, and Beacon Run forces the same route every time. Fix: punch a second 2-3 tile rock causeway through the band in the east, e.g. cols 77-80, rows 40-46.",
+   "Hider spawn (46,44) sits INSIDE that unique southern crossing — the most trafficked cells on the map. Move it off the causeway, e.g. to ~(46,48) or the rock rim near (50,45).",
+   "Northeast crossing of the north lava band pinches to 2 tiles wide at cols 66-67, rows 14-15 (the north strip's only other exit besides the wide western funnel). Widen to 3 tiles so a crosser is not trivially camped.",
+   "SE field (rows 48-61, cols 59-87) is the flattest zone: only ~53 seam edges in the region, plain ash east of the rock blob at cols 46-50. Add a dirt or crystal patch around (70-78, 52-58) so the region participates in the 2-tone signature.",
+   "openPct3 (cells >=3 tiles from cover/void) is 16.7%, the very bottom of the shipped range (16.4-29.5%) — patrol space is adequate, but do not add cover in the open fields when fixing the SE flatness; add terrain paint, not objects.",
+   "Biome tag reuses \"xeno\" — there is no volcanic mood, so an ash/lava map renders with the xeno palette. Works because of the crystal/pod clusters, but consider whether a cinder biome is worth adding before more lava maps land."
+  ]
+ },
+ {
+  "map": "maps/frostharbor.json",
+  "verdict": "SHIP",
+  "hidingScore": 7,
+  "patrolScore": 7,
+  "identityScore": 9,
+  "issues": [
+   "Far-water hider spawns are near-death-traps: pier-tip spawns (34,62) and (12,60) and corner floe (92,61) are 14-16 walk-tiles from mainland, and every escape is either a 2-clear-tile-wide pier catwalk (a UFO descending the pier boxes them in) or a 0.55x-speed swim across the map's most patrolled open water. Pull them up-pier (e.g. (34,62)->(35,57), (12,60)->(12,55)) or add stepping-stone floes/moored crates along the swim lines.",
+   "The outer harbor is the deadest zone in the whole roster's water: 363 water cells have no cover within 4 tiles and no seam within 2, concentrated in rows 51-65 (rows 62-65 alone hold 184 featureless cells). Because openness>=2 water is 27% of all patrol-waypoint cells (next highest map: cinderfield 16%), UFOs waste sweeps over empty ocean while land pressure thins. Trim ~2 rows of southern water or scatter 3-4 small floes/buoy crates around (20,63), (55,63), (78,64).",
+   "Overall dead-cell share is 9.4% of walkable, the highest of all 12 maps (shipped worst: downtown 10.3%, ruins 9.2%) - within precedent, but here the dead cells overlap the 0.55x movement zone, compounding the previous issue.",
+   "Cover density 4.9% is the lowest of the new six-map batch (batch range 5.5-9.6%), and 42 of 309 cover pieces are isolated (no neighbor within Chebyshev 2) - the NE snowfield (cols 85-95, rows 0-15) and west margin (cols 0-8, rows 18-40) lean on lone ice spikes, making spawns like (94,10) (nearest cover 4, nearest seam 9) and (3,26) (nearest seam 11) hide-by-cover-only spots on uniform snow.",
+   "The quay (rows 44-46) is a 96x3 concrete band with zero cover objects along its entire length - great as a danger road and it supplies two map-wide straddleable seams (snow|concrete at rows 43/44, concrete|water at 46/47), but 2-3 crate stacks near (30,45) and (65,45) would break the sterile 96-tile sightline corridor and add mid-quay LoS shadows.",
+   "NW warehouse (rows 6-14, cols 6-19) is a near-sealed pocket with a single 2-wide door at (11,14)-(12,14); the NE warehouse got two doors (west (70,11)-(70,12), south (75,17)-(76,17)). No hider spawns inside NW so it's legal, but a second door on its east face would match the NE building and remove the one-exit trap room.",
+   "Engine-side, not map data, but worst-felt here: UFO_COUNT (1-3 by difficulty) does not scale with map area, and at 96x66 this is the largest map with the most patrol space (82.3% openness>=2, also the roster high) - EASY/NORMAL land pressure will play noticeably softer than on the 72x54 originals until heat ramps UFOs up.",
+   "Seam density 15.2 edges/100 cells with 21.7% straddleable cells beats all six originals (6.7-13.2) but is second-lowest of the new batch; seams are concentrated in the container plaza (rows 20-29), shoreline, and rock/dirt patches, so the two-tone mechanic plays great mid-map and thin at the top corners."
+  ]
+ },
+ {
+  "map": "maps/scrapline.json",
+  "verdict": "FIX",
+  "hidingScore": 7,
+  "patrolScore": 8,
+  "identityScore": 5,
+  "issues": [
+   "MOOD MISMATCH (engine-verified): JSON tags biome \"downtown\" but index.html biomeOf() resolves biome from MAP.name — \"scrapline\" matches no biome key, so it falls back to dominant terrain (dirt, 75.2% of cells) -> DUNES sky/ambience. The intended downtown scrapyard mood never renders. Fix: put a biome key in the name field, make the engine honor m.biome, or accept desert styling deliberately.",
+   "COPY-PASTE YARDS: the crate rows in the NW/W/SW yards collapse to 3 signatures — 'cc.cc.cc.cc.cc.cc' is byte-identical in rows 13, 25, 34, 46, 55 (cols 4-23), 'ccc.ccc.ccc.ccc.cc' identical in rows 4, 10, 28, and the N yard (cols 29-54, rows 5-14) repeats the same motif; NE and SE lattice yards (cols 58-83) are near-copies of each other. Roughly 6 of 9 yards are two stamps — vary spacing/orientation or swap crates for barrels/boulders per yard so each yard is recognizable.",
+   "DEAD KILL-CORRIDORS: the four 3-wide concrete bands (rows 18-20, rows 40-42, cols 26-28, cols 55-57 = 855 cells, 17% of the map) carry ZERO cover objects — full-map-length featureless sightlines, and the band interior is dead for the paint mechanic (nothing to straddle >1 tile from an edge). Shipped downtown scatters crates/barrels in its streets. Drop 2-3 crate/barrel clusters at intersections and mid-band (e.g. near (27,10), (41,30), (56,45), (70,19)) so crossing is a read, not a coin flip.",
+   "WEAK NE POCKET: hider spawn (82,10) has only 3 lone single barrels ((80,6),(83,8),(79,9)) in its 6-tile window, uniform dirt, no seam within 3 tiles; the rock pocket at (74-79,21-24) is 11+ tiles away. Add a metal scrap strip or pull the rock patch toward (78-83, 8-13).",
+   "SPARSE SOUTH YARD: rows 55-59, cols 29-54 are nearly featureless dirt; hider spawn (41,58) has 5 cover and uniform dirt within 6 tiles. Extend the mud lines (rows 47-50) south or add a crate pair near (40,56).",
+   "Minor: seeker spawn (5,3) has open line-of-sight to hider spawn (12,1) at d=7.3 across the metal ground (metal is terrain, not cover) — though the shipped six are worse on this axis (4-9 open-LoS spawn pairs each vs scrapline's 1).",
+   "Note, not a defect: zero water/lava — the hazard/slow mechanics are unused, and the 0.8% mud is inert (mud has no MOVE_MULT entry); a water pool in the empty south yard would add flavor cheaply.",
+   "WHAT'S GENUINELY GOOD (don't break in the fix): 100% reachable single region; the walled metal compound (34-46 x 24-33) has exactly two 2-wide entrances (south (39-40,33), east (46,27-28)) — a real landmark, not a trap; richest seam economy of any map (17.3 seam edges/100 cells vs shipped 6.7-13.2) plus designed strips (1-tall metal line row 26 cols 63-80, mud line row 50, metal staircase rows 32-36, rock pocket (74-79,21-24)); best-in-set patrol space (31.6% open, largest patrol region 1547 cells vs shipped max 340); safest spawn geometry in the set (min seeker-hider distance 6.4 vs shipped 2.0-3.6); crate rows with 1-tile gaps form dense LoS shadow lattices. The bones are strong — the three top issues are cheap, targeted fixes."
+  ]
+ },
+ {
+  "map": "maps/gardens.json",
+  "verdict": "FIX",
+  "hidingScore": 6,
+  "patrolScore": 9,
+  "identityScore": 7,
+  "issues": [
+   "Dead spawn: hider (1,51) has zero cover within 6 tiles (nearest tree is (10,57), Chebyshev 9) AND is only 5 tiles from seeker spawn (5,56) — starts naked next to a hunter.",
+   "Southern third (rows 46-59) is cover-starved: 15 total objects across the three bottom plots (0.8%/1.6%/1.9% density vs 4.5-7.1% in the northern plots) while hosting 5 of 20 hider spawns ((1,51),(23,58),(48,58),(69,58),(56,47)). Add 15-25 trees/boulders in dashed hedgerows mirroring rows 12/41.",
+   "Global cover density 3.0% (146 objects) is under half the sparsest shipped map (xeno 4.9%, shipped-six avg ~7%); patrol-open space is 83.4% of walkable vs 54.7-66.1% for the shipped six — LoS shadows are nearly absent, making the map heavily hunter-favored.",
+   "25 of 42 cover clusters are isolated single trees; convert scattered singles (e.g. the col-23 tree column rows 20-29, mid-map strays at (33,38),(45,41),(50,37)) into staggered 1-gap pairs to create usable LoS shadow lines.",
+   "Seam saturation: 52.4% of cells are straddleable (previous max: ruins 32.1%) because every bed is a 1-2-wide checker — seams stop being designed destinations, and all affordable hiding ground carries the pass-8 two-tone seam-tax while all single-tone ground (avenues, open grass) is exposed. Give each bed a solid 3-4-wide interior so seams live on bed borders.",
+   "Hider (1,36) sits in a 13x8 patch of 100% uniform grass (only 12 edge seam cells in R6) — the weakest paint-mechanic spawn; nudge it ~3 tiles SE toward the row-41 hedgerow/avenue seam.",
+   "Name/mechanics mismatch: 'Twin Gardens — two-tone topiary maze' — the layout is a 3x3 grid (L-R terrain symmetry only 75.8%, not twins) and contains zero walls, so nothing about the 'maze' blocks movement; add wall hedges to 1-2 plots (as downtown/ruins do) or rename.",
+   "All four sand avenues (cols 19-21, 58-60; rows 14-16, 43-45) run their full 80/60-tile length with zero cover — every crossing is a pure sprint; one boulder/planter per avenue segment would create fair crossing beats (minor if full exposure is the intended risk mechanic)."
+  ]
+ }
+]

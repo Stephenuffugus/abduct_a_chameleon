@@ -1,0 +1,1999 @@
+[
+ {
+  "concern": "CAMERA & WORLD RENDERING in /workspaces/abduct_a_chameleon/index.html — cam/camFollow/camPan/zoom pipeline, INSPECT zoom-out, FX camera (lookahead/zoom-punch/trauma shake), applyWorldTransform/screenToWorld projection pair, visRect culling, terrain-cache blitting, and the frame() draw order — mapped so free pan+zoom (wheel/pinch), camera-lock, and eased camera-state transitions can be added without breaking tap accuracy.",
+  "stateObjects": [
+   {
+    "name": "cam",
+    "approxLine": 558,
+    "role": "THE single projection input: true rendered world-center in world px. Written ONLY by updateCamera step (4) (clamped camFollow+camPan) plus hard snaps in startRound (2093, 2102). Everything render-side (applyWorldTransform, screenToWorld, worldToScreen, visRect) reads cam and nothing else.",
+    "fields": "{x, y} world px"
+   },
+   {
+    "name": "zoom",
+    "approxLine": 558,
+    "role": "Current effective scale (world px -> CSS px). Declared `let cam={x:0,y:0}, zoom=1.6, shake={...}`. REBUILT EVERY FRAME in updateCamera line 1376 from zoomBase*(1+FX.zoomPunch)*(1+(INSPECT_ZOOM_MUL-1)*inspectZoomT), floored at ZOOM_MIN*0.8. Also assigned in computeZoom(). A user-zoom must become a new factor in the 1376 product, not a direct write.",
+    "fields": "number, ~1.15..2.6"
+   },
+   {
+    "name": "zoomBase",
+    "approxLine": 1299,
+    "role": "Fit-to-viewport base zoom, set only by computeZoom() (min(vpW,vpH)/(TARGET_VISIBLE_TILES*TILE) clamped ZOOM_MIN..ZOOM_MAX). Reset on every resize()/dpr retier.",
+    "fields": "number; `let shakeScale=1, zoomBase=1.6`"
+   },
+   {
+    "name": "camFollow",
+    "approxLine": 760,
+    "role": "Eased follow anchor (player + smoothed lookahead), deadzoned + exponentially eased toward target in updateCamera step (2). Never read by projections directly — cam = clamp(camFollow + camPan).",
+    "fields": "const {x, y} world px"
+   },
+   {
+    "name": "camPan",
+    "approxLine": 759,
+    "role": "Right-thumb peek/free-look offset in WORLD units, added to camFollow. Grabbed 1:1 via /zoom in onPointerMove; springs home in MOVE (PAN_HOME_RATE=8), held in INSPECT, forced 0 in PAINT. Zeroed at ~9 reset sites (891, 1050, 1053, 1791, 2053, 2058, 2060, 2119).",
+    "fields": "const {x, y} world px"
+   },
+   {
+    "name": "inspectZoomT",
+    "approxLine": 761,
+    "role": "0..1 ease into seeker-altitude zoom-out; driven every frame toward (ctrlMode==='INSPECT'?1:0) at INSPECT_ZOOM_RATE=6 (line 1375). Gates drawInspectOverlay (>0.01). This is the existing template for an eased camera-state transition.",
+    "fields": "let number 0..1"
+   },
+   {
+    "name": "ctrlMode",
+    "approxLine": 758,
+    "role": "'MOVE' | 'PAINT' | 'INSPECT' — selects pan clamp (MOVE_PEEK_MAX=224 vs INSPECT_PAN_MAX=384), pan spring-home behavior, lookahead on/off, inspect zoom target, and movement nudge speed.",
+    "fields": "let string"
+   },
+   {
+    "name": "shake",
+    "approxLine": 558,
+    "role": "Trauma screen-shake offset in CSS px. Applied ONLY inside applyWorldTransform's translate — deliberately EXCLUDED from screenToWorld/worldToScreen so taps stay exact (comment at 1395).",
+    "fields": "{mag, x, y}"
+   },
+   {
+    "name": "FX",
+    "approxLine": 1302,
+    "role": "FX-camera state: trauma (shake energy), zoomPunch (additive zoom factor tweened by punchZoom), camLeadX/camLeadY (smoothed velocity lookahead), hitstop/slowScale (affect simDt but NOT updateCamera), tweens[] (generic tween queue run by updateTweens on realDt), flash/desat/spottedV/reliefV (post overlays).",
+    "fields": "{trauma, hitstop, zoomPunch, slowScale, slowHold, desat, spottedV, reliefV, camLeadX, camLeadY, tweens[], streaks[], flash}"
+   },
+   {
+    "name": "camera tuning constants",
+    "approxLine": 89,
+    "role": "TARGET_VISIBLE_TILES=16, ZOOM_MIN=1.15, ZOOM_MAX=2.6, CAM_STIFFNESS=9.0, CAM_DEADZONE=6 (lines 89-90); MOVE_PEEK_MAX=224, INSPECT_PAN_MAX=384, PAN_HOME_RATE=8, RECENTER_SHOW=40 (line 41); INSPECT_NUDGE=45, INSPECT_ZOOM_MUL=0.78, INSPECT_ZOOM_RATE=6 (line 42); CAM_LOOK_K=0.16, CAM_LOOK_MAX=46, CAM_LOOK_SMOOTH=5.0, SHAKE_MAXOFF=15, TRAUMA_DECAY=1.9 (line 1300).",
+    "fields": "consts"
+   },
+   {
+    "name": "viewport globals",
+    "approxLine": 554,
+    "role": "`let cv, ctx, dpr=1, vpW=0, vpH=0` — CSS-px viewport + devicePixelRatio (capped by dprCap, line 91; retiered at runtime by applyQuality 413-420 which calls resize()). All projections mix vpW/vpH (CSS px) with dpr only inside setTransform.",
+    "fields": "cv canvas, ctx, dpr, vpW, vpH"
+   },
+   {
+    "name": "world dimensions",
+    "approxLine": 194,
+    "role": "`let mapCols, mapRows, worldW, worldH` set in setActiveMap (line 277: worldW=mapCols*TILE). Drive cam clamping (1393-1394), player clamping, and terrain-blit bounds. New maps automatically feed the camera via these.",
+    "fields": "numbers, world px; TILE=32 (line 32)"
+   },
+   {
+    "name": "pointers / joystick",
+    "approxLine": 751,
+    "role": "pointers: Map pointerId -> {sx,sy,role,...}; roles: 'joystick'|'pan'|'ui'|'sv'|'hue'|'reticle'|'sscroll'. 'pan' entries carry sx0/sy0/px0/py0 for the 1:1 grab. updateCamera scans pointers for an active 'pan' role to suppress spring-home. joystick (752) owns the movement-side thumb.",
+    "fields": "Map + let joystick {id,cx,cy,dx,dy,mag}"
+   },
+   {
+    "name": "terrainCanvas / terrainCtx",
+    "approxLine": 198,
+    "role": "Full-world offscreen canvas (worldW x worldH px, 1 world px = 1 canvas px) baked once per map by buildTerrainCache (290-309). Blitted per-frame with a visRect-culled source slab (1416-1419).",
+    "fields": "OffscreenCanvas|HTMLCanvasElement"
+   },
+   {
+    "name": "skyCache / vignette caches",
+    "approxLine": 152,
+    "role": "skyCache: viewport-sized screen-space gradient rebuilt by buildSky() on resize/biome change; vignetteGrad/scanlinePattern caches invalidated in resize() (_vigGrad=null line 2617). Screen-space — unaffected by zoom, must be rebuilt on viewport change only.",
+    "fields": "canvases / gradients"
+   },
+   {
+    "name": "_hud",
+    "approxLine": 763,
+    "role": "{modeButtons[], pill, recenter} — screen rects exposed to window.__aac.hud for the jsdom smoke harness; recenter is set only while |camPan|>RECENTER_SHOW.",
+    "fields": "const object"
+   },
+   {
+    "name": "window.__aac state hook",
+    "approxLine": 2664,
+    "role": "Test/diagnostic getter exposing mode:ctrlMode, cam, camFollow, camPan, zoom (3dp), inspect:{active,zoomT}, hud, perf:{dpr,dprCap,qLevel}. The jsdom smoke harness (per project memory) reads these — new camera state (userZoom, camLock) should be appended here.",
+    "fields": "getter at 2641-2669"
+   }
+  ],
+  "functions": [
+   {
+    "name": "updateCamera",
+    "signature": "function updateCamera(dt)",
+    "approxLine": 1373,
+    "role": "THE camera integrator, 4 numbered steps: (1) line 1375-1376 zoom = max(ZOOM_MIN*0.8, zoomBase*(1+FX.zoomPunch)*(1+(INSPECT_ZOOM_MUL-1)*inspectZoomT)) with inspectZoomT eased toward mode target; (2) 1377-1383 velocity lookahead (MOVE only) smoothed into FX.camLeadX/Y, then camFollow deadzone(6)+exponential ease 1-exp(-CAM_STIFFNESS*dt) toward player+lead; (3) 1384-1389 camPan policy per ctrlMode + clampPan; (4) 1390-1394 cam = clamp(camFollow+camPan, half-viewport..world-half) with center-when-world-smaller fallback; then 1395-1402 trauma shake offsets + FX decays. Runs on realDt AFTER the fixed-step sim (frame line 2601) — immune to hitstop/slow-mo. This is where free-zoom, camera-lock, and eased transitions all hook in."
+   },
+   {
+    "name": "computeZoom",
+    "signature": "function computeZoom()",
+    "approxLine": 1372,
+    "role": "zoomBase=clamp(Math.min(vpW,vpH)/(TARGET_VISIBLE_TILES*TILE),ZOOM_MIN,ZOOM_MAX); zoom=zoomBase. Called only from resize() (2616). Do not put user zoom here — it gets reset on resize and on runtime dpr retiers."
+   },
+   {
+    "name": "applyWorldTransform",
+    "signature": "function applyWorldTransform()",
+    "approxLine": 1404,
+    "role": "ctx.setTransform(zoom*dpr,0,0,zoom*dpr,(vpW/2 - cam.x*zoom + shake.x)*dpr,(vpH/2 - cam.y*zoom + shake.y)*dpr). The forward projection; shake is a translate-only extra excluded from the inverse."
+   },
+   {
+    "name": "applyScreenTransform",
+    "signature": "function applyScreenTransform()",
+    "approxLine": 1406,
+    "role": "ctx.setTransform(dpr,0,0,dpr,0,0) — screen-space (CSS px) mode for sky, HUD, overlays, post FX."
+   },
+   {
+    "name": "screenToWorld",
+    "signature": "function screenToWorld(sx,sy) -> {x,y}",
+    "approxLine": 769,
+    "role": "cam.x + (sx-vpW/2)/zoom — exact inverse of applyWorldTransform minus shake. Consumers: studioReticleDrag (1111). Tap accuracy contract lives here."
+   },
+   {
+    "name": "worldToScreen",
+    "signature": "function worldToScreen(wx,wy) -> {x,y}",
+    "approxLine": 770,
+    "role": "(wx-cam.x)*zoom+vpW/2 — used by drawInspectOverlay (1834, 1838); drawThreatArrows inlines the same math (1878)."
+   },
+   {
+    "name": "visRect",
+    "signature": "function visRect() -> {x0,x1,y0,y1}",
+    "approxLine": 369,
+    "role": "World-space view rectangle from cam +- (vp/2)/zoom. Consumers: terrain blit (1414-1419), cover culling (1428), drawAmbientGround (385), spawnDrifter (370), updateAmbient (375). Automatically correct for any zoom value."
+   },
+   {
+    "name": "clampPan",
+    "signature": "function clampPan(max)",
+    "approxLine": 764,
+    "role": "Radially clamps camPan magnitude; called from onPointerMove (972) and updateCamera (1389) with mode-dependent max (INSPECT 384 vs MOVE 224)."
+   },
+   {
+    "name": "drawRound",
+    "signature": "function drawRound(alpha)",
+    "approxLine": 1410,
+    "role": "World render pass, exact order: (1) applyScreenTransform + skyCache blit; (2) applyWorldTransform + visRect; terrain slab blit; (3) ambient ground glows; (4) footstep ripples; (5) culled cover; (6) particles; TA beacons / HUNT branch; (7) decoys+player/abduction; (8) UFOs; ink clouds; (9) overhead drifters; (10) reticle; (11-14) applyScreenTransform + multiply color-grade + drawVignette. NOTE: alpha param is vestigial — called as drawRound() (2605); no interpolation exists."
+   },
+   {
+    "name": "drawRoundHUD",
+    "signature": "function drawRoundHUD()",
+    "approxLine": 1717,
+    "role": "Rebuilds roundHits[] each frame (screen-space tap targets); MODE dock (1770-1776), MODE pill exit (1788), recenter button ⌖ when |camPan|>RECENTER_SHOW (1790-1791, zeroes camPan), ability bar; calls drawInspectOverlay when inspectZoomT>0.01 (1811)."
+   },
+   {
+    "name": "drawInspectOverlay",
+    "signature": "function drawInspectOverlay()",
+    "approxLine": 1831,
+    "role": "Screen-space seeker's-view overlay faded by inspectZoomT: UFO scan rings via worldToScreen + SCAN_R*zoom (1836), YOU marker or edge arrow computed from player-cam angle (1842), blend readout panel."
+   },
+   {
+    "name": "drawThreatArrows",
+    "signature": "function drawThreatArrows()",
+    "approxLine": 1875,
+    "role": "Off-screen hunter arrows; inlines worldToScreen math (line 1878: vpW/2+(u.x-cam.x)*zoom) for on-screen tests — a second copy of the projection to keep in sync if projection changes."
+   },
+   {
+    "name": "onPointerDown",
+    "signature": "function onPointerDown(e)",
+    "approxLine": 922,
+    "role": "Role router: roundHits screen-space hit test FIRST (945), then handedness split — joy side spawns floating joystick (950-953), other side becomes role:'pan' storing {sx0,sy0,px0:camPan.x,py0:camPan.y} (954-955), except HUNT mode ('ui'). Pinch/wheel roles hook in here."
+   },
+   {
+    "name": "onPointerMove",
+    "signature": "function onPointerMove(e)",
+    "approxLine": 960,
+    "role": "role 'pan' branch (970-972): camPan = px0 + (sx-sx0)/zoom (1:1 world grab at CURRENT zoom), then clampPan by mode. Pinch detection would branch here before per-role handling."
+   },
+   {
+    "name": "onPointerUp",
+    "signature": "function onPointerUp(e)",
+    "approxLine": 978,
+    "role": "Deletes pointer; pan release is implicit — updateCamera notices no 'pan' role remains and springs home in MOVE."
+   },
+   {
+    "name": "enterInspect / exitInspect / toggleInspect",
+    "signature": "function enterInspect(); function exitInspect(); function toggleInspect()",
+    "approxLine": 1052,
+    "role": "INSPECT transitions: enter guards (round PLAYING, not HUNT), closes studio, zeros camPan, sets ctrlMode='INSPECT' (zoom-out then happens purely via updateCamera easing). Triggers: KeyI (867), Esc exits (874), gamepad RB (832), HUD 👁 (1772), MODE pill (1788)."
+   },
+   {
+    "name": "enterPaint / exitPaint",
+    "signature": "function enterPaint(); function exitPaint()",
+    "approxLine": 1048,
+    "role": "PAINT roots the player and zeros camPan (1050); updateCamera forces camPan=0 every frame while in PAINT (1385)."
+   },
+   {
+    "name": "punchZoom",
+    "signature": "function punchZoom(amt,rise,fall)",
+    "approxLine": 1310,
+    "role": "FX zoom-punch: tweens FX.zoomPunch up with easeOutCubic then back with easeInOutCubic via tw(); no-op when FX_MOTION<=0. Multiplied into zoom at 1376. Callers: dash 802, applyMatch 1065, spotted 1290, near-miss 1316, abduction 2056."
+   },
+   {
+    "name": "addTrauma / trauma shake",
+    "signature": "function addTrauma(a)",
+    "approxLine": 1304,
+    "role": "Accumulates FX.trauma (scaled by motion setting + shakeScale); updateCamera 1396-1398 converts trauma^2 into random shake.x/y within SHAKE_MAXOFF=15 and decays at TRAUMA_DECAY=1.9."
+   },
+   {
+    "name": "tw / updateTweens",
+    "signature": "function tw(from,to,dur,ease,set,opts); function updateTweens(dt)",
+    "approxLine": 1306,
+    "role": "Generic tween queue (cap 48) run on realDt in frame() (2590) — the ready-made tool for scripted camera transitions; easings easeOutCubic/easeInOutCubic at 161-162."
+   },
+   {
+    "name": "buildTerrainCache",
+    "signature": "function buildTerrainCache()",
+    "approxLine": 290,
+    "role": "Bakes the whole map to terrainCanvas (worldW x worldH, OffscreenCanvas fallback to canvas) once per map — per-tile base + terrainMotif texture. Blit source coords are world px; camera never touches this."
+   },
+   {
+    "name": "resize",
+    "signature": "function resize()",
+    "approxLine": 2614,
+    "role": "dpr=min(dprCap,devicePixelRatio); vpW/vpH from window; sizes canvas backing store (vpW*dpr); calls computeZoom(); invalidates _vigGrad/_scanPat; rebuilds sky. Also invoked at runtime by applyQuality (420) and applySettingsRuntime (651) when dprCap retiers."
+   },
+   {
+    "name": "frame",
+    "signature": "function frame(now)",
+    "approxLine": 2588,
+    "role": "Main rAF loop: realDt clamp (MAX_FRAME_DT=0.05) -> updatePerf/updateTweens/updateStreaks -> gamepad edges -> hitstop/slowScale gate simDt -> fixed-step while(acc>=DT_FIXED) stepSim(1/60) max 5 steps -> particles/ambient/anim -> updateCamera(realDt) -> drawRound() -> drawRoundHUD() -> drawStreaks -> flash -> drawToast."
+   },
+   {
+    "name": "stepSim",
+    "signature": "function stepSim(dt)",
+    "approxLine": 2230,
+    "role": "Fixed-step sim; line 2239: practice-mode slow-mo (STUDIO_SLOWMO=0.35) while studio open OR ctrlMode==='INSPECT'; movePlayer uses INSPECT_NUDGE=45 px/s while inspecting (1009)."
+   },
+   {
+    "name": "startRound",
+    "signature": "function startRound(entry, mode, diff, fixedSeed)",
+    "approxLine": 2072,
+    "role": "Camera lifecycle: cam snapped to player (2093; HUNT re-snap 2102), acc=0; line 2119 resets ctrlMode='MOVE', camFollow=cam, camPan=0, inspectZoomT=0, joystick=null. Any new camera state (userZoom, camLock, transition timers) must be reset here."
+   },
+   {
+    "name": "triggerAbduction / endRound / togglePause / blur handler",
+    "signature": "lines 2053, 2058, 2060, 890",
+    "approxLine": 2053,
+    "role": "The other camPan/ctrlMode reset sites: abduction, win, pause, and window blur all force ctrlMode='MOVE' + camPan=0. A camera-lock feature must decide its behavior at each."
+   },
+   {
+    "name": "studioReticleDrag",
+    "signature": "function studioReticleDrag(sx,sy)",
+    "approxLine": 1111,
+    "role": "Only screenToWorld consumer: converts drag to world, clamps to 6*TILE radius around player. Canonical tap-accuracy client — a regression test target for any projection change."
+   },
+   {
+    "name": "updatePerf / applyQuality",
+    "signature": "function updatePerf(realDt); function applyQuality()",
+    "approxLine": 409,
+    "role": "Frame-budget auto-scaler; at qLevel>=2 lowers dprCap to 1.25 and calls resize() (420) — which re-runs computeZoom() and resets zoomBase mid-round. User zoom kept as a separate factor survives this; user zoom stored in zoomBase would not."
+   }
+  ],
+  "flows": [
+   "FRAME ORDER (per rAF, frame() 2588): realDt clamp -> updatePerf/updateTweens (FX.zoomPunch tweens advance here, realDt) -> updateGamepadEdges -> simDt = hitstop? 0 : realDt*FX.slowScale -> fixed-step: while(acc>=1/60 && steps<5) stepSim(1/60) [gatherInput -> movePlayer -> camo] -> updateParticles/updateAmbient/updateChameleonAnim -> updateCamera(realDt) [camera ALWAYS full-rate, ignores hitstop/slow-mo] -> drawRound() [world pass] -> drawRoundHUD() [rebuild roundHits; drawInspectOverlay] -> drawStreaks -> white flash -> drawToast.",
+   "ZOOM PIPELINE: resize() 2614 (window resize, boot, dpr retier) -> computeZoom() 1372 sets zoomBase=clamp(min(vpW,vpH)/(16*32), 1.15, 2.6) -> every updateCamera: inspectZoomT += ((INSPECT?1:0)-inspectZoomT)*min(1,dt*6) -> zoom = max(1.15*0.8, zoomBase*(1+FX.zoomPunch)*(1+(0.78-1)*inspectZoomT)) [line 1376] -> zoom consumed by applyWorldTransform, screenToWorld, worldToScreen, visRect, pan grab ratio, SCAN_R ring radii.",
+   "TOUCH PAN (right thumb): onPointerDown 922 -> roundHits screen hit-test first (945, buttons win) -> non-joystick side && round.mode!=='HUNT' -> pointers.set(id,{role:'pan',sx0,sy0,px0:camPan.x,py0:camPan.y}) [955] -> onPointerMove 970: camPan = p.px0+(sx-sx0)/zoom (1:1 world grab), clampPan(INSPECT?384:224) -> updateCamera step (3): PAINT forces camPan=0; MOVE with no live 'pan' pointer springs home camPan *= via 1-exp(-8*dt), snap to 0 below 0.5; INSPECT holds -> step (4): cam = clamp(camFollow+camPan, halfView..world-halfView) or world-center when world fits -> render. Release: onPointerUp deletes pointer; spring-home takes over next updateCamera.",
+   "FOLLOW + LOOKAHEAD: updateCamera step (2): lead gate = (ctrlMode==='MOVE')?1:0 -> target lead = clamp(player.vx*0.16, +-46)*gate -> FX.camLeadX/Y ease toward it at rate 5 -> follow target tx,ty = player + camLead -> if dist>CAM_DEADZONE(6): camFollow += (t-camFollow)*(1-exp(-9*dt)). PAINT/INSPECT freeze lookahead to 0 (eases out), so entering those modes already glides the camera back over the player.",
+   "INSPECT ZOOM-OUT: KeyI 867 / RB 832 / HUD 👁 1772 -> toggleInspect 1056 -> enterInspect 1052 (guards PLAYING && !HUNT; closes studio; camPan=0; ctrlMode='INSPECT') -> updateCamera eases inspectZoomT->1 at rate 6 -> zoom scales toward 0.78x zoomBase -> movePlayer nudges at 45 px/s (1009); practice runs at 0.35x time (2239) -> drawRoundHUD calls drawInspectOverlay 1831 (alpha=inspectZoomT): scan rings worldToScreen + SCAN_R*zoom, YOU ring/edge-arrow, readout -> exitInspect 1054 -> inspectZoomT eases back to 0; pan clamp shrinks 384->224 (clampPan at 1389).",
+   "FX CAMERA: addTrauma(a) 1304 accumulates FX.trauma -> updateCamera 1396: shake.x/y = random +-15*trauma^2, decays 1.9/s -> applied ONLY as translate in applyWorldTransform (1405), never in screenToWorld. punchZoom(amt,rise,fall) 1310 -> tw() tween on FX.zoomPunch (easeOutCubic up, easeInOutCubic down) -> multiplied into zoom at 1376. Both are transient multipliers/offsets layered ON TOP of the deterministic cam/zoomBase state.",
+   "TERRAIN BLIT (drawRound 1414-1419): v=visRect() -> sx=max(0,floor(v.x0)), sy=max(0,floor(v.y0)), sw=min(worldW,ceil(v.x1))-sx, sh likewise -> if(sw>0&&sh>0) ctx.drawImage(terrainCanvas, sx,sy,sw,sh, sx,sy,sw,sh) under the WORLD transform (source rect == dest rect in world coords, so the transform does all scaling). Follows pan/zoom automatically via cam->visRect; guards already make extreme zoom-out safe.",
+   "TAP ACCURACY CHAIN: pointer event (CSS px, e.clientX) -> screen-space roundHits/inRect tests (no transform involved) -> world interactions go through screenToWorld 769 = cam.x+(sx-vpW/2)/zoom -> exact inverse of applyWorldTransform minus shake (shake excluded on purpose, comment 1395). Currently only studioReticleDrag converts taps to world; UFO rings/YOU marker go world->screen via worldToScreen. Any new zoom factor keeps taps exact automatically IF it is folded into `zoom` before both the transform and the inverse read it in the same frame.",
+   "ROUND/CAMERA LIFECYCLE: startRound 2072 -> cam.x/y = player spawn (2093; HUNT 2102), acc=0 -> line 2119: ctrlMode='MOVE', camFollow=cam, camPan=0, inspectZoomT=0 -> COUNTDOWN -> PLAYING. Resets that also zero camPan+mode: blur 890, triggerAbduction 2053, endRound 2058, togglePause 2060, spotted-kickout 1292. Recenter: drawRoundHUD 1790 shows ⌖ only while |camPan|>40; tap zeroes camPan (spring not needed).",
+   "RUNTIME DPR RETIER (perf): updatePerf 409 EMA>20ms x30 frames -> qLevel++ -> applyQuality 413 -> at qLevel>=2 dprCap->1.25 -> resize() -> computeZoom() resets zoomBase (and current zoom until next updateCamera) mid-round; also settings.perf changes (651). Sky/vignette caches rebuilt; cam/camFollow/camPan untouched."
+  ],
+  "invariants": [
+   "screenToWorld/worldToScreen (769-770) MUST remain the exact inverse/forward of applyWorldTransform (1404) minus shake. Shake stays a translate-only offset that never enters the inverse — this is the tap-accuracy contract (explicit comment at 1395). Any new zoom/pan factor must be visible to all three in the same frame.",
+   "cam (+ zoom, vpW, vpH) is the ONLY projection input. camFollow/camPan/camLead/inspectZoomT/userZoom are pre-clamp ingredients consumed inside updateCamera; nothing render-side may read them. Extend the camera by adding ingredients, not by adding new projection inputs.",
+   "zoom is recomputed from zoomBase every updateCamera call (1376). Persistent user zoom must be a multiplicative factor in that expression; direct writes to `zoom` outside updateCamera are stomped within one frame.",
+   "cam is re-clamped to world bounds every frame with halfW/halfH derived from the CURRENT zoom (1391-1394), including the center-when-world-fits fallback — a zoom-out feature inherits correct edge behavior for free, but the clamp must run AFTER the final zoom for the frame is known.",
+   "updateCamera runs on realDt, after the fixed-step sim, unaffected by hitstop/FX.slowScale (frame 2593/2601). All camera eases use the frame-rate-independent form 1-exp(-k*dt) (or *= min(1,dt*k)); new transitions must too. MAX_FRAME_DT=0.05 bounds dt.",
+   "window.__aac (2641-2669) must keep exposing mode, cam, camFollow, camPan, zoom, inspect:{active,zoomT}, hud, perf — the jsdom smoke harness (see project memory: no browser in sandbox) asserts against these. Add new camera state (userZoom, camLock) additively; never rename/remove fields. Keep the classic <script> + window.__aac hook.",
+   "DAILY-mode determinism: camera code must never consume the seeded rng() stream (seedAmbient ordering comment at 2117). shake uses Math.random() — keep any new camera jitter on Math.random(), not rng().",
+   "roundHits screen-space hit-testing happens BEFORE pan-role assignment in onPointerDown (945 vs 955). New gestures (pinch, wheel-over-HUD) must not steal taps from HUD buttons; keep the ordering.",
+   "Camo math is untouched by camera state EXCEPT: ctrlMode gates (movement nudge 1009, practice slow-mo 2239, paint rooting 794). A camera-lock/zoom feature must not introduce new ctrlMode values without auditing every ctrlMode==='...' comparison (approx 30 sites).",
+   "Terrain blit source rect must stay clamped inside terrainCanvas ([0..worldW/H], 1417-1418) with the sw>0&&sh>0 guard, and source==dest coordinates under the world transform (no independent rounding of dest).",
+   "FX gates: punchZoom no-ops at FX_MOTION<=0; shake scales by shakeScale/settings.screenShake; haptics via vibe(). New camera juice must respect the same motion/photosensitive settings gates.",
+   "HUNT mode has no camera pan (pointer role 'ui' at 956-957) and no INSPECT/PAINT (guards in enterPaint/enterInspect 1048/1052); camFollow tracks the flown UFO via the same updateCamera. Extensions must preserve or consciously extend this per-mode gating."
+  ],
+  "gotchas": [
+   "drawRound(alpha) declares an interpolation alpha that is never passed (called drawRound() at 2605) — there is NO render interpolation between fixed sim steps; don't assume it exists when adding smooth camera work (updateCamera already runs at render rate, which is why motion looks smooth).",
+   "Three writers touch `zoom`: initializer (558), computeZoom (1372), updateCamera (1376). A naive wheel handler writing `zoom` directly will appear to work for one frame then snap back.",
+   "Pan grab divides by the CURRENT zoom at each pointermove (971) — during an animated zoom (inspect ease, zoom punch) an in-flight drag changes its grab ratio and the world point under the finger drifts. For pinch/wheel zoom you must re-anchor: capture screenToWorld(cursor) before the zoom change and solve the pan/center offset so that point stays under the cursor after.",
+   "There is currently NO wheel listener and NO desktop pan input at all (only touch role 'pan'); `touch-action:none` on the canvas (line 13) means browser pinch/scroll never fires — pinch must be hand-rolled from two entries in `pointers`. Watch onPointerDown's handedness split: a second finger on the joystick side OVERWRITES the existing joystick object (952) rather than becoming a second gesture pointer — pinch detection must intercept before the joy-side branch.",
+   "clampPan max is mode-dependent and applied in BOTH pointermove (972) and updateCamera (1389): leaving INSPECT mid-drag hard-clamps 384->224 in one frame (visible jerk). A free-camera state should ease the clamp or re-clamp radially over time.",
+   "applyQuality can call resize() mid-round (420) on slow devices, resetting zoomBase (and rebuilding the sky). Store user zoom OUTSIDE zoomBase and re-derive zoom, or a perf dip silently resets the player's zoom.",
+   "camPan/ctrlMode are force-reset in at least 7 places (blur 891, enterPaint 1050, enterInspect 1053, recenter 1791, abduction 2053, win 2058, pause 2060, startRound 2119, spotted-kickout 1292). A camera-lock or persistent free-cam flag added only to updateCamera will leak or be silently dropped at these sites — sweep all of them.",
+   "startRound snaps cam BEFORE any clamping (2093); the first updateCamera clamps it, so an edge spawn shifts slightly on frame 1 — a scripted intro transition should clamp its own start pose.",
+   "drawThreatArrows inlines the worldToScreen formula (1878) instead of calling it — projection changes must update this duplicate (and drawInspectOverlay's SCAN_R*zoom ring radius at 1836, which assumes uniform scale).",
+   "Overlays drawn with worldToScreen (inspect rings, YOU marker, threat arrows) intentionally DO NOT shake (shake lives only in applyWorldTransform). Keep new overlays consistent, and note a zoomed-out 'whole map' view may make SCAN_R*zoom rings tiny — clamp minimum on-screen radii.",
+   "The zoom floor at 1376 is ZOOM_MIN*0.8=0.92, chosen so INSPECT's 0.78x of the smallest zoomBase (1.15) isn't crushed; a free zoom-out below that must raise/remove this floor AND rely on the world-fits centering branch (1393) — which centers per-axis independently (letterboxed maps center one axis while the other still clamps).",
+   "Practice slow-mo ties sim speed to ctrlMode==='INSPECT' (2239) — if you repurpose INSPECT zoom for a generic free-cam, practice rounds will slow down unexpectedly.",
+   "vpW/vpH are CSS px; dpr only appears inside setTransform and canvas sizing. Keep any new camera math in CSS-px screen space / world px — mixing in dpr will break on the 1.25/1.5 perf tiers.",
+   "skyCache is viewport-sized and static in screen space — at extreme zoom-out the parallax-free sky is fine, but the multiply color-grade (1471) and vignette are also full-viewport, so no changes needed there; only visRect consumers scale with zoom."
+  ],
+  "extensionPoints": [
+   "FREE ZOOM (wheel/pinch) — state: add `let userZoom=1` near inspectZoomT (761) plus consts (e.g. USER_ZOOM_MIN=0.45, USER_ZOOM_MAX=1.6) near line 42. Fold into updateCamera line 1376: zoom = Math.max(floor, zoomBase * userZoomEased * (1+FX.zoomPunch) * (1+(INSPECT_ZOOM_MUL-1)*inspectZoomT)) where userZoomEased chases the target via the existing 1-exp(-k*dt) pattern. Do NOT modify computeZoom or write `zoom` anywhere else. Reset userZoom=1 at startRound line 2119 and expose it in __aac (2665).",
+   "WHEEL HANDLER — register next to the pointer listeners (~896-900): cv.addEventListener('wheel', e=>{e.preventDefault(); ...}, {passive:false}). Set userZoomTarget *= exp(-e.deltaY*k). Cursor-anchored zoom: const before=screenToWorld(e.clientX,e.clientY); apply the zoom for this frame (or defer to updateCamera), then const after=screenToWorld(...); camPan.x += before.x-after.x; camPan.y += before.y-after.y (adjusting camPan keeps cam the single projection input and preserves tap accuracy). Gate on appState==='ROUND' && roundState==='PLAYING' && round.mode!=='HUNT' to match touch pan.",
+   "PINCH — in onPointerDown (922): after the roundHits loop, if a non-joystick pointer arrives while another 'pan' pointer exists, promote both to role:'pinch' storing the start distance, start userZoom, start camPan, and start centroid world point (screenToWorld). In onPointerMove (960) add a 'pinch' branch before the per-role chain: scale = dist/dist0 -> userZoomTarget = clamp(z0*scale); recompute camPan so the stored centroid world point stays under the current screen centroid (same before/after trick). On onPointerUp (978), demote the survivor back to role:'pan' with fresh sx0/px0 so it doesn't jump. Watch the joy-side overwrite at 952: check `joystick` existence before claiming the side.",
+   "CAMERA LOCK — add `let camLock=null; // null | {x,y,zoom?} | {target:()=>({x,y})}` near 761. Hook in updateCamera step (2): if(camLock){ tx=..., ty=... from lock; skip lookahead (force lead gate 0) } replacing the player target at line 1381; optionally force camPan spring-home. Add camLock=null to every reset site: blur 891, startRound 2119, triggerAbduction 2053, endRound 2058, togglePause 2060 (decide per-site: pause may keep the lock). Expose in __aac. Because cam derivation and clamping are unchanged, projections and tap accuracy are untouched.",
+   "EASED CAMERA-STATE TRANSITIONS — two ready-made mechanisms: (a) the inspectZoomT pattern (0..1 state variable eased at a rate constant in updateCamera step (1), factors multiplied into zoom / lerped into targets) — best for mode-driven states like lock/unlock and INSPECT; (b) the tween queue tw(from,to,dur,easeOutCubic,set) at 1306 + easings at 161-162 — best for one-shot scripted moves (e.g. snap-to-beacon flyover): tween a `camTransT` and inside updateCamera lerp both the follow target and userZoom between saved start pose and goal pose BEFORE the step-(4) clamp, so world edges stay respected mid-flight. Never tween cam directly (it gets clamped/overwritten); tween the ingredients.",
+   "RECENTER/HUD INTEGRATION — drawRoundHUD 1790: extend the ⌖ button predicate to also show when userZoom!==1 or camLock active, and its fn to reset camPan AND ease userZoomTarget back to 1 (keep _hud.recenter updated for the harness). MODE pill (1788) and INSPECT hint text (1855) are the places to surface new camera-state labels.",
+   "KEYBOARD/GAMEPAD ZOOM — keydown handler in-round branch (866-877): add e.g. Minus/Equal adjusting userZoomTarget; updateGamepadEdges in-round branch (828-835): unused buttons/axes (right stick axes 2/3 are currently unread in pollGamepad 813-821 — natural free-look pan source: feed them into camPan via the same clampPan path).",
+   "INSPECT INTERPLAY — INSPECT_ZOOM_MUL/RATE (line 42) and the inspectZoomT ease (1375) stay untouched; combine with userZoom multiplicatively so wheel-zoom during INSPECT works. If free zoom-out should replace INSPECT altitude, gate userZoom range per ctrlMode inside updateCamera step (1) rather than adding a new mode (avoids auditing all ctrlMode sites and the practice slow-mo tie at 2239).",
+   "MAPS / WORLD BOUNDS — nothing to do per map: setActiveMap (277) sets worldW/worldH which feed the step-(4) clamp and the terrain-blit guards (1416-1419); a whole-map zoom-out only needs the 1376 floor relaxed and, for maps smaller than the viewport, relies on the existing per-axis centering at 1393-1394. If you add a minimap/overview, reuse the SCANNER thumbnail code path at ~476 (renders MAP.terrain 1px/tile) rather than re-blitting terrainCanvas.",
+   "TEST HOOKS / SMOKE HARNESS — append to the __aac getter's mode-based-controls block (2664-2666): userZoom, userZoomTarget, camLock (rounded), and any transition t. Per project memory the jsdom harness drives pointer events on cv and asserts __aac.cam/zoom — write new smoke cases for: wheel at a known cursor keeps screenToWorld(cursor) fixed (byte-exact within epsilon), pinch centroid invariance, lock release easing, and recenter resetting both pan and zoom."
+  ]
+ },
+ {
+  "concern": "INPUT & CONTROL-MODE MACHINE in /workspaces/abduct_a_chameleon/index.html — gatherInput, the ctrlMode MOVE/PAINT/INSPECT state machine, touch zones (floating stick + pan side), mode dock/MODE pill HUD, keyboard/gamepad/pointer handlers, tap routing, and camera/zoom coupling — mapped for adding a position-lock stance, camera-lock toggle, wheel/pinch zoom, and seamless mode transitions.",
+  "stateObjects": [
+   {
+    "name": "ctrlMode",
+    "approxLine": 758,
+    "fields": "'MOVE' | 'PAINT' | 'INSPECT' (a plain let, no setter function exists)",
+    "role": "THE control-mode machine. Explicitly distinct from round.mode (SURVIVE/HUNT/TA/...). Mutated directly in ~10 places: enterPaint/exitPaint/enterInspect/exitInspect (1048-1056), heal at gatherInput:774, blur:891, spotted eject:1292, endTimeAttack:2053, timeout:2058, togglePause:2060, startRound:2119."
+   },
+   {
+    "name": "input",
+    "approxLine": 755,
+    "fields": "{ mx, my, creep, moveMag, speed, moveTag:'idle'|'sneak'|'walk' }",
+    "role": "Per-sim-tick merged input written only by gatherInput(); read by movePlayer, stepHunt, HUD joystick visual, __aac.move."
+   },
+   {
+    "name": "keys",
+    "approxLine": 750,
+    "fields": "Set of e.code",
+    "role": "Held-key state; cleared on window blur (890) so keys never stick."
+   },
+   {
+    "name": "pointers",
+    "approxLine": 751,
+    "fields": "Map pointerId -> {sx,sy,role, +role-specific: sx0/sy0/px0/py0 (pan), ptype (sv), sy0/scroll0 (sscroll)}",
+    "role": "All active pointers with routing role: 'joystick' | 'pan' | 'ui' | 'sv' | 'hue' | 'reticle' | 'sscroll'. sx/sy updated every pointermove (962) — this is the natural substrate for pinch (two live positions always known)."
+   },
+   {
+    "name": "joystick",
+    "approxLine": 752,
+    "fields": "{ id, cx, cy, dx, dy, mag } or null",
+    "role": "Floating analog stick, spawned where the finger lands on the move-hand side (center clamped by JOY_R+JOY_MARGIN). dx/dy are post-deadzone normalized (≤1)."
+   },
+   {
+    "name": "camPan / camFollow / inspectZoomT",
+    "approxLine": 759,
+    "fields": "camPan {x,y} world-units peek offset; camFollow {x,y} eased anchor; inspectZoomT 0..1",
+    "role": "Camera state: cam = clamp(camFollow + camPan). inspectZoomT eases toward 1 in INSPECT to pull zoom out by INSPECT_ZOOM_MUL (0.78)."
+   },
+   {
+    "name": "_hud",
+    "approxLine": 763,
+    "fields": "{ modeButtons:[{id,x,y,w,h}], pill:{x,y,w,h}, recenter:{x,y,w,h} }",
+    "role": "Test-visible HUD geometry, rebuilt each drawRoundHUD frame, exported via window.__aac.hud — the jsdom smoke harness taps these rects."
+   },
+   {
+    "name": "roundHits",
+    "approxLine": 754,
+    "fields": "[{x,y,w,h,fn}] CSS px",
+    "role": "In-round tappable buttons; RESET to [] at drawRoundHUD:1718 and repopulated every frame by uiBtn (1715) and manual pushes (pill 1788, abilities 1806). onPointerDown hit-tests it FIRST (936/945). (menuHits at 753 is declared but unused — menus use navList:2304.)"
+   },
+   {
+    "name": "freezeHeld",
+    "approxLine": 798,
+    "fields": "boolean",
+    "role": "Touch-toggle for the FREEZE stance (❄ ability button 1806). The existing precedent for a position-lock: gatherInput turns it + Space into player.freeze, auto-releases when the stick moves >0.2 (788)."
+   },
+   {
+    "name": "studio",
+    "approxLine": 1024,
+    "fields": "{ open, state:'CLOSED'|'OPEN_IDLE', reticleOn, coachHidden, activeTone, reticle:{x,y,active,hideAt} }",
+    "role": "Paint studio panel state. Invariant: ctrlMode==='PAINT' ⇔ studio.open (healed at 774; every close path goes through exitPaint/closeStudio)."
+   },
+   {
+    "name": "gpPrev",
+    "approxLine": 812,
+    "fields": "{buttonIndex: bool}",
+    "role": "Gamepad edge-detection memory for updateGamepadEdges."
+   },
+   {
+    "name": "zoom / zoomBase / cam / shake",
+    "approxLine": 558,
+    "fields": "let cam={x,y}, zoom=1.6 (558); zoomBase=1.6 (1299); shake {mag,x,y}",
+    "role": "zoomBase set only by computeZoom (viewport fit); zoom is DERIVED and overwritten every frame at updateCamera:1376. shake is a render-transform-only offset."
+   },
+   {
+    "name": "tuning constants",
+    "approxLine": 39,
+    "fields": "IDLE_MAG=0.12, SNEAK_MAG=0.55 (39); JOY_R=70, JOY_DEAD=10, JOY_KNOB=22, JOY_MARGIN=16 (40); MOVE_PEEK_MAX=224, INSPECT_PAN_MAX=384, PAN_HOME_RATE=8, RECENTER_SHOW=40 (41); INSPECT_NUDGE=45, INSPECT_ZOOM_MUL=0.78, INSPECT_ZOOM_RATE=6 (42); TARGET_VISIBLE_TILES=16, ZOOM_MIN=1.15, ZOOM_MAX=2.6 (89); CAM_STIFFNESS=9, CAM_DEADZONE=6 (90); FREEZE_CAP_MAX=0.985 (106); STUDIO_SLOWMO=0.35 (64)",
+    "role": "All control/camera tuning lives in §1 CONSTANTS; add new lock/zoom constants here."
+   },
+   {
+    "name": "settings.handed / hudScale",
+    "approxLine": 564,
+    "fields": "settings.handed 'right'|'left' (564, seg control 2507); hudScale 0.9/1/1.15 (566/647)",
+    "role": "Mirrors touch zones + dock: joyOnLeft = handed!=='left' (948); dock/pill sizes scale by hudScale."
+   },
+   {
+    "name": "ABILITIES",
+    "approxLine": 115,
+    "fields": "[{key:'freeze',glyph:'❄',kb:'Space'},{dash,'⚡',ControlLeft},{decoy,'👥',KeyC},{ink,'💨',KeyV}]",
+    "role": "Vertical ability column (1793-1807), greyed & tap-gated when ctrlMode!=='MOVE' — the slot pattern for a stance-lock button."
+   }
+  ],
+  "functions": [
+   {
+    "name": "gatherInput",
+    "signature": "function gatherInput()",
+    "approxLine": 773,
+    "role": "Merges keyboard(WASD/arrows) + joystick + gamepad into input{}. Order matters: heal PAINT/studio desync (774) → sum axes → normalize (786) → freezeHeld auto-release on stick push (788) → player.freeze from Space|freezeHeld, hider modes only, blocked during dash (790) → speedFromMag + Shift forces creep (791) → freeze zeroes input (793) → PAINT roots (794) → sneak/walk haptic edge (795) → write input (796). Called ONLY from stepSim (2241) and stepHunt (2173), i.e. per fixed 1/60 tick."
+   },
+   {
+    "name": "speedFromMag",
+    "signature": "function speedFromMag(m)",
+    "approxLine": 765,
+    "role": "Analog curve: <IDLE_MAG→0, <SNEAK_MAG→PLAYER_CREEP(55), else smoothstep to PLAYER_WALK(150)."
+   },
+   {
+    "name": "clampPan",
+    "signature": "function clampPan(max)",
+    "approxLine": 764,
+    "role": "Radially clamps camPan; called with mode-dependent max from BOTH onPointerMove (972) and updateCamera (1389)."
+   },
+   {
+    "name": "screenToWorld / worldToScreen / inRect / isCoarse",
+    "signature": "screenToWorld(sx,sy) / worldToScreen(wx,wy) / inRect(sx,sy,r) / isCoarse()",
+    "approxLine": 768,
+    "role": "Projections read only cam & zoom (shake excluded on purpose). All hit-testing uses inRect in CSS px."
+   },
+   {
+    "name": "pollGamepad",
+    "signature": "function pollGamepad() -> {mx,my,creep,pad}|null",
+    "approxLine": 813,
+    "role": "Per-gatherInput axis poll: axes[0/1] with 0.15 deadzone; creep = button 7 (RT)."
+   },
+   {
+    "name": "updateGamepadEdges",
+    "signature": "function updateGamepadEdges()",
+    "approxLine": 822,
+    "role": "Once per rAF (frame:2591). In-round: Y(3)/X(2) togglePaintMode, RB(5) toggleInspect, LB(4)/LT(6) instantMatch, B(1) backs out of PAINT/INSPECT (834), Start(9) pause; HUNT: A/Y huntPulse. Menus: A confirm, B back, dpad nav."
+   },
+   {
+    "name": "keydown listener",
+    "signature": "addEventListener('keydown', e=>{...})",
+    "approxLine": 847,
+    "role": "Ordering: ensureAudio → Tab preventDefault → hexInput focus bail (850) → key-repeat suppression via keys.has (851). In-round bindings: E/P/Tab togglePaintMode (866), I toggleInspect (867), Q instantMatch (868), [ ] / R cyclePose (869), Ctrl dash, C decoy, V ink (871-873), Escape = exitPaint > exitInspect > togglePause (874), H debug (practice), M mute, else studioKey when studio.open (877). PAUSED and HUNT have earlier dedicated branches (853, 860). Non-round: menu nav (879-886)."
+   },
+   {
+    "name": "blur listener",
+    "signature": "addEventListener('blur', ...)",
+    "approxLine": 890,
+    "role": "Panic reset: keys.clear, joystick=null, pointers.clear, ctrlMode='MOVE', camPan zeroed, auto-pause. ANY new lock/zoom state must be reset here."
+   },
+   {
+    "name": "onPointerDown",
+    "signature": "function onPointerDown(e)",
+    "approxLine": 922,
+    "role": "Master tap router (see flows). Registers pointer roles; splits joy-side vs pan-side at vpW*0.5 by settings.handed (948-958). setPointerCapture per pointer (925)."
+   },
+   {
+    "name": "onPointerMove",
+    "signature": "function onPointerMove(e)",
+    "approxLine": 960,
+    "role": "Role dispatch: joystick math with JOY_DEAD/JOY_R (964-969); 'pan' sets camPan ABSOLUTELY = px0+(sx-sx0)/zoom then clampPan(mode max) (970-972); sv/hue/reticle/sscroll to studio/settings. Updates p.sx/p.sy for every pointer first (962)."
+   },
+   {
+    "name": "onPointerUp",
+    "signature": "function onPointerUp(e)",
+    "approxLine": 978,
+    "role": "Deletes pointer, releases capture; nulls joystick only if the id matches (982) — a replaced stick is not killed by the old finger lifting. Also bound to pointercancel (899)."
+   },
+   {
+    "name": "movePlayer",
+    "signature": "function movePlayer(dt)",
+    "approxLine": 998,
+    "role": "Integrates input: in INSPECT the speed base is input.moveMag*INSPECT_NUDGE (slow nudge, 1009); dash overrides; ice momentum; axis-separated collision."
+   },
+   {
+    "name": "enterPaint / exitPaint",
+    "signature": "enterPaint() / exitPaint()",
+    "approxLine": 1048,
+    "role": "enterPaint guards (!round || roundState!=='PLAYING' || HUNT), sets ctrlMode='PAINT', zeroes velocity+input, joystick=null, freezeHeld=false, camPan=0, openStudio(). exitPaint closes studio then ctrlMode='MOVE'."
+   },
+   {
+    "name": "enterInspect / exitInspect / togglePaintMode / toggleInspect",
+    "signature": "enterInspect() / exitInspect() / togglePaintMode() / toggleInspect()",
+    "approxLine": 1052,
+    "role": "enterInspect: same guards, closes studio if open (PAINT→INSPECT is direct, no MOVE hop), joystick=null, camPan=0, SFX.ui. exitInspect: ctrlMode='MOVE', SFX.back. Toggles at 1055/1056 are the only public entry points used by HUD/keys/gamepad."
+   },
+   {
+    "name": "openStudio / closeStudio",
+    "signature": "openStudio() / closeStudio()",
+    "approxLine": 1044,
+    "role": "Panel open/close + hex field blur + SFX; state 'OPEN_IDLE'/'CLOSED'."
+   },
+   {
+    "name": "studioRects / studioPointerDown / studioSV / studioHue / studioReticleDrag / studioKey",
+    "signature": "studioRects() -> {scale,panel,sv,hue,match,swatch,...close}; studioPointerDown(id,sx,sy,ptype) -> bool",
+    "approxLine": 1070,
+    "role": "Studio geometry (logical 360x330 scaled to viewport, bottom-centered) and its own pointer consumption: close ✕ calls exitPaint (1085); sv/hue/reticle claim pointer roles; returns false if the tap missed everything so onPointerDown can fall through."
+   },
+   {
+    "name": "instantMatch / doMatch",
+    "signature": "instantMatch() / doMatch()",
+    "approxLine": 1066,
+    "role": "Q / LB / MATCH button paint-to-ground sampling; works in any ctrlMode without opening the studio."
+   },
+   {
+    "name": "computeZoom",
+    "signature": "function computeZoom()",
+    "approxLine": 1372,
+    "role": "zoomBase = clamp(min(vpW,vpH)/(TARGET_VISIBLE_TILES*TILE), ZOOM_MIN, ZOOM_MAX); zoom=zoomBase. Called only from resize (2616)."
+   },
+   {
+    "name": "updateCamera",
+    "signature": "function updateCamera(dt)",
+    "approxLine": 1373,
+    "role": "Per-rAF (realDt, 2601). (1) inspectZoomT ease + zoom = max(ZOOM_MIN*0.8, zoomBase*(1+FX.zoomPunch)*(1+(INSPECT_ZOOM_MUL-1)*inspectZoomT)) at 1376 — the ONE place to inject a user zoom factor. (2) velocity lookahead only in MOVE (1378). (3) camFollow eased toward player with CAM_DEADZONE/CAM_STIFFNESS (1383) — the place to freeze for a camera-lock. (4) pan policy: PAINT forces 0; MOVE springs home at PAN_HOME_RATE when no 'pan' pointer is live; INSPECT holds (1385-1388). (5) cam = clamp(camFollow+camPan) to world edges (1391-1394). (6) trauma shake + FX decays."
+   },
+   {
+    "name": "applyWorldTransform / applyScreenTransform",
+    "signature": "applyWorldTransform() / applyScreenTransform()",
+    "approxLine": 1404,
+    "role": "World: setTransform(zoom*dpr,...,(vpW/2 - cam.x*zoom + shake.x)*dpr,...). Screen: identity*dpr."
+   },
+   {
+    "name": "uiBtn",
+    "signature": "function uiBtn(label,x,y,w,h,fn,opts)",
+    "approxLine": 1711,
+    "role": "Draws a button AND pushes {x,y,w,h,fn} into roundHits — declare-and-hit-test-in-one, rebuilt each frame."
+   },
+   {
+    "name": "drawRoundHUD",
+    "signature": "function drawRoundHUD()",
+    "approxLine": 1717,
+    "role": "Resets roundHits/_hud (1718/1766); MODE dock 🎨/👁/MATCH/🕺 as 64px uiBtns mirrored by handedness (1767-1777, ids pushed via pushMode); ⏸/🔊 (1778); MODE pill always-visible always-exits-to-MOVE (1781-1788); ⌖ recenter only when |camPan|>RECENTER_SHOW=40, on the move side (1790); ability column gated ctrlMode!=='MOVE' (1793-1807); inspect overlay when inspectZoomT>0.01 (1811); joystick visual (1813); drawStudio (1824)."
+   },
+   {
+    "name": "drawInspectOverlay",
+    "signature": "function drawInspectOverlay()",
+    "approxLine": 1831,
+    "role": "Seeker's-eye rings + YOU marker, alpha-driven by inspectZoomT."
+   },
+   {
+    "name": "handleMenuTap / menuNav / menuConfirm / menuBack",
+    "signature": "handleMenuTap(sx,sy) / menuNav(dx,dy) / menuConfirm() / menuBack()",
+    "approxLine": 2320,
+    "role": "Menu/paused-overlay tap + keyboard/gamepad nav over navList (2304); PAUSED reuses this path."
+   },
+   {
+    "name": "stepSim",
+    "signature": "function stepSim(dt)",
+    "approxLine": 2229,
+    "role": "Fixed-tick sim: HUNT branch → stepHunt; practice slow-mo dt*=STUDIO_SLOWMO while studio.open||INSPECT (2239); gatherInput+movePlayer (2241)."
+   },
+   {
+    "name": "frame",
+    "signature": "function frame(now)",
+    "approxLine": 2588,
+    "role": "rAF loop: updateGamepadEdges (2591) → fixed-step stepSim accumulator (max 5 steps, 2596) → updateCamera(realDt) (2601) → drawRound/drawRoundHUD or drawMenu."
+   },
+   {
+    "name": "resize",
+    "signature": "function resize()",
+    "approxLine": 2614,
+    "role": "Rebuilds canvas size + dpr, calls computeZoom — wheel-zoom state must survive this (keep it as a separate multiplier, not written into zoomBase)."
+   },
+   {
+    "name": "startRound (mode reset tail)",
+    "signature": "startRound(entry,mode,diff) — reset at 2118-2119",
+    "approxLine": 2118,
+    "role": "studio.open=false, reticleOn=false, ctrlMode='MOVE', camFollow=cam, camPan=0, inspectZoomT=0, joystick=null. The canonical fresh-round reset list."
+   },
+   {
+    "name": "togglePause",
+    "signature": "function togglePause()",
+    "approxLine": 2059,
+    "role": "On pause: closes studio inline, ctrlMode='MOVE', camPan=0, roundState='PAUSED'. Same inline reset also in endTimeAttack (2053) and survive-timeout (2058)."
+   },
+   {
+    "name": "window.__aac state hook",
+    "signature": "window.__aac = { get state(){...} }",
+    "approxLine": 2641,
+    "role": "Headless-test hook. Control-relevant exports: mode:ctrlMode, cam, camFollow, camPan, zoom, inspect:{active,zoomT}, move:{speed,mag,tag}, hud:_hud, ability:{freeze,...,freezeCap}, studio rects (2655-2657)."
+   }
+  ],
+  "flows": [
+   "TOUCH MOVE: pointerdown on move-hand side (949, side = vpW*0.5 split by settings.handed) → joystick={id,cx,cy} spawned at clamped finger position (951-953), pointers[id].role='joystick' → each pointermove: dx,dy from center, deadzone JOY_DEAD=10, radius JOY_R=70, joystick.dx/dy/mag normalized (964-969) → next fixed tick stepSim→gatherInput merges joystick+keys+gamepad (781-784), normalizes, speedFromMag → input{mx,my,speed,moveMag,tag} → movePlayer integrates with terrain mult + collision → updateCamera adds velocity lookahead (MOVE only) and eases camFollow → applyWorldTransform renders → pointerup with matching id nulls joystick (982).",
+   "CAMERA PAN (peek/free-look): pointerdown on the non-move side, round.mode!=='HUNT' (954) → role='pan' storing sx0,sy0,px0,py0 (955) → pointermove sets camPan ABSOLUTELY: camPan = p0 + (finger delta)/zoom (971), clampPan(INSPECT? 384 : 224) (972) → updateCamera: in MOVE, if no live 'pan' pointer, camPan springs home exp(PAN_HOME_RATE=8) with 0.5-unit snap (1386-1388); in INSPECT it holds; in PAINT forced 0 (1385) → cam=clamp(camFollow+camPan) (1391-1394) → ⌖ recenter button appears while |camPan|>40 and zeroes camPan on tap (1790-1791).",
+   "PAINT ENTRY: tap 🎨 (uiBtn→roundHits, hit at 945) | KeyE/KeyP/Tab (866) | gamepad Y/X (831) → togglePaintMode (1055) → enterPaint (1048): guard round PLAYING & !HUNT → ctrlMode='PAINT'; player.vx/vy=0; input zeroed; joystick=null; freezeHeld=false; camPan=0 → openStudio (1044) → every subsequent gatherInput hard-roots (794: mx=my=moveMag=speed=0) → updateCamera pins camPan=0 (1385) and drops lookahead (1378) → drawStudio (1824); practice rounds run at STUDIO_SLOWMO=0.35 (2239).",
+   "PAINT EXIT (all paths funnel to exitPaint:1051 → closeStudio + ctrlMode='MOVE'): ✕ close rect (studioPointerDown 1085) | tap outside the panel when reticle off (940) | Escape (874) | gamepad B (834) | MODE pill tap (1788) | Tab/E/P toggle (866) | spotted while non-practice (1292, with 'Spotted — move!' toast) | pause/end-of-round inline resets (2053/2058/2060) | window blur (890). Safety net: gatherInput heals PAINT-without-studio back to MOVE (774).",
+   "INSPECT ENTRY/EXIT: tap 👁 | KeyI (867) | RB (832) → toggleInspect (1056) → enterInspect (1052): guards, closes studio if open (so PAINT→INSPECT never passes through MOVE), ctrlMode='INSPECT', joystick=null, camPan=0 → per-frame updateCamera eases inspectZoomT→1 at rate 6 (1375) → zoom shrinks toward 0.78x (1376) → drawInspectOverlay fades in via inspectZoomT (1811,1831) → movement becomes slow nudge: base=moveMag*INSPECT_NUDGE=45 (1009) → pan allowed up to 384 and HELD (no spring) → exit via 👁/KeyI/Escape/B/pill/spotted → exitInspect (1054) → ctrlMode='MOVE', inspectZoomT eases back to 0.",
+   "TAP ROUTING ORDER in onPointerDown (922): preventDefault+capture → SETTINGS: help dismiss → settings taps → scroll drag (926-928) → non-ROUND: handleMenuTap (929) → PAUSED: handleMenuTap (931) → studio.open: studioPointerDown consumes panel widgets (932) → else roundHits (HUD stays live while painting: pill/👁/MATCH/⏸/🔊, 936) → outside-panel tap: reticle drag or exitPaint (938-941) → studio closed: roundHits FIRST (945) → CAUGHT/TIMEOUT swallow all (946) → joy-side spawns joystick / other side becomes 'pan' ('ui' in HUNT) (948-958).",
+   "ZOOM PIPELINE (no user zoom today): resize (2614) → computeZoom (1372): zoomBase=clamp(min(vpW,vpH)/(16*32),1.15,2.6) → every frame updateCamera:1376 overwrites zoom = max(ZOOM_MIN*0.8, zoomBase*(1+FX.zoomPunch)*(1+(INSPECT_ZOOM_MUL-1)*inspectZoomT)) → applyWorldTransform + screenToWorld/worldToScreen consume it. There are NO wheel/pinch/gesture/dblclick listeners anywhere (verified by grep); the only listeners are keydown/keyup/blur (847-892), pointer down/move/up/cancel + contextmenu on canvas (896-900), dragover/drop for map JSON (903), hexInput input/keydown/blur (1128-1130), resize (2633), visibilitychange (2634).",
+   "FREEZE STANCE (existing position-lock precedent): Space held (keyboard) or ❄ ability tap toggling freezeHeld (1806, gated ctrlMode==='MOVE') → gatherInput: freezeHeld auto-releases when stick pushed >0.2 (788); player.freeze = hider-mode && (Space||freezeHeld) && !dashing (790) → input zeroed (793) → computeCamo grows freezeCap toward FREEZE_CAP_MAX=0.985 (2038) rewarding the stance → HUD shows ❄ active (1798) → cleared on enterPaint (1050) and blur; player.freeze visible at __aac.ability.",
+   "GAMEPAD: axes polled inside gatherInput per sim tick (783 → pollGamepad 813); button EDGES handled once per rAF in updateGamepadEdges (2591 → 822) so mode toggles fire exactly once per press.",
+   "PAUSED/ENDED INPUT: stepSim early-returns unless PLAYING/COUNTDOWN (2237,2230) so gatherInput stops running; PAUSED taps route to handleMenuTap (931); CAUGHT/TIMEOUT taps swallowed as 'ui' (946) — mode transitions while not PLAYING are blocked by the guards in enterPaint/enterInspect."
+  ],
+  "invariants": [
+   "window.__aac must keep exposing (and should gain, not lose, fields): mode:ctrlMode, cam, camFollow, camPan, zoom, inspect:{active,zoomT}, move:{speed,mag,tag}, hud:_hud (2663-2669). The jsdom smoke harness (per project memory) drives the game headlessly through this hook and classic <script> — do not modularize.",
+   "ctrlMode==='PAINT' ⇔ studio.open. gatherInput heals the desync toward MOVE (774) — 'never leave the hider rooted'. Any new rooted stance needs an equivalent liveness guarantee (a visible, always-tappable exit like the MODE pill 1788 + the heal).",
+   "cam is DERIVED every frame: cam = worldclamp(camFollow + camPan) (1391-1394); screenToWorld/worldToScreen read only cam & zoom; trauma shake is applied only in applyWorldTransform (1404) so projections stay exact — a camera-lock must manipulate camFollow/camPan, never write cam directly.",
+   "zoom is overwritten EVERY frame at updateCamera:1376 from zoomBase × punch × inspect. A user zoom must be a new persistent multiplier composed there (and clamped), never a direct write to zoom, or it will be erased next frame and reset by resize→computeZoom.",
+   "gatherInput runs at fixed 1/60 inside stepSim (deterministic sim); updateCamera runs per-rAF with realDt (smooth camera). Keep input sampling in the former and camera/zoom easing in the latter. Input code must never consume rng() (DAILY seeded determinism).",
+   "Every mode-teardown site resets the same trio {studio closed, ctrlMode='MOVE', camPan=0}: blur 890-892, spotted 1292, endTimeAttack 2053, timeout 2058, togglePause 2060, startRound 2118-2119. New lock/zoom state MUST be added to every one of these (or they must all be routed through one new setCtrlMode/reset helper).",
+   "roundHits and _hud are rebuilt from scratch every drawRoundHUD frame (1718/1766); hit rects are CSS px and scale with hudScale; dock mirrors via settings.handed. HUD buttons are hit-tested BEFORE world touch-zone routing (936/945) — that ordering is what keeps dock taps from spawning joysticks.",
+   "enterPaint/enterInspect guards: !round || roundState!=='PLAYING' || round.mode==='HUNT' → refuse. HUNT mode has no PAINT/INSPECT and no pan side (954/957).",
+   "Escape and gamepad-B priority is PAINT-exit > INSPECT-exit > pause (874/834).",
+   "clampPan max is mode-dependent (INSPECT_PAN_MAX vs MOVE_PEEK_MAX) and enforced in BOTH onPointerMove:972 and updateCamera:1389 — changing pan rules means patching both call sites.",
+   "The MODE pill (1781-1788) is always visible and always a get-me-back-to-Move target; HUD stays live while the studio is open (936). Preserve both when adding modes/stances.",
+   "Key auto-repeat is suppressed via keys.has (851) and hexInput focus swallows all game keys (850); window blur must clear any new held/toggled input state (890) so the player never walks (or stays locked) unattended."
+  ],
+  "gotchas": [
+   "No wheel handler exists at all — and the CSS already sets touch-action:none + overscroll-behavior:none on html/body/canvas (lines 12-13), so browser pinch/scroll won't interfere, but you must still preventDefault() in a {passive:false} wheel listener to stop Ctrl+wheel browser zoom.",
+   "Two fingers on the pan side today = TWO independent 'pan' pointers, each writing camPan absolutely from its own anchor — last-moved wins (jitter). A pinch implementation must detect the second pan-side pointer at onPointerDown and convert BOTH to a 'pinch' pair instead of letting them fight.",
+   "Second finger on the joystick side REPLACES the joystick object (952): the old pointer keeps role 'joystick' but is ignored (id checks at 964/982). Comment at 982: 'don't kill a joystick a second finger still owns'. Pinch on the move side would need the same claim logic.",
+   "'pan' drags divide by the LIVE zoom (971) to stay 1:1 with the world grab — if zoom changes mid-drag (pinch/wheel while panning), the anchor math (sx0/px0) becomes stale and the view jumps; re-anchor (reset sx0/sy0/px0/py0 to current) whenever zoom changes with a pan pointer down.",
+   "zoomPunch is a FX multiplier tween (punchZoom 1310) on the same line as inspect zoom (1376) — clamp your user-zoom product against ZOOM_MIN*0.8 floor like the existing code, or punches can pop below the floor.",
+   "enterInspect closes the studio directly (1053) — PAINT→INSPECT skips exitPaint, so any exit-side effects you add to exitPaint won't run on that transition. A centralized setCtrlMode fixes this class of bug.",
+   "togglePause (2060), endTimeAttack (2053) and the survive-timeout (2058) close the studio INLINE (studio.open=false; studio.state='CLOSED') without calling closeStudio() — hexInput blur/SFX skipped intentionally; new teardown logic added only to closeStudio will be missed on those paths.",
+   "In gatherInput the freeze zeroing (793) runs BEFORE the PAINT zeroing (794); freezeHeld is auto-released by stick motion (788) BEFORE the freeze check — a stance-lock inserted in the wrong order will either be overridden by movement or break the auto-release UX.",
+   "stepSim applies practice slow-mo by scaling dt when studio.open||INSPECT (2239) — timers/cooldowns tick slower there; a stance-lock that should be real-time must not rely on stepSim dt in practice.",
+   "gatherInput only runs while roundState is PLAYING/COUNTDOWN (stepSim guards) — a toggle flipped via HUD tap while PAUSED would not take effect until resume; PAUSED taps can't reach roundHits anyway (931).",
+   "A tap on the HUD side that misses every button still falls through to joystick/pan creation (948-958) — new always-on-screen toggles must be registered in roundHits (drawn every frame) to be protected by the hit-test-first ordering.",
+   "cyclePose is bound to BOTH BracketRight and KeyR (870), and studioKey also consumes brackets when the studio is open (1118) — check collisions before binding new keys (free and safe-ish: KeyL, KeyO, KeyZ/X minus, KeyG; avoid Space/Ctrl/C/V/Q/E/P/I/H/M/R/Tab/brackets/comma/period/minus/equal/digits).",
+   "Gamepad indices in use: 0 A, 1 B, 2 X, 3 Y, 4 LB, 5 RB, 6 LT, 7 RT(creep), 9 Start, 12-15 dpad (822-843) — free: stick clicks 10/11, and axes[2/3] (right stick) are completely unused: ideal for camera pan/zoom.",
+   "cam.x/cam.y clamping collapses to world-center when the world is smaller than the viewport (1393-1394 ternary) — wheel-zoom OUT can trigger this branch on small maps and hard-center the camera; account for it when choosing a min user zoom.",
+   "menuHits (753) is dead code — menus actually use navList (2304); don't extend the wrong array."
+  ],
+  "extensionPoints": [
+   "POSITION-LOCK STANCE — clone the freeze pattern: add `let stanceLock=false` next to freezeHeld (798); in gatherInput insert `if(stanceLock){ mx=0; my=0; moveMag=0; speed=0; tag='idle'; }` between lines 793 and 794 (after freeze, before PAINT) plus an optional stick-push auto-release mirroring 788; toggle via a new keydown case in the in-round block (~866-876) and either a 5th ABILITIES row (115 + tap handler 1806, gated ctrlMode==='MOVE') or a dock uiBtn in drawRoundHUD (~1776, push id via pushMode for _hud.modeButtons); reset it in: blur (891), enterPaint (1050), startRound (2119), togglePause (2060), endTimeAttack (2053), timeout (2058), spotted (1292); export in __aac.ability (2649) or __aac.move (2667). If it should also boost camo like freeze, feed it into the player.freeze expression at 790 instead of a separate zeroing.",
+   "CAMERA-LOCK TOGGLE — all in updateCamera (1373): add `let camLock=false` near camFollow (760) storing optionally {x,y} of the pinned point; when locked: force lead=0 (change the ternary at 1378 to include !camLock), skip the camFollow ease (guard line 1383), and decide pan policy (either keep 'pan' pointers working for manual framing or zero like PAINT at 1385). cam derivation (1391) needs no change. Toggle UI: a ⌖-style uiBtn near the recenter slot (1790) + a keydown case; interplay: when camLock engages, snapshot camFollow; when it disengages, the existing ease reconverges smoothly (no snap needed). Reset at the same six teardown sites as above; export `camLock` in __aac (2664 cam block). Test via harness: lock, walk player, assert cam stays while playerPos moves.",
+   "WHEEL ZOOM — add `let zoomUser=1;` beside zoomBase (1299) with e.g. const ZOOM_USER_MIN=0.6, ZOOM_USER_MAX=1.8 in §1 (~line 42); register `cv.addEventListener('wheel', onWheel, {passive:false})` with the pointer listeners (896-900); onWheel: e.preventDefault(); if(appState!=='ROUND'||roundState==='PAUSED') return; zoomUser=clamp(zoomUser*Math.exp(-e.deltaY*0.0015), MIN, MAX). Compose it at updateCamera:1376: `zoom=Math.max(ZOOM_MIN*0.8, zoomBase*(1+FX.zoomPunch)*(1+(INSPECT_ZOOM_MUL-1)*inspectZoomT)*zoomUser)`. Do NOT touch computeZoom (2616 resize keeps zoomBase semantics; zoomUser survives resize automatically). Optionally zoom-to-cursor by adjusting camPan with the pre/post screenToWorld delta of (e.clientX,e.clientY) — reuse clampPan. Reset zoomUser=1 at startRound (2119) and blur (891); __aac.zoom (2665) already reflects the final product.",
+   "PINCH ZOOM — build on the pointers Map (positions always fresh at 962): in onPointerDown, before the joy/pan split (~947), check `if([...pointers.values()].some(p=>p.role==='pan'))` and if so register the new pointer as role 'pinch' and convert the existing pan pointer too, storing d0=distance between the two, zoomUser0=zoomUser, and mid0; in onPointerMove add a 'pinch' branch computing dist/d0 → zoomUser=clamp(zoomUser0*ratio,...) (and optionally pan from midpoint drift / zoom); in onPointerUp, when one pinch finger lifts, demote the survivor back to 'pan' RE-ANCHORED (sx0=sx, sy0=sy, px0=camPan.x, py0=camPan.y) to avoid the stale-anchor jump. updateCamera's MOVE spring check (1386) must count 'pinch' as pan-active: change `pp.role==='pan'` to `pp.role==='pan'||pp.role==='pinch'`.",
+   "SEAMLESS MODE TRANSITIONS — introduce `function setCtrlMode(next)` beside the toggles (~1047) that owns: joystick=null, freezeHeld/stanceLock policy, camPan behavior (zero vs preserve — preserving camPan on MOVE↔INSPECT would already make that transition seamless since the spring/hold logic in 1385-1389 is per-mode), studio open/close, SFX, and per-mode ease targets. Replace the direct ctrlMode= assignments in enterPaint (1049), exitPaint (1051), enterInspect (1053), exitInspect (1054), the heal (774), blur (891), spotted (1292), teardown sites (2053/2058/2060) and startRound (2119). The rendering side is already transition-friendly: inspectZoomT eases both directions (1375), pan springs home (1387), camFollow eases (1383) — new modes only need an ease scalar like inspectZoomT plus a drawRoundHUD pill label/color entry (1781-1782) and dock button (1770-1777).",
+   "RIGHT-STICK CAMERA (free bonus seam): pollGamepad (813) reads only axes[0/1]; add axes[2/3] to its return and apply them to camPan (rate-based) in gatherInput or updateCamera — no existing binding conflicts.",
+   "NEW MODE-DOCK ENTRY: add uiBtn + pushMode in drawRoundHUD between lines 1770-1777 (BS-sized, ax advance respects `right`), extend the pill label/color ternaries (1781-1782), extend Escape/B priority chains (874/834), and add the enter/exit pair with the standard guards — that is the complete checklist the PAINT/INSPECT pair follows."
+  ]
+ },
+ {
+  "concern": "PAINT STUDIO in /workspaces/abduct_a_chameleon/index.html (single ~2674-line file, one classic <script>): studio state, open/close lifecycle, panel geometry, HSV picker + SV cursor + loupe, presets, MATCH, paintCoach/activeAimMatch, 2-tone split camo, paint crawl (shifting), wet-paint FX — and exactly how the studio takes over the screen vs shows the world. KEY ANSWER: the studio never replaces the world render. drawRound() runs every frame regardless (frame() line 2605); drawStudio() is merely the last HUD layer (called from drawRoundHUD line 1824 when studio.open) and 'takes over' via two things only: (a) a full-viewport dim scrim fillRect rgba(6,10,20,0.72) at line 1924 drawn over the already-rendered world, and (b) a bottom-anchored 360x330 panel. The camera is meanwhile hard-locked on the player because updateCamera() line 1385 forces camPan=0 while ctrlMode==='PAINT' and line 1378 disables velocity lookahead outside MOVE; the player is rooted by gatherInput() line 794. So 'freeing the camera while painting' is three independent levers: the scrim (1924), the camPan force-zero (1385), and the movement root (794) — plus the pointer routing in onPointerDown (932-943) that treats any tap outside the panel as exit/reticle instead of joystick/pan.",
+  "stateObjects": [
+   {
+    "name": "studio",
+    "approxLine": 1024,
+    "role": "THE studio state singleton — open/close + reticle + which tone the picker edits",
+    "fields": "{ open:false, state:'CLOSED'|'OPEN_IDLE' (write-only, vestigial), reticleOn:false, coachHidden:false (latch for one-shot SFX.confirm when coach hits matched), activeTone:0|1, reticle:{x,y,active,hideAt} (world coords, hideAt=nowMs()+3000 refresh on drag) }"
+   },
+   {
+    "name": "player (paint fields)",
+    "approxLine": 657,
+    "role": "paint + camo state the studio edits; sim reads currentPaint*, studio writes targetPaint*",
+    "fields": "currentPaint/targetPaint {r,g,b} (crawled vs aimed), paintHSV {h,s,v} (picker model for tone 0), shifting:bool (crawl in progress → +SHIFT_SHIMMER conspicuity, drives drip FX), splitPaint:bool, currentPaint2/targetPaint2/paintHSV2/mq2 (P8-3 tone 1), repaintT (0.4s shimmer ring after MATCH/preset), S/mq/m/conceal/C/ref (sim outputs; ref=terrainReference footprint incl. ref.tones[] sorted heaviest-first), prevConceal/snapT/snapCount/snapArmed (P8-5 blend-snap)"
+   },
+   {
+    "name": "ctrlMode + camPan + camFollow + inspectZoomT",
+    "approxLine": 757,
+    "role": "mode machine ('MOVE'|'PAINT'|'INSPECT') and camera composition: cam = clamp(camFollow + camPan); PAINT forces camPan=(0,0) every frame",
+    "fields": "ctrlMode (758), camPan {x,y} world units (759), camFollow {x,y} eased anchor (760), inspectZoomT 0..1 (761); cam/zoom/shake globals at 558"
+   },
+   {
+    "name": "pointers / joystick / hexInput",
+    "approxLine": 750,
+    "role": "input routing; pointer roles 'sv'|'hue'|'reticle' are studio drags, guarded against studio closing mid-drag (line 963)",
+    "fields": "pointers: Map pointerId→{sx,sy,role,ptype}, joystick (nulled by enterPaint), hexInput = off-screen DOM <input id=\"hex\"> (HTML line 15/21, JS 756) that receives real typing for the hex field"
+   },
+   {
+    "name": "particles + dripEmitted/dripT",
+    "approxLine": 1324,
+    "role": "wet-paint FX pool; dripEmitted is a monotonic test counter",
+    "fields": "particles[] capped at PCAP (140, motion-setting scaled); types 'puff'|'ring'|'spray'|'drip'|'shard'|'ripple'|'implode'; dripEmitted, dripT at 1325"
+   },
+   {
+    "name": "studio-relevant constants",
+    "approxLine": 45,
+    "role": "tuning",
+    "fields": "PAINT_SHIFT_SPEED=300, SHIFT_DELTA_EPS=4 (45); SHIFT_SHIMMER=0.06 (53); STUDIO_SLOWMO=0.35 (64); SPLIT_MIN_W=0.18 (60); PRESET_ORDER 16 terrains (129); TERRAIN_RGB filled at boot (131/2626)"
+   },
+   {
+    "name": "_hud",
+    "approxLine": 763,
+    "role": "HUD hit-rects exposed to tests via __aac.hud",
+    "fields": "{modeButtons:[{id:'paint'|'inspect'|'match'|'pose',x,y,w,h}], pill, recenter}"
+   }
+  ],
+  "functions": [
+   {
+    "name": "openStudio / closeStudio",
+    "approxLine": 1044,
+    "signature": "openStudio(); closeStudio()",
+    "role": "open sets open=true,state='OPEN_IDLE',SFX.ui,syncHexField; close resets open/state/reticle.active/coachHidden, blurs hexInput, SFX.back. Neither touches ctrlMode."
+   },
+   {
+    "name": "enterPaint / exitPaint / togglePaintMode",
+    "approxLine": 1048,
+    "signature": "enterPaint(); exitPaint(); togglePaintMode()",
+    "role": "mode transitions. enterPaint gates on round && roundState==='PLAYING' && mode!=='HUNT'; sets ctrlMode='PAINT', zeroes vx/vy/input/joystick/freezeHeld/camPan, then openStudio. exitPaint = closeStudio + ctrlMode='MOVE' — the ONLY safe close."
+   },
+   {
+    "name": "studioRects",
+    "approxLine": 1070,
+    "signature": "studioRects() → {scale, panel, sv, hue, match, swatch, matchPct, reticle, coach, split, hex, rgb, presets, title, close}",
+    "role": "single source of ALL panel geometry, in screen CSS px. Logical 360x330; scale=Math.min(1,vpW/400)*(vpH<520?0.86:1); panel centered horizontally, bottom-anchored py=vpH-ph-16. Logical sub-rects: sv(14,44,200,200), hue(222,44,30,200), match(262,44,84,40), swatch(262,92,84,44), matchPct(262,144,84,24), reticle(262,178,84,26), coach(262,206,84,24), split(262,232,84,22), hex(14,258,116,26), rgb(140,258,110,26), presets(14,290,334,34) as 8x2 grid, close(326,10,24,24). Both draw AND hit-test share this — move/resize here and everything follows."
+   },
+   {
+    "name": "studioPointerDown",
+    "approxLine": 1083,
+    "signature": "studioPointerDown(id,sx,sy,ptype) → bool consumed",
+    "role": "hit-test in order: close→exitPaint; sv→role 'sv'+studioSV; hue→role 'hue'; match→doMatch; split→toggleSplit; swatch halves (split only)→studio.activeTone=0|1; reticle→toggleReticle; hex→hexInput.focus(); presets 8x2→setActivePaintColor(TERRAIN_RGB[PRESET_ORDER[i]])+spawnRepaintPuff; anywhere else in panel consumed as 'ui'; returns false outside panel."
+   },
+   {
+    "name": "studioSV / studioHue / studioKey",
+    "approxLine": 1101,
+    "signature": "studioSV(sx,sy,ptype); studioHue(sx,sy); studioKey(code)",
+    "role": "picker writes. studioSV: touch lift oy=18*scale above fingertip; H.s=(sx-r.x)/r.w, H.v=1-((sy-oy)-r.y)/r.h → setPaintFromHSV+syncHexField. studioHue: H.h from y. studioKey: brackets=hue±5, Comma/Period=v∓0.04, Minus/Equal=s∓0.04, KeyM=doMatch, Digit1-8=preset — but see gotcha: brackets and KeyM are shadowed by the outer keydown chain."
+   },
+   {
+    "name": "activeHSV / activeTarget / setPaintFromHSV / setPaintColor / setToneColor / setActivePaintColor",
+    "approxLine": 1027,
+    "signature": "activeHSV()→HSV ref; activeTarget()→rgb ref; setPaintFromHSV(); setPaintColor(rgb); setToneColor(tone,rgb); setActivePaintColor(rgb)",
+    "role": "tone routing layer: everything resolves through (player.splitPaint && studio.activeTone===1) to pick paintHSV2/targetPaint2 vs paintHSV/targetPaint. Presets and hex input route through setActivePaintColor/setToneColor so they honor the active tone."
+   },
+   {
+    "name": "toggleSplit",
+    "approxLine": 1039,
+    "signature": "toggleSplit()",
+    "role": "2-tone on: copies tone1 target+current into tone2, activeTone=1, toast; off: activeTone=0. syncHexField after."
+   },
+   {
+    "name": "applyMatch / doMatch / instantMatch / samplePos",
+    "approxLine": 1057,
+    "signature": "samplePos()→{x,y}; applyMatch(sx,sy); doMatch(); instantMatch()",
+    "role": "MATCH. samplePos = reticle pos if reticleOn&&active else player pos. applyMatch: ref=terrainReference(sx,sy); if split && ref.tones[1].w>SPLIT_MIN_W → setToneColor(0/1, rounded tones[0/1].rgb); split on uniform ground → both tones = mean; else setPaintColor(round(ref.rgb)); then syncHexField, SFX.match(player.mq), spawnRepaintPuff, addTrauma(TRAUMA.repaint), punchZoom(0.03,90,260), vibe(12). instantMatch works WITHOUT opening the studio (Q key 868, gamepad LB 833, HUD MATCH button 1774)."
+   },
+   {
+    "name": "toggleReticle / studioReticleDrag / drawReticle",
+    "approxLine": 1108,
+    "signature": "toggleReticle(); studioReticleDrag(sx,sy); drawReticle()",
+    "role": "remote sample point. Toggle seeds at player, active=true, hideAt=+3s. Drag: screenToWorld(sx,sy) clamped to 6*TILE radius around player (depends on cam being correct!). drawReticle (1624) draws amber crosshair in WORLD space from drawRound step 10 (line 1468) — i.e. under the studio scrim."
+   },
+   {
+    "name": "syncHexField + hexInput listeners",
+    "approxLine": 1127,
+    "signature": "syncHexField(); hexInput 'input'/'keydown'/'blur' listeners (1128-1130)",
+    "role": "keeps off-screen DOM input mirroring activeTarget() hex unless focused; typing parses hex2rgb and routes to the active tone; Enter blurs; keydown at 850 returns early for the whole game while hexInput focused."
+   },
+   {
+    "name": "drawStudio",
+    "approxLine": 1922,
+    "signature": "drawStudio()",
+    "role": "the entire studio render, screen-space, called last in drawRoundHUD when studio.open: (1) full-screen scrim rgba(6,10,20,0.72) line 1924 — THE world-hiding line; (2) panel+title+'· slow-mo' tag if practice+✕; (3) SV square from activeHSV: hue fill + white→transparent horizontal + transparent→black vertical gradients, cursor ring at (sv.x+s*w, sv.y+(1-v)*h) line 1940; (4) P8-2 loupe lines 1943-1948: only while a pointers entry has role 'sv' && ptype 'touch' && FX_MOTION>0 — 15px swatch circle at (clamp(cx,±22 inset), sv.y+26) showing Math.round(activeAimMatch().mq*100)+'%'; (5) hue strip gradient + selection bar; (6) MATCH via uiStudioBtn (draw-only, fn ignored); (7) swatch: single → YOU(currentPaint)|GROUND(ref.rgb), split → TONE1(currentPaint)|TONE2(currentPaint2) with amber ring on activeTone (1963); (8) NOW/AIM readout from paintCoach (1975-1981): NOW=crawled body mq colored by PAL tier, AIM=target effMatch; (9) reticle toggle btn; (10) coach pill 1985-1990 with one-shot SFX.confirm latch via studio.coachHidden (re-arms below mqNow 0.8); (11) 2-TONE toggle btn; (12) hex box showing activeTarget; (13) RGB readout of currentPaint (tone 1 only — see gotcha); (14) 16 preset chips 8x2."
+   },
+   {
+    "name": "uiStudioBtn",
+    "approxLine": 2008,
+    "signature": "uiStudioBtn(label, r, color, fn)",
+    "role": "studio button chrome; fn parameter is DEAD — hits are handled in studioPointerDown, not registered in roundHits."
+   },
+   {
+    "name": "paintCoach",
+    "approxLine": 532,
+    "signature": "paintCoach() → {mqNow, mqAim, word, hint, glyph}",
+    "role": "P8-1 Live Match Coach, PURE READ-ONLY (contract in comment 530). mqNow=player.mq (crawled), mqAim=effMatch(targetPaint, targetPaint2, splitPaint, player.ref).mq. Hint: converts activeTarget & activeAimMatch().refRgb to HSV, candidates |dv| lighter/darker, |ds| more vivid/muted, |dw| warmer/cooler where dw=(cos(Rh)-cos(Ah))*0.5*min(As,Rs); largest wins. Consumed by drawStudio, HUD nudge (1739, only when !studio.open), inspect overlay (1849), __aac.paint (2654)."
+   },
+   {
+    "name": "activeAimMatch",
+    "approxLine": 521,
+    "signature": "activeAimMatch() → {mq, refRgb}",
+    "role": "match of the ACTIVE tone vs the ground it should cover: single mode → footprint mean ref.rgb; split mode → the footprint tone nearest (redmean) to activeTarget. Feeds the coach hint and the loupe %."
+   },
+   {
+    "name": "effMatch",
+    "approxLine": 246,
+    "signature": "effMatch(pA, pB, split, ref) → {mq, mq2}",
+    "role": "THE shared body-match model (sim computeCamoFor AND coach — comment 244: 'so they can never disagree'). single=min(matchQualityRef(pA,ref), terrainMatchCap(dominantKey)); split path (pB && tones.length>1 && tones[1].w>SPLIT_MIN_W): weighted Σ w·max(match(pA,tone),match(pB,tone)), capped; returns max(single,two) so two colors never do worse than one."
+   },
+   {
+    "name": "matchQualityRef",
+    "approxLine": 239,
+    "signature": "matchQualityRef(paint, ref) → 0..1",
+    "role": "per-tone weighted match of one color across footprint tones; on uniform ground reduces EXACTLY to matchQuality(paint, that terrain) — the seam tax exists only on real seams."
+   },
+   {
+    "name": "matchQuality / terrainReference",
+    "approxLine": 483,
+    "signature": "matchQuality(paint,ref)→0..1 (redmean smoothstep D_PERFECT=12..D_EXPOSED=220, line 483); terrainReference(px,py)→{rgb, dominantKey, dominantW, tones[]} (line 215)",
+    "role": "terrainReference is footprint area-weighted mean over PLAYER_RADIUS box + per-key tone list (kw), also the MATCH eyedropper source."
+   },
+   {
+    "name": "updatePaint / computeCamoFor / computeCamo",
+    "approxLine": 2013,
+    "signature": "updatePaint(dt); computeCamoFor(a,dt,speed); computeCamo(dt,speed)",
+    "role": "how paint applies to the player: updatePaint crawls currentPaint (and currentPaint2 if split) toward targets at PAINT_SHIFT_SPEED=300/channel/s, sets player.shifting = maxRemaining>SHIFT_DELTA_EPS=4. computeCamoFor: ref=terrainReference(a.x,a.y)→a.ref; em=effMatch(a.currentPaint,a.currentPaint2,a.splitPaint,ref); stillness; conceal=concealment(...); C=conspicuity(conceal,m,a.shifting) — shifting adds SHIFT_SHIMMER=0.06 (line 507). computeCamo = updatePaint + computeCamoFor(player). Called from stepSim 2244 and countdown 2233. crawlPaint (2046) is the bot-hider clone."
+   },
+   {
+    "name": "maybePaintDrip",
+    "approxLine": 1348,
+    "signature": "maybePaintDrip(dt)",
+    "role": "P8-4 wet-paint: while player.shifting, every 0.12s emit one 'drip' particle in CURRENT (crawling) color, vy=16..34 + gravity g:120, jittered within PLAYER_DRAW_R; dripEmitted++ (monotonic, test-visible). FX_MOTION<=0 → no-op. Integrated in updateParticles (1355), rendered in drawRound (1438)."
+   },
+   {
+    "name": "spawnRepaintPuff",
+    "approxLine": 1327,
+    "signature": "spawnRepaintPuff()",
+    "role": "repaint FX on MATCH/preset: 12 puffs + white expanding ring in targetPaint color, sets player.repaintT=0.4 (drawChameleon shimmer ring at 1587), plus P8-4 spray fan: 6 droplets in NEW color kicked opposite player.facing (FX_MOTION gated)."
+   },
+   {
+    "name": "drawChameleon / drawHumanoid",
+    "approxLine": 1580,
+    "signature": "drawChameleon(); drawHumanoid(x,y,f,css,conceal,o) with o.css2 for split (1524)",
+    "role": "body shows crawled currentPaint (+currentPaint2 as css2 → lower-half overpaint with seam line, 1552-1557); repaint shimmer ring while repaintT>0."
+   },
+   {
+    "name": "gatherInput (heal + root)",
+    "approxLine": 773,
+    "signature": "gatherInput()",
+    "role": "line 774: heals ctrlMode==='PAINT' && !studio.open → 'MOVE' (never leave hider rooted); line 794: if ctrlMode==='PAINT' zero mx/my/moveMag/speed → player rooted while painting."
+   },
+   {
+    "name": "updateCamera (PAINT lock)",
+    "approxLine": 1373,
+    "signature": "updateCamera(dt)",
+    "role": "line 1378 lead only in MOVE; line 1385 `if(ctrlMode==='PAINT'){ camPan.x=0; camPan.y=0; }`; line 1390-1394 cam = clamp(camFollow+camPan) — net effect in PAINT: camera eases dead-center onto the player and stays there. screenToWorld/worldToScreen (769/770) read cam+zoom only; shake is transform-offset only (1404) so projections stay exact."
+   },
+   {
+    "name": "stepSim (slow-mo gate)",
+    "approxLine": 2229,
+    "signature": "stepSim(dt)",
+    "role": "line 2239: `const slow=(round.diff.practice && (studio.open || ctrlMode==='INSPECT'))?STUDIO_SLOWMO:1; dt*=slow;` — practice-only 0.35x while studio open. Then movePlayer, computeCamo, maybeFootstep, maybePaintDrip, updateBlendSnap, updateBots... World sim KEEPS RUNNING while the studio is open (bots hunt you mid-paint)."
+   },
+   {
+    "name": "onPointerDown / onPointerMove (studio routing)",
+    "approxLine": 922,
+    "signature": "onPointerDown(e); onPointerMove(e)",
+    "role": "932-943: if studio.open → studioPointerDown first; unconsumed → roundHits HUD (pill/👁/MATCH/⏸/🔊 stay live); outside panel → reticleOn? start 'reticle' drag : exitPaint. onPointerMove 963: 'sv'/'hue'/'reticle' roles ignored if !studio.open (closed mid-drag); 973-975 dispatch studioSV/studioHue/studioReticleDrag."
+   },
+   {
+    "name": "drawRoundHUD (studio call site + paint buttons)",
+    "approxLine": 1717,
+    "signature": "drawRoundHUD()",
+    "role": "1770 🎨 button (active ring when PAINT), 1774 MATCH→instantMatch, 1780-1788 MODE pill (always-visible exit), 1739 coach nudge line under match meter suppressed while studio.open; 1824 `if(studio.open) drawStudio();` — studio is the LAST layer before countdown/pause banners."
+   },
+   {
+    "name": "triggerAbduction / endRound (force close)",
+    "approxLine": 2052,
+    "signature": "triggerAbduction(u); endRound(win)",
+    "role": "2053 and 2058 force `studio.open=false; studio.state='CLOSED'; ctrlMode='MOVE'; camPan=0` directly (bypassing closeStudio — no hexInput blur, no reticle reset) before TA respawn / win."
+   },
+   {
+    "name": "keydown handler (ROUND branch)",
+    "approxLine": 847,
+    "signature": "addEventListener('keydown', ...)",
+    "role": "866 KeyE/KeyP/Tab→togglePaintMode; 868 KeyQ→instantMatch; 874 Escape→exitPaint when PAINT; 877 `else if(studio.open) studioKey(e.code)` — LAST in the else-if chain, so earlier branches shadow studio keys (see gotchas)."
+   },
+   {
+    "name": "__aac test hook (studio slice)",
+    "approxLine": 2641,
+    "signature": "window.__aac.state getter",
+    "role": "exposes studio:{open,svV,activeTone,t0,t1,svRect,splitRect,closeRect(only when open)}, paint:{mqNow,mqAim,word,hint} from paintCoach, split, mq2, tones, snapCount, dripEmitted, mode/cam/camFollow/camPan/zoom, hud:_hud. The jsdom smoke harness drives the studio through these rects."
+   }
+  ],
+  "flows": [
+   "OPEN: tap 🎨 (drawRoundHUD 1770) OR KeyE/KeyP/Tab (866) OR gamepad Y/X (831) → togglePaintMode (1055) → enterPaint (1048): gate round&&PLAYING&&!HUNT → ctrlMode='PAINT'; player.vx=vy=0; input zeroed; joystick=null; freezeHeld=false; camPan=(0,0) → openStudio (1044): studio.open=true, state='OPEN_IDLE', SFX.ui, syncHexField. From the next frame: gatherInput 794 roots movement; updateCamera 1385 pins camPan=0 and 1378 kills lookahead → camFollow eases exactly onto player; stepSim 2239 multiplies dt by STUDIO_SLOWMO (0.35) in PRACTICE only; frame 2605 still runs drawRound (full world) → drawRoundHUD → 1824 drawStudio: 0.72-alpha scrim over the world + bottom panel.",
+   "CLOSE: ✕ hit (studioPointerDown 1085) / tap outside panel with reticle off (onPointerDown 940) / Escape (874) / gamepad B (834) / spotted mid-paint in non-practice (1292 'Spotted — move!') → exitPaint (1051) → closeStudio (1045: open=false, reticle.active=false, coachHidden=false, hexInput.blur, SFX.back) + ctrlMode='MOVE'. Force paths: triggerAbduction 2053 and endRound-win 2058 set studio.open=false + ctrlMode='MOVE' directly. Desync heal: gatherInput 774 fixes PAINT-without-open every frame.",
+   "PICK COLOR (SV drag, touch): pointerdown in r.sv (1086) → pointers.set(role:'sv', ptype) + studioSV(sx,sy,ptype) → oy=18*scale fingertip lift; activeHSV().s/.v updated → setPaintFromHSV (1028) writes player.targetPaint (or targetPaint2 if split&&activeTone===1) → syncHexField. pointermove (973) repeats while dragging. Render: drawStudio 1940 draws SV cursor ring at (sv.x+s*w, sv.y+(1-v)*h); 1944-1948 loupe appears (touch+FX_MOTION>0): floating 15px swatch of hsv2rgb(activeHSV()) + activeAimMatch().mq% label. Sim (each fixed step): computeCamo (2044) → updatePaint (2013) crawls currentPaint→targetPaint at 300/ch/s → player.shifting=true while Δ>4 → conspicuity +0.06 (507) + maybePaintDrip (1348) drips currentPaint-colored drops → drawChameleon (1583) shows the crawling color; drawStudio NOW% (crawled, from paintCoach.mqNow) lags AIM% (target, paintCoach.mqAim) until crawl completes.",
+   "MATCH: (a) studio MATCH rect → studioPointerDown 1088 → doMatch (1066) → samplePos (1057: reticle if on+active, else player) ; (b) instantMatch (1067) from KeyQ 868 / gamepad LB 833 / HUD MATCH 1774 — always player pos, works with studio closed. Both → applyMatch(sx,sy) (1060): ref=terrainReference(sample) → split && ref.tones[1].w>0.18 ? setToneColor(0,round(tones[0].rgb)) + setToneColor(1,round(tones[1].rgb)) : split ? both tones=round(ref.rgb) : setPaintColor(round(ref.rgb)) → syncHexField; SFX.match(player.mq); spawnRepaintPuff (puffs+ring+spray fan, repaintT=0.4); addTrauma(0.16); punchZoom; vibe → subsequent steps crawl as above; mq rises as currentPaint converges (per-tone: byte-identical on uniform ground).",
+   "RETICLE (paint-by-aim): reticle btn → toggleReticle (1108) seeds reticle at player, hideAt=+3s → drag: pointerdown OUTSIDE panel while reticleOn (939) or existing 'reticle' role → studioReticleDrag (1111): screenToWorld(sx,sy) clamped to ≤6*TILE from player → doMatch samples reticle position. Draw: drawRound step 10 (1468) → drawReticle (1624) world-space crosshair — currently dimmed by the drawStudio scrim painted later.",
+   "2-TONE: split rect → toggleSplit (1039): tone2 := tone1 copies, activeTone=1, toast → swatch left/right halves select activeTone (1090-1091, amber ring at 1963) → picker/hex/presets all route via activeHSV/activeTarget/setActivePaintColor → sim: computeCamoFor 2033 effMatch(currentPaint,currentPaint2,splitPaint,ref) — split engages only when tones[1].w>SPLIT_MIN_W, mq=max(single,two); body render: drawHumanoid css2 overpaints lower half + seam line (1552-1557). Coach follows the ACTIVE tone via activeAimMatch (524-527 picks nearest footprint tone by redmean).",
+   "COACH: every drawStudio frame → paintCoach (532) → NOW/AIM texts (1975-1981) + hint pill (1985-1988: '▲ lighter'/'◆ more vivid'/'☼ warmer' etc.) → on mqNow≥0.85 one-shot SFX.confirm latched by studio.coachHidden (1989), re-armed when mqNow<0.8 (1990). With studio CLOSED the same coach feeds the HUD nudge under the match meter (1739, only when mq<85 && player.ref && !studio.open) and the INSPECT overlay readout (1849).",
+   "FRAME ORDER (why world stays visible under the studio): frame (2588) → stepSim fixed steps (input/move/paint-crawl/camo/bots) → updateParticles/updateChameleonAnim/updateCamera (realDt — camera and FX never slow-mo) → drawRound (2605: sky→terrain→particles incl. drips/sprays→cover→player→ufos→reticle→grade/vignette) → drawRoundHUD (meters→buttons→pill→abilities→joystick→ 1824 drawStudio scrim+panel →countdown/pause) → drawStreaks → flash → drawToast."
+  ],
+  "invariants": [
+   "effMatch (246) is THE single body-match model shared by sim (computeCamoFor 2033) and coach (paintCoach 534) — comment at 244 says 'so they can never disagree'. Any new paint feature must route match math through effMatch/matchQualityRef, never fork it.",
+   "Uniform-ground calibration: matchQualityRef (239) and effMatch must stay byte-identical to matchQuality(paint, terrain) when the footprint has one tone (comments 236-238, and project memory: single-color match is per-tone). Tests depend on this.",
+   "paintCoach is PURE READ-ONLY (contract comment 530-531): it must never write sim/paint state — it is called from render paths and the __aac getter.",
+   "window.__aac hook shape (2641-2669) is a test API: studio.{open,svV,activeTone,t0,t1,svRect,splitRect,closeRect}, paint.{mqNow,mqAim,word,hint}, split, mq2, tones, snapCount, dripEmitted, mode, cam/camFollow/camPan/zoom, hud. The jsdom smoke harness (project memory) drives the studio through these rects — keep the getter, the classic <script>, and rect exposure intact.",
+   "dripEmitted (1325) and snapCount (664) are MONOTONIC and motion-independent logic counters for tests (snap logic in updateBlendSnap runs even when its visual is FX_MOTION-gated; drips are FX-gated but the counter comment says monotonic — don't reset either mid-round).",
+   "Projection exactness: cam is the only projection source — cam = clamp(camFollow + camPan) (1390-1394); trauma shake is a transform offset only (1395, 1404) 'keeps screenToWorld exact'. studioReticleDrag and any in-world paint aiming depend on screenToWorld(769) being exact — never bake shake or punch into cam.",
+   "gatherInput heal (774): ctrlMode==='PAINT' && !studio.open must always resolve to 'MOVE' — 'never leave the hider rooted'. Preserve this if you decouple studio.open from ctrlMode.",
+   "There is always an exit while painting: HUD roundHits stay live during studio (936, comment: MODE pill, 👁, MATCH, ⏸, 🔊), Escape (874), gamepad B (834), ✕ (1085), tap-outside (940). Any redesign must keep at least the pill exit (1788).",
+   "STUDIO_SLOWMO applies ONLY in practice (2239) — competitive modes keep real-time sim while painting; camera/particles/animation always tick at realDt (2601).",
+   "studioRects is the single geometry source for BOTH drawing and hit-testing — never hardcode panel coordinates elsewhere; __aac exposes sv/split/close rects straight from it.",
+   "Fixed-step determinism: sim runs in DT_FIXED=1/60 steps (2596), per-round seeded rng=mulberry32; paint crawl and camo math live inside stepSim so they stay deterministic — don't move updatePaint into a realDt path."
+  ],
+  "gotchas": [
+   "Keyboard shadowing kills three studioKey bindings: the ROUND keydown else-if chain (866-877) consumes BracketLeft/BracketRight → cyclePose (869-870) and KeyM → setMuted (876) BEFORE reaching `else if(studio.open) studioKey(e.code)` (877). So studioKey's hue-nudge brackets (1118) and KeyM→doMatch (1121) are unreachable; only Comma/Period (value), Minus/Equal (saturation), and Digit1-8 (presets) actually work while the studio is open.",
+   "Abilities fire while painting from the keyboard: Ctrl→dash, KeyC→decoy, KeyV→ink (871-873) have no ctrlMode gate (useAbility 799 checks only roundState), while the HUD ability buttons ARE gated on ctrlMode==='MOVE' (1806). A dash while rooted in PAINT teleports the 'rooted' painter.",
+   "One-way desync heal: gatherInput 774 fixes PAINT-without-studio, but nothing fixes studio.open===true with ctrlMode==='MOVE'. The window blur handler (890) sets ctrlMode='MOVE' and pauses but leaves studio.open=true — after alt-tab mid-paint and resume, the panel is drawn while the player can move, and pointerdowns still route through studioPointerDown (932).",
+   "studio.state ('CLOSED'/'OPEN_IDLE') is write-only — set in open/close/force paths, read nowhere. Don't build on it; studio.open is the real flag.",
+   "The scrim (drawStudio 1924) is drawn AFTER drawRound, so the world — including the world-space reticle drawn at 1468 — is dimmed to 28% behind the studio. If you remove the scrim to keep the world visible, note the reticle then shows at full brightness under the panel.",
+   "Force-close paths (triggerAbduction 2053, endRound 2058) bypass closeStudio: no hexInput.blur(), reticle.active stays as-is, coachHidden not reset. If hexInput was focused when abducted, it stays focused and eats keydowns (850) until something blurs it.",
+   "uiStudioBtn's fn argument is ignored (2008) — studio buttons are draw-only; real hits live in studioPointerDown. Adding a studio button requires touching BOTH drawStudio and studioPointerDown (and studioRects).",
+   "RGB readout (2001) always shows player.currentPaint (tone 1's crawled color) even when editing tone 2, and shows the CRAWLED color while hex (1998) shows the TARGET of the active tone — they legitimately disagree during a crawl and across tones.",
+   "The loupe only exists for touch (ptype==='touch') pointers with FX_MOTION>0 (1944-1945); mouse drags never see it. studioSV's 18px fingertip lift also applies only to touch — a mouse picks exactly under the cursor.",
+   "syncHexField skips writing while hexInput is focused (1127) and the global keydown returns early while it's focused (850) — remember to blur (closeStudio does) or the whole game keyboard goes dead.",
+   "Pointer roles survive studio closure: onPointerMove guards 'sv'/'hue'/'reticle' with `&& !studio.open` (963); replicate that guard for any new studio drag role or a close-mid-drag will keep painting.",
+   "MATCH's spray-fan and drip colors differ on purpose: spawnRepaintPuff sprays the NEW targetPaint (1327, 1332), maybePaintDrip drips the CURRENT crawling color (1349) — visually 'new paint over wet old paint'. Decoys copy only currentPaint, not tone 2 (804).",
+   "studioReticleDrag uses screenToWorld with the live cam (1111). Today cam is pinned to the player in PAINT; if you free the camera while painting, the 6*TILE clamp is still centered on the PLAYER (1112), so a far-panned camera can make the reticle un-reachable on screen.",
+   "In-panel taps that hit nothing are still consumed (1098) — the panel is opaque to world input; taps outside exit paint (940) unless reticleOn. Both behaviors must change for paint-while-world-interactive.",
+   "stepSim's slow-mo (2239) keys on studio.open OR ctrlMode==='INSPECT' — if painting no longer implies studio.open you may silently lose practice slow-mo.",
+   "hueGradCache (1921) is declared but never used — the hue gradient is rebuilt every frame (1950-1951); harmless, but don't assume caching exists.",
+   "studioLocal (1082) is defined but unused — all hit-testing is in screen space via studioRects; safe to repurpose or ignore."
+  ],
+  "extensionPoints": [
+   "Show the world while painting: in drawStudio (1922), delete or conditionalize the scrim `ctx.fillStyle='rgba(6,10,20,0.72)'; ctx.fillRect(0,0,vpW,vpH)` at 1924 (e.g. keep a light 0.2 scrim only behind the panel, or draw a gradient only over the panel's bottom band). The world is already fully rendered underneath every frame — nothing else needs to change to reveal it.",
+   "Camera free/locked while painting: updateCamera (1373). To LOCK on player: current behavior already does this (1385 zeroes camPan; 1378 lead=0). To FREE the camera: change 1385 from the PAINT force-zero to the MOVE spring-home branch (1386-1388) or the INSPECT hold behavior, and optionally include 'PAINT' in the `lead` condition at 1378. Then enable pan-finger allocation while the studio is open (see next point). clampPan at 1389 picks the max radius per mode — add a PAINT radius constant next to MOVE_PEEK_MAX/INSPECT_PAN_MAX (41).",
+   "Pointer routing for world interaction during paint: onPointerDown (922), studio branch 932-943. Replace the 'outside panel → exitPaint' fallthrough (938-941) with the joystick/pan allocation logic from the non-studio path (947-958) (e.g. outside-panel = 'pan' role, or joystick on the move side). Keep the roundHits pass (936) first so the pill/HUD exits keep working, and keep reticle-drag priority (939) if reticleOn.",
+   "Move-while-painting: gatherInput (773) line 794 is the single root — condition it (e.g. allow sneak-speed only: `input.speed=Math.min(input.speed,PLAYER_CREEP)` instead of zeroing) and remove the velocity zeroing in enterPaint (1049) accordingly. The camo sim already handles movement penalties (conspicuity MOVE_BEACON) with no other changes.",
+   "Compact / dockable studio: studioRects (1070) is the only geometry authority. Shrink LW/LH, anchor to a side (change px/py math), or return a second layout (e.g. 'rail' mode) — drawStudio and studioPointerDown and __aac rect exposure all follow automatically. If you add/remove sub-rects, mirror them in the __aac studio slice (2657) for the jsdom harness.",
+   "Paint-at-camera-target (free-cam painting): applyMatch (1060) already accepts any world point; add a helper `matchAtScreenCenter()` = applyMatch(screenToWorld(vpW/2,vpH/2)) or extend samplePos (1057) with a third source (camera crosshair) — samplePos is the single sampling seam for doMatch. Fix the reticle clamp center in studioReticleDrag (1112) from player to cam if the camera is free.",
+   "New MATCH/paint entry points: instantMatch (1067) is the studio-independent apply path — bind new buttons through uiBtn in drawRoundHUD (pattern at 1774) which auto-registers roundHits; those stay live even while the studio is open (936).",
+   "In-world paint UI (rings, aim ghost, coverage preview): draw from drawRound step 10 next to the drawReticle call (1468) — world-space, culled by visRect, under the HUD. Use paintCoach()/activeAimMatch() for live numbers (read-only, safe in render).",
+   "New coach behaviors: paintCoach (532) is the single hint generator; extend the candidate list at 544-546. Keep it read-only and keep mqAim = effMatch(...targets...) so __aac.paint.mqAim stays consistent with the sim.",
+   "New tones (3+ split) or paint materials: extend the tone routing layer (activeHSV 1027, activeTarget 1038, setToneColor 1034, setActivePaintColor 1037), effMatch (246) for the match model, updatePaint (2013) for the crawl, drawHumanoid css2 block (1552) for rendering, and applyMatch's tone sampling (1061-1063). SPLIT_MIN_W (60) gates when extra tones matter.",
+   "Wet-paint FX tuning/extension: maybePaintDrip (1348) for emission (rate 0.12s, gravity 120), spawnRepaintPuff (1332) for the spray fan, particle types in updateParticles (1353) + drawRound renderer (1436-1441). Keep dripEmitted monotonic. New paint-flow FX should be FX_MOTION-gated like these.",
+   "Progression hooks around painting: updateBlendBook (622) logs mastery when mq≥BLEND_LOG_MQ held BLEND_LOG_HOLD; logBlend/checkBiomeMedals (628/635) grant medals; updateBlendSnap (1360) is the crossing-detector for 'you just vanished' — new paint-skill achievements belong beside these, reading player.mq/conceal/S, never writing them.",
+   "Slow-mo policy for new paint flows: the single gate is stepSim 2239 — decide whether your in-world painting mode keys off studio.open, ctrlMode==='PAINT', or a new flag, and update that one expression.",
+   "If you decouple studio.open from ctrlMode==='PAINT' (e.g. panel closed but paint-aiming active): extend the heal at gatherInput 774 to cover the new state combination, keep exitPaint (1051) as the canonical teardown, and add the missing reverse heal (studio.open && ctrlMode!=='PAINT') there too — it fixes the existing blur-desync bug for free."
+  ]
+ },
+ {
+  "concern": "APP/ROUND FLOW & HUD in /workspaces/abduct_a_chameleon/index.html (single classic <script>, ~2674 lines): appState screen machine, round.mode variants (PRACTICE/SURVIVE/HEAT/DAILY/HUNT/TA), round lifecycle, HUD (meters/threat arrows/mode dock/toasts/banners), tutorial, pause, transitions, drawInspectOverlay.",
+  "stateObjects": [
+   {
+    "name": "appState",
+    "approxLine": 555,
+    "role": "Top-level screen machine",
+    "fields": "string: 'BOOT' | 'TITLE' | 'MODE_SELECT' | 'LEVEL_SELECT' | 'DIFFICULTY_SELECT' | 'SUMMARY' | 'SETTINGS' | 'WARDROBE' | 'ROUND'. drawMenu() branches on it every frame; all input handlers gate on it first."
+   },
+   {
+    "name": "roundState",
+    "approxLine": 556,
+    "role": "In-round sub-machine (only meaningful when appState==='ROUND')",
+    "fields": "string: 'COUNTDOWN' | 'RESUME_COUNTDOWN' | 'PLAYING' | 'PAUSED' | 'CAUGHT' (abduct cutscene) | 'TIMEOUT' (win anim). Stale value persists in menus; every consumer checks appState==='ROUND' first."
+   },
+   {
+    "name": "round",
+    "approxLine": 2075,
+    "role": "Active round config+runtime, built in startRound()",
+    "fields": "{ entry, mode ('PRACTICE'|'SURVIVE'|'HEAT'|'DAILY'|'HUNT'|'TA'), diff (clone of DIFF.* or PRACTICE_DIFF or makeHeatDiff()), ufos[], timeLeft, countdown, lastCount, caught, caughtBy, finalized, spawnGrace, nearUfo, debug, spottedReason, reasonUntil, spottedFlash, summaryT, seed, summary, decoys[], inks[], beacons[], taBanked, heat, heatT, heatUfoT, metrics{survivalMs,blendAccum,lowDetectMs,streakBestMs,streakCur,spottedCount,nearMisses,timeMovingMs,timeStillMs,ghostMs}, _blendHold, biome; HUNT adds bots[], hunterCaught, pings[] }"
+   },
+   {
+    "name": "ctrlMode",
+    "approxLine": 758,
+    "role": "Control mode within a round — distinct from round.mode",
+    "fields": "'MOVE' | 'PAINT' | 'INSPECT'. Drives the MODE pill, ability gating, camera pan caps, inspect zoom. Must be reset to 'MOVE' on every exit from PLAYING (pause/win/caught/blur)."
+   },
+   {
+    "name": "round.summary",
+    "approxLine": 2288,
+    "role": "Payload drawSummary() renders",
+    "fields": "{ outcome:'WIN'|'LOSE', score, grade('S'..'F'), survSec, avgBlendPct, streak, near, spotted, ghostSec, isBest, prevBest, t0 } plus hunt:true+{caught,total,timeUsed} (endHunt 2164) or ta:true+{banked,total,timeUsed} (endTimeAttack 2221)"
+   },
+   {
+    "name": "navList / menuIndex",
+    "approxLine": 2304,
+    "role": "Immediate-mode menu widget list shared by ALL menus AND the pause overlay",
+    "fields": "navList=[{x,y,w,h,fn}] rebuilt during every menu/pause draw via navBtn(); menuIndex = keyboard/gamepad cursor. handleMenuTap hit-tests it; menuConfirm fires navList[menuIndex].fn"
+   },
+   {
+    "name": "roundHits",
+    "approxLine": 754,
+    "role": "In-round on-screen button hitboxes",
+    "fields": "[{x,y,w,h,fn}] reset to [] at top of drawRoundHUD (1718); uiBtn() pushes into it; onPointerDown hit-tests it before joystick/pan allocation"
+   },
+   {
+    "name": "_hud",
+    "approxLine": 763,
+    "role": "HUD geometry exported for tests via window.__aac.hud",
+    "fields": "{ modeButtons:[{id:'paint'|'inspect'|'match'|'pose',x,y,w,h}], pill:{x,y,w,h}|null, recenter:{x,y,w,h}|null } — refilled each drawRoundHUD"
+   },
+   {
+    "name": "pendingMode / pendingLevel / showHelp",
+    "approxLine": 2051,
+    "role": "Menu-flow scratch state",
+    "fields": "pendingMode ('SURVIVE' default) chosen at MODE_SELECT, consumed by selectLevel; pendingLevel held across DIFFICULTY_SELECT; showHelp overlays drawHelp() on any menu screen and swallows the next confirm/tap/back"
+   },
+   {
+    "name": "settings",
+    "approxLine": 560,
+    "role": "Persisted prefs (LS_SETTINGS='aac.settings.v1'), also nav-relevant",
+    "fields": "{ muted, lastMode, lastLevel, lastDiff, volMaster, volSfx, volMusic, motion, screenShake, photosensitive, colorblind, highContrast, textSize, haptics, handed('right'|'left' mirrors the HUD), tutorialSeen (first-play help trigger), perf, controlsSeen }"
+   },
+   {
+    "name": "settingsReturn / settingsScroll / settingsHits / settingsMaxScroll",
+    "approxLine": 2460,
+    "role": "Settings screen state",
+    "fields": "settingsReturn: 'TITLE'|'PAUSE' — where closeSettings() goes back to; settingsHits is the settings-only hitbox list (settings does NOT use navList); scroll clamped to settingsMaxScroll computed during draw"
+   },
+   {
+    "name": "toast",
+    "approxLine": 656,
+    "role": "Single-slot transient banner",
+    "fields": "{text, until:nowMs()+2400}|null; showToast overwrites; drawToast renders bottom-center, drawn LAST in frame() so it floats above every screen"
+   },
+   {
+    "name": "player (HUD-relevant fields)",
+    "approxLine": 657,
+    "role": "Hider actor; HUD reads smoothed display values",
+    "fields": "mqDisplay/detDisplay (eased meter values, 1724-1726), mq, conceal, C, S, ref, alive, abductT (CAUGHT cutscene clock), pose, freeze, cd{dash,decoy,ink}; HUNT repurposes pulseCd/pulseT/beamCharge/beamTarget"
+   },
+   {
+    "name": "studio",
+    "approxLine": 1024,
+    "role": "Paint Studio panel state (child overlay of the HUD while ctrlMode==='PAINT')",
+    "fields": "{ open, state:'CLOSED'|'OPEN_IDLE', reticleOn, coachHidden, activeTone, reticle{active,x,y} } — must be force-closed by pause/win/caught/spotted transitions"
+   },
+   {
+    "name": "LEVELS / BAKED_MAP",
+    "approxLine": 444,
+    "role": "Level catalog for LEVEL_SELECT",
+    "fields": "entry = { file, name, display, data, loaded, thumb, usedBaked?, _loading? }; loadLevels() fetches maps/levels.json then always appends the baked 'Prototype Meadow' card; drag-drop (904) pushes custom entries"
+   },
+   {
+    "name": "DIFF / PRACTICE_DIFF / GRADE / timing consts",
+    "approxLine": 72,
+    "role": "Mode tuning tables",
+    "fields": "DIFF.EASY/NORMAL/HARD {UFO_COUNT,SCAN_R,...,SURVIVE_TIME,diffIndex,label}; PRACTICE_DIFF=EASY+{LOCK_TIME:∞,SURVIVE_TIME:∞,practice:true}; GRADE thresholds S..D (103); COUNTDOWN_SEC=3, RESUME_COUNTDOWN=0.8, ABDUCT_CUTSCENE=1.4, TIMEOUT_ANIM=1.2 (102); DT_FIXED=1/60, MAX_FRAME_DT=0.05 (33); TA_* (111); HUNT_TIME/HIDER_COUNT (114)"
+   },
+   {
+    "name": "joystick / pointers / input / keys",
+    "approxLine": 750,
+    "role": "Input state feeding both HUD drawing and sim",
+    "fields": "joystick {id,cx,cy,dx,dy,mag} drawn by drawRoundHUD; pointers Map(id→{sx,sy,role:'ui'|'joystick'|'pan'|'sv'|'hue'|'reticle'|'sscroll'}); input {mx,my,creep,moveMag,speed,moveTag}"
+   },
+   {
+    "name": "best / PROGRESS",
+    "approxLine": 653,
+    "role": "Persistence read by summary + level badges + wardrobe",
+    "fields": "best[display+'|'+mode+'|'+diffLabel]={bestScore,bestGrade,bestSurvivalMs,plays,updated} (LS_BEST); PROGRESS {unlocks,equipped.skin,stats{plays,catches,bestSurvive,hardWin,heatBest},blendbook,biomeMedals} (LS_PROGRESS)"
+   },
+   {
+    "name": "camPan / camFollow / inspectZoomT",
+    "approxLine": 759,
+    "role": "Camera peek/free-look + inspect zoom ease",
+    "fields": "cam = clamp(camFollow + camPan); inspectZoomT 0..1 eased toward (ctrlMode==='INSPECT'?1:0) in updateCamera (1375); gates drawInspectOverlay at >0.01 (1811); pan caps MOVE_PEEK_MAX vs INSPECT_PAN_MAX via clampPan"
+   }
+  ],
+  "functions": [
+   {
+    "name": "frame",
+    "signature": "function frame(now)",
+    "approxLine": 2588,
+    "role": "Master rAF loop: clamps realDt, ticks gfx/perf/tweens/streaks/gamepad edges, applies hitstop/slow-mo to simDt; if ROUND: fixed-step accumulator (max 5×DT_FIXED) → stepSim, ticks CAUGHT→finishRound('LOSE') after ABDUCT_CUTSCENE and TIMEOUT→finishRound('WIN') after TIMEOUT_ANIM, then drawRound()+drawRoundHUD()+drawStreaks()+flash; else drawMenu(); drawToast() always last; re-checks appState mid-frame because finishRound can flip it to SUMMARY"
+   },
+   {
+    "name": "boot",
+    "signature": "function boot()",
+    "approxLine": 2625,
+    "role": "Startup: ctx, glows, loadPersist+loadProgress, resize listener, visibilitychange auto-pause (2634), appState='BOOT', loadLevels().then(appState='TITLE'), starts rAF"
+   },
+   {
+    "name": "stepSim",
+    "signature": "function stepSim(dt)",
+    "approxLine": 2229,
+    "role": "Per-fixed-step sim dispatcher: COUNTDOWN/RESUME_COUNTDOWN ticking (SFX.count/go per integer, →PLAYING at 0); HUNT → stepHunt; else hider sim: practice slow-mo (STUDIO_SLOWMO when studio/inspect open), input/move/camo, ability cooldowns, metrics accrual, timer→endRound(true), TA→stepTABeacons, HEAT escalation ramp + UFO spawning (mutates round.diff clone), spottedFlash decay"
+   },
+   {
+    "name": "startRound",
+    "signature": "function startRound(entry, mode, diff, fixedSeed)",
+    "approxLine": 2072,
+    "role": "THE round initializer: derives seed (DAILY forces dailySeed), builds round object, resets player/abilities/split-paint, seeds rng, setActiveMap+buildOpenness+buildSky, spawns player at hider spawn (HUNT: seeker spawn + bot hiders; else UFOs), TA beacon scatter, seedAmbient LAST (RNG determinism), sets appState='ROUND', roundState='COUNTDOWN', ctrlMode='MOVE', persists lastMode/lastLevel/lastDiff"
+   },
+   {
+    "name": "selectLevel",
+    "signature": "async function selectLevel(entry)",
+    "approxLine": 2066,
+    "role": "LEVEL_SELECT card handler: fetches data then PRACTICE/HEAT/DAILY start immediately; SURVIVE/HUNT/TA go to DIFFICULTY_SELECT (menuIndex=1 preselects NORMAL)"
+   },
+   {
+    "name": "startPlay",
+    "signature": "function startPlay()",
+    "approxLine": 2064,
+    "role": "TITLE→MODE_SELECT; first ever play flips settings.tutorialSeen and raises showHelp (the tutorial trigger)"
+   },
+   {
+    "name": "route",
+    "signature": "function route(mode)",
+    "approxLine": 2378,
+    "role": "MODE_SELECT→LEVEL_SELECT, stores pendingMode"
+   },
+   {
+    "name": "startDaily",
+    "signature": "function startDaily()",
+    "approxLine": 2381,
+    "role": "DAILY entry: dailySeed() (YYYYMMDD>>>0, 2380) picks level from pool, skips LEVEL/DIFFICULTY select, startRound(lv,'DAILY',DIFF.NORMAL,seed)"
+   },
+   {
+    "name": "makeHeatDiff",
+    "signature": "function makeHeatDiff()",
+    "approxLine": 2379,
+    "role": "Fresh EASY clone {label:'HEAT',heat:true,SURVIVE_TIME:Infinity,UFO_COUNT:1} — per-round mutable"
+   },
+   {
+    "name": "gotoTitle",
+    "signature": "function gotoTitle()",
+    "approxLine": 2063,
+    "role": "Any→TITLE: menuIndex=0, showHelp=false, stopAllLoops(); note: does NOT null round"
+   },
+   {
+    "name": "togglePause",
+    "signature": "function togglePause()",
+    "approxLine": 2059,
+    "role": "PLAYING→PAUSED (closes studio, ctrlMode='MOVE', camPan reset, menuIndex=0, stopAllLoops) or PAUSED→resumeRound(); no-op for CAUGHT/TIMEOUT/menus"
+   },
+   {
+    "name": "resumeRound",
+    "signature": "function resumeRound()",
+    "approxLine": 2062,
+    "role": "PAUSED→RESUME_COUNTDOWN (0.8s, cyan countdown) → PLAYING via stepSim"
+   },
+   {
+    "name": "endRound",
+    "signature": "function endRound(win)",
+    "approxLine": 2057,
+    "role": "Win path only: PLAYING→TIMEOUT + summaryT=0 + SFX.win; guarded by finalized/TIMEOUT/CAUGHT"
+   },
+   {
+    "name": "triggerAbduction",
+    "signature": "function triggerAbduction(u)",
+    "approxLine": 2052,
+    "role": "Lose path: closes studio/resets ctrlMode FIRST; TA branch → respawnTA() (penalty, no game over); else roundState='CAUGHT', abductT=0, full juice burst"
+   },
+   {
+    "name": "finishRound",
+    "signature": "function finishRound(outcome)",
+    "approxLine": 2275,
+    "role": "Hider-modes scoring funnel (called from frame after cutscene/anim): score/grade math, best[key] upsert (skipped for practice), PROGRESS stats + checkUnlocks, round.summary=…, appState='SUMMARY'"
+   },
+   {
+    "name": "endHunt",
+    "signature": "function endHunt(win)",
+    "approxLine": 2156,
+    "role": "HUNT terminal: builds hunt summary (caught/total/score/grade), best '|HUNT|' key, PROGRESS.catches, appState='SUMMARY' directly (no TIMEOUT anim)"
+   },
+   {
+    "name": "endTimeAttack",
+    "signature": "function endTimeAttack(win)",
+    "approxLine": 2215,
+    "role": "TA terminal: banked/total/score/grade, best '|TA|' key, appState='SUMMARY' directly"
+   },
+   {
+    "name": "stepHunt",
+    "signature": "function stepHunt(dt)",
+    "approxLine": 2172,
+    "role": "HUNT per-tick: fly saucer, bot think/camo, beam auto-target+charge→catch, timer→endHunt"
+   },
+   {
+    "name": "stepTABeacons",
+    "signature": "function stepTABeacons(dt)",
+    "approxLine": 2203,
+    "role": "TA per-tick: proximity+conceal+unseen hold→bank, timer, all-banked→endTimeAttack(true)"
+   },
+   {
+    "name": "respawnTA",
+    "signature": "function respawnTA()",
+    "approxLine": 2197,
+    "role": "TA catch: respawn at hider spawn, −TA_PENALTY(12s), reset UFO suspicion, toast"
+   },
+   {
+    "name": "huntPulse",
+    "signature": "function huntPulse()",
+    "approxLine": 2152,
+    "role": "HUNT scan ability (Space / A / Y / SCAN button): pings bots in HUNT_SCAN_R*1.4 with LOS"
+   },
+   {
+    "name": "drawMenu",
+    "signature": "function drawMenu()",
+    "approxLine": 2328,
+    "role": "Menu dispatcher: applyScreenTransform, drawMenuBg, navList=[], branch per appState to drawBoot/drawTitle/drawModeSelect/drawLevelSelect/drawDifficulty/drawSummary/drawSettings/drawWardrobe, then drawHelp overlay if showHelp"
+   },
+   {
+    "name": "drawTitle",
+    "signature": "function drawTitle()",
+    "approxLine": 2341,
+    "role": "TITLE: animated chameleon+ufo doodle, logo, buttons PLAY / Wardrobe / Settings(openSettings('TITLE')) / How to Play(showHelp) / Sound toggle, footer hint about drag-drop maps"
+   },
+   {
+    "name": "drawModeSelect",
+    "signature": "function drawModeSelect()",
+    "approxLine": 2362,
+    "role": "MODE_SELECT: 6 cards (Practice/Survive/Heat/Daily/Hunt/Time Attack) in adaptive 1–2 col grid + Back; each card routes or startDaily()"
+   },
+   {
+    "name": "drawLevelSelect",
+    "signature": "function drawLevelSelect()",
+    "approxLine": 2386,
+    "role": "LEVEL_SELECT: adaptive grid (1–4 cols) of level cards with lazy 1px/tile thumbs (ensureThumb 2416) + PB badge (levelBadge 2384) + Back; cards push directly into navList (not via navBtn)"
+   },
+   {
+    "name": "drawDifficulty",
+    "signature": "function drawDifficulty()",
+    "approxLine": 2419,
+    "role": "DIFFICULTY_SELECT: EASY/NORMAL/HARD rows with hunt-specific subtitles, startRound(pendingLevel,pendingMode,d) + Back"
+   },
+   {
+    "name": "drawSummary",
+    "signature": "function drawSummary()",
+    "approxLine": 2429,
+    "role": "SUMMARY: headline per mode (ESCAPED/ABDUCTED, BOARD CLEARED, ALL BEACONS BANKED…), grade stamp circle, per-mode stat rows, NEW BEST banner, buttons Retry / Change-Level-or-Modes (DAILY is fixed) / Menu; self-heals to title if round.summary missing"
+   },
+   {
+    "name": "drawSettings",
+    "signature": "function drawSettings()",
+    "approxLine": 2464,
+    "role": "SETTINGS: scrollable clipped panel of section/seg/slider/toggle row helpers (all push into settingsHits, NOT navList — navList=[] and menuIndex=-1 at 2515), How-to-Play row, footer Reset/Done; drag-scroll via 'sscroll' pointer role"
+   },
+   {
+    "name": "openSettings / closeSettings",
+    "signature": "function openSettings(from) / function closeSettings()",
+    "approxLine": 2461,
+    "role": "Settings enter/exit; settingsReturn ('TITLE'|'PAUSE') decides whether Done returns to TITLE or back into ROUND+PAUSED"
+   },
+   {
+    "name": "drawWardrobe",
+    "signature": "function drawWardrobe()",
+    "approxLine": 2526,
+    "role": "WARDROBE: live humanoid preview, head-accent chips, biome-medal chips, Blend Book 14-terrain row, pose hint line, Back→TITLE"
+   },
+   {
+    "name": "drawHelp",
+    "signature": "function drawHelp()",
+    "approxLine": 2566,
+    "role": "How-to-Play overlay (also the first-run tutorial): dark scrim + lines[] + 'Got it'; REPLACES navList/menuIndex while up; any tap/confirm/back dismisses"
+   },
+   {
+    "name": "drawRoundHUD",
+    "signature": "function drawRoundHUD()",
+    "approxLine": 1717,
+    "role": "THE in-round HUD (screen space, after drawRound): resets roundHits; HUNT→drawHuntHUD early-return; else eases mqDisplay/detDisplay, Match Meter (top-center, danger/amber/green + hazard stripes <50 + GHOST word + paintCoach nudge line 1739), Detection bar, per-mode timer panel (HEAT count-up / TA banked / SURVIVE-DAILY countdown / PRACTICE label, 1748-1758), spotted-reason banner (1760), drawThreatArrows, mode dock (🎨/👁/MATCH/🕺 64px, handedness-mirrored, 1765-1777), ⏸+🔊 top-left, MODE pill (always-visible back-to-Move target, 1780-1788), ⌖ recenter (only while panned, 1790), gated ability column (1792-1807), debug panel, drawInspectOverlay when inspectZoomT>0.01, joystick visual, drawStudio, drawCountdown/drawPause, SPOTTED! flash (1828)"
+   },
+   {
+    "name": "drawHuntHUD",
+    "signature": "function drawHuntHUD()",
+    "approxLine": 1857,
+    "role": "HUNT HUD: CAUGHT x/y panel, HUNT timer, ⏸/🔊 (own coords), SCAN button with cooldown pie (huntPulse), simplified joystick"
+   },
+   {
+    "name": "drawInspectOverlay",
+    "signature": "function drawInspectOverlay()",
+    "approxLine": 1831,
+    "role": "Seeker's-eye overlay, alpha=inspectZoomT: per-UFO scan-reach rings at round.diff.SCAN_R*zoom via worldToScreen, pulsing YOU ring on-screen or cyan edge arrow (inset 40) when off-screen, top panel \"👁 SEEKER'S VIEW\" + paintCoach() word/% readout using PAL colors, exit hint at vpH-70"
+   },
+   {
+    "name": "drawThreatArrows",
+    "signature": "function drawThreatArrows()",
+    "approxLine": 1875,
+    "role": "Edge arrows for off-screen or chasing UFOs (inset 36): color PAL.calm/warn/danger by suspicion tier, pulse when chasing, colorblind glyphs '!'/'?'/'·' when glyphsOn, distance label in tiles as 'Nm'"
+   },
+   {
+    "name": "drawCountdown",
+    "signature": "function drawCountdown()",
+    "approxLine": 1905,
+    "role": "Big 3-2-1-GO center text; cyan for RESUME_COUNTDOWN, amber for initial"
+   },
+   {
+    "name": "drawPause",
+    "signature": "function drawPause()",
+    "approxLine": 1908,
+    "role": "Pause overlay AS a menu: scrim, rebuilds navList with Resume / Restart(startRound same args) / Debug toggle (practice only) / Settings(openSettings('PAUSE')) / Quit-to-Menu; clamps menuIndex (1917)"
+   },
+   {
+    "name": "drawDebug",
+    "signature": "function drawDebug()",
+    "approxLine": 1895,
+    "role": "Practice-only sim readout panel (match/stillness/movement/conceal/conspicuity/terrain), toggled by [H] or pause-menu row"
+   },
+   {
+    "name": "drawToast / showToast",
+    "signature": "function showToast(t) / function drawToast()",
+    "approxLine": 917,
+    "role": "2.4s bottom-center banner; drawn last in frame() over everything"
+   },
+   {
+    "name": "navBtn",
+    "signature": "function navBtn(label,x,y,w,h,fn,opts)",
+    "approxLine": 2305,
+    "role": "Immediate-mode menu button: draws (selected = current menuIndex) and pushes hitbox into navList unless disabled; opts {size,sub,disabled,color,stroke,weight,rad,fill}"
+   },
+   {
+    "name": "menuNav / menuConfirm / menuBack / handleMenuTap",
+    "signature": "menuNav(dx,dy) / menuConfirm() / menuBack() / handleMenuTap(sx,sy)",
+    "approxLine": 2311,
+    "role": "Menu input: wrap cursor; fire selected fn; back-nav map (SETTINGS→closeSettings, WARDROBE→TITLE, MODE_SELECT→TITLE, LEVEL_SELECT→MODE_SELECT, DIFFICULTY_SELECT→LEVEL_SELECT, SUMMARY→TITLE) — showHelp swallows all three; tap hit-tests navList"
+   },
+   {
+    "name": "uiBtn / panel / txt / rr",
+    "signature": "uiBtn(label,x,y,w,h,fn,opts) / panel(x,y,w,h,rad) / txt(s,x,y,size,color,align,weight) / rr(x,y,w,h,rad)",
+    "approxLine": 1704,
+    "role": "HUD primitives; txt multiplies size by hudScale (text-size setting); uiBtn pushes into roundHits"
+   },
+   {
+    "name": "updateGamepadEdges",
+    "signature": "function updateGamepadEdges()",
+    "approxLine": 822,
+    "role": "Gamepad nav: in-round (Y/X paint, RB inspect, LB match, B back-out-mode, Start pause; HUNT: A/Y pulse); menus+pause share navList nav (A confirm, B back/resume, dpad menuNav, Start unpauses)"
+   },
+   {
+    "name": "keydown handler",
+    "signature": "addEventListener('keydown', e=>{...})",
+    "approxLine": 847,
+    "role": "Keyboard router: PAUSED behaves as menu (Esc/P resume, Enter/Space confirm, W/S nav); HUNT (Space pulse, Esc pause); hider round (E/P/Tab paint, I inspect, Q match, [/]/R pose, Ctrl dash, C decoy, V ink, Esc = exit mode else pause, H debug in practice, M mute); menus (Enter/Space confirm, Esc/Backspace back, arrows nav)"
+   },
+   {
+    "name": "onPointerDown / onPointerMove / onPointerUp",
+    "signature": "onPointerDown(e) / onPointerMove(e) / onPointerUp(e)",
+    "approxLine": 922,
+    "role": "Pointer router in priority order: SETTINGS (help-dismiss → settingsHits → scroll-drag) → menus/PAUSED (handleMenuTap) → studio (studioPointerDown → roundHits stay live → outside-panel = reticle drag or exitPaint) → roundHits → CAUGHT/TIMEOUT swallow → handed-side split: joystick spawn vs camera-pan role (pan disabled in HUNT)"
+   },
+   {
+    "name": "blur handler",
+    "signature": "addEventListener('blur', ...)",
+    "approxLine": 890,
+    "role": "Focus-loss safety: clears keys/joystick/pointers, ctrlMode='MOVE', camPan reset, auto-pause if PLAYING; visibilitychange (2634) also auto-pauses"
+   },
+   {
+    "name": "loadLevels / fetchLevelData / buildThumb / ensureThumb / levelBadge",
+    "signature": "async loadLevels() / async fetchLevelData(entry) / buildThumb(map) / ensureThumb(e) / levelBadge(entry)",
+    "approxLine": 446,
+    "role": "Level catalog: maps/levels.json + always-appended baked map; fetch falls back to BAKED_MAP with usedBaked flag (kills PB badge); thumbs lazily built for LEVEL_SELECT"
+   },
+   {
+    "name": "paintCoach",
+    "signature": "function paintCoach() → {mqNow,mqAim,word,hint,glyph}",
+    "approxLine": 532,
+    "role": "PURE READ-ONLY coach consumed by the HUD (match-meter nudge line 1739) and drawInspectOverlay readout — must never write sim state"
+   },
+   {
+    "name": "drawRound",
+    "signature": "function drawRound(alpha)",
+    "approxLine": 1410,
+    "role": "World-space render (sky→terrain→entities→beacons→abduction cutscene→vignette) — runs BEFORE drawRoundHUD each frame; alpha param currently unused at callsite (2605)"
+   },
+   {
+    "name": "enterPaint / exitPaint / enterInspect / exitInspect / togglePaintMode / toggleInspect",
+    "signature": "1048-1056",
+    "approxLine": 1048,
+    "role": "ctrlMode transitions; both entries blocked when !PLAYING or round.mode==='HUNT'; enterPaint roots the player; enterInspect closes studio and zeroes pan"
+   },
+   {
+    "name": "applySettingsRuntime",
+    "signature": "function applySettingsRuntime()",
+    "approxLine": 638,
+    "role": "Materializes settings → FX_MOTION, shakeScale, PCAP, PAL/glyphsOn (colorblind), hcOn, hudScale, volume, dpr cap; call after ANY setting change (settings rows do this)"
+   },
+   {
+    "name": "resetSettings / handleSettingsTap / loadPersist / saveSettings / saveBest",
+    "signature": "2521 / 2524 / 2618 / 2622 / 2623",
+    "approxLine": 2521,
+    "role": "Settings persistence; resetSettings preserves lastMode/lastLevel/lastDiff/tutorialSeen; loadPersist honors prefers-reduced-motion on first run"
+   }
+  ],
+  "flows": [
+   "BOOT: boot() (2625) → appState='BOOT' → rAF frame loop starts drawing drawBoot() → loadLevels() resolves (or rejects) → appState='TITLE'.",
+   "MAIN MENU NAV: TITLE 'PLAY' → startPlay() (2064; first run: tutorialSeen=true + showHelp=true so the help overlay covers MODE_SELECT) → MODE_SELECT card → route(mode) sets pendingMode + appState='LEVEL_SELECT' (Daily instead calls startDaily() which skips both pickers) → level card → selectLevel(entry) (2066): PRACTICE/HEAT/DAILY startRound immediately; SURVIVE/HUNT/TA → appState='DIFFICULTY_SELECT' (menuIndex=1 = NORMAL preselected) → difficulty row → startRound(pendingLevel,pendingMode,DIFF.X).",
+   "MENU INPUT (all menu screens + pause overlay): each draw rebuilds navList via navBtn during rendering → pointerdown → handleMenuTap(sx,sy) hit-tests the last-drawn navList and fires fn; keyboard Enter/Space → menuConfirm(), Esc/Backspace → menuBack() (back map at 2313-2319), arrows → menuNav(); gamepad A/B/dpad mirrors this (839-842). showHelp intercepts and dismisses on any confirm/tap/back before normal handling.",
+   "ROUND START: startRound (2072) → seed derivation (DAILY: dailySeed always) → round object built → map/biome/sky rebuilt → player at hider spawn + UFOs (or HUNT: seeker spawn + makeBotHider×N; TA: beacon scatter) → seedAmbient() LAST → appState='ROUND', roundState='COUNTDOWN' (3s), ctrlMode='MOVE'.",
+   "ROUND FRAME: frame(now) (2588) → realDt clamp → hitstop/slow-mo → if PLAYING/COUNTDOWN/RESUME_COUNTDOWN: acc+=simDt; while acc≥DT_FIXED (≤5 steps) stepSim(1/60) → stepSim: countdown tick (SFX per integer, ≤0→'PLAYING') | HUNT→stepHunt | hider sim (practice slow-mo, input, move, camo, metrics, timer→endRound(true), TA→stepTABeacons, HEAT ramp) → back in frame: CAUGHT ticks player.abductT→finishRound('LOSE') at 1.4s; TIMEOUT ticks summaryT→finishRound('WIN') at 1.2s → updateParticles/Ambient/Anim/Camera → audio loops → drawRound() → drawRoundHUD() → drawStreaks → white flash → drawToast → rAF.",
+   "PAUSE: Esc(MOVE only)/⏸ button/Start/gamepad-9/tab-hidden/window-blur → togglePause() (2059): closes studio, ctrlMode='MOVE', camPan reset, roundState='PAUSED', menuIndex=0, stopAllLoops → drawPause (1908) rebuilds navList [Resume, Restart, (Debug in practice), Settings, Quit] → Resume→resumeRound() → 'RESUME_COUNTDOWN' 0.8s → stepSim →'PLAYING'; Settings→openSettings('PAUSE') flips appState='SETTINGS' (round frozen underneath) → Done→closeSettings() → appState='ROUND', roundState='PAUSED'; Quit→gotoTitle().",
+   "LOSE (hider): updateUfo beam completes → triggerAbduction(u) (2052): studio closed + ctrlMode reset FIRST; TA→respawnTA() (−12s, suspicion reset, toast, NO state change) else roundState='CAUGHT', player.abductT=0 → drawAbduction cutscene renders in drawRound → frame: abductT≥1.4 → finishRound('LOSE') → score/grade/best/PROGRESS → round.summary set → appState='SUMMARY' (same frame falls through to drawMenu).",
+   "WIN (hider): stepSim timer hits 0 → endRound(true) (2057) → roundState='TIMEOUT', summaryT=0 → frame: summaryT≥1.2 → finishRound('WIN') → appState='SUMMARY'. HUNT and TA skip the anim: endHunt/endTimeAttack set round.summary and appState='SUMMARY' directly from within stepSim.",
+   "SUMMARY: drawSummary (2429) reads round.summary (null→gotoTitle self-heal) → 'Retry' startRound(round.entry, round.mode, round.diff — same diff object; HEAT ramp fields recompute from DIFF.EASY each tick so this is safe by design); 'Change Level' sets pendingMode=round.mode → LEVEL_SELECT (DAILY shows 'Modes' → MODE_SELECT instead); 'Menu' → gotoTitle().",
+   "SPOTTED BANNER: updateUfo transition into CHASE/BEAM (1288) → metrics.spottedCount++, round.spottedReason=spottedReason(...), reasonUntil=now+2600, SFX/trauma/punchZoom, and if ctrlMode!=='MOVE' && !practice → force exitPaint/exitInspect + toast 'Spotted — move!' → drawRoundHUD renders '⚠ reason' panel at vpH-140 fading over 2.6s + 'SPOTTED!' flash at vpH*0.3 while round.spottedFlash>0 (decayed in stepSim 2272).",
+   "INSPECT OVERLAY: toggleInspect (key I / 👁 button / RB) → enterInspect (1052; blocked in HUNT/non-PLAYING) → ctrlMode='INSPECT' → updateCamera eases inspectZoomT→1 (zoom out to 'seeker altitude') and pan cap widens to INSPECT_PAN_MAX → drawRoundHUD calls drawInspectOverlay when inspectZoomT>0.01 (1811) → scan rings per UFO + YOU marker/edge-arrow + paintCoach readout; exit via 👁/Esc/B/MODE-pill tap → exitInspect → zoomT eases back and overlay fades below 0.01.",
+   "PAINT MODE ↔ HUD: togglePaintMode (E/P/Tab/🎨/Y/X) → enterPaint roots movement (gatherInput zeroes input while ctrlMode==='PAINT', 794) → openStudio panel drawn from drawRoundHUD (1824); studio-open pointerdown priority (932-942): studio widgets → live roundHits (MODE pill/👁/MATCH/⏸/🔊 always escape-able) → outside-panel tap = reticle drag or exitPaint; gatherInput self-heals PAINT-without-studio desync (774).",
+   "SETTINGS INPUT: onPointerDown SETTINGS branch (926): showHelp dismiss → handleSettingsTap over settingsHits (segs/sliders/toggles call applySettingsRuntime immediately) → else start 'sscroll' drag; footer Reset/Done are settingsHits too; Esc/B → menuBack → closeSettings (saves + applies + returns per settingsReturn).",
+   "TOAST: showToast(t) from anywhere (unlocks, decoy/ink, HEAT ufo joins, TA bank/catch, drag-drop load, spotted-eject) → single slot until=now+2400 → drawToast() drawn after everything in frame() with 400ms fade-out.",
+   "DRAG-DROP PLAYTEST: window 'drop' (904) → parse SCANNER json → inject default spawns if missing → push LEVELS entry → pendingMode='PRACTICE' → startRound(entry,'PRACTICE',PRACTICE_DIFF) → toast."
+  ],
+  "invariants": [
+   "window.__aac diagnostic getter (2641-2669) MUST keep exposing appState, roundState, hud:_hud, mode:ctrlMode, summary, ta, hunt, paint/studio rects, cam/camPan/zoom, move/speed — the jsdom smoke harness (see project memory 'how to test the game') drives and asserts through it. Keep the classic <script> (no modules).",
+   "Determinism: stepSim only runs on the fixed accumulator (DT_FIXED=1/60, ≤5 steps/frame); the seeded rng stream must be consumed ONLY by gameplay setup in order — seedAmbient() is deliberately called AFTER entities in startRound (2117 comment) so DAILY (fixed dailySeed, retry can't reroll — 2073) stays reproducible. Never insert rng() calls before entity spawning or in render.",
+   "navList/roundHits/settingsHits are immediate-mode: rebuilt during every draw of their screen (drawMenu 2328, drawPause 1911, drawHelp 2583, drawSettings 2465/2515, drawRoundHUD 1718). Any new screen/overlay must clear+rebuild its list each frame or stale hitboxes from the previous screen will fire.",
+   "Every transition OUT of PLAYING must close the studio and reset ctrlMode='MOVE' + camPan (pattern at triggerAbduction 2053 'reset BEFORE the TA respawn so mode never leaks', endRound 2058, togglePause 2060, blur 891, spotted-eject 1292). New end/interrupt paths must repeat this.",
+   "Terminal-state guards: endRound checks finalized||TIMEOUT||CAUGHT; finishRound/endHunt/endTimeAttack check round.finalized — every new end path needs the same idempotence guard because frame() can race a same-frame appState flip (it re-checks appState at 2602/2607).",
+   "paintCoach() and drawInspectOverlay are READ-ONLY on the sim (P8 contract, comments at 530, 1830). HUD may ease its own display copies (mqDisplay/detDisplay) but must never write player.mq/C/S.",
+   "HUD state colors must go through PAL (CB_PAL per colorblind setting, 567) with glyphsOn fallbacks (threat arrows 1890, inspect readout 1849); text sizes through txt()'s hudScale; handedness mirroring via settings.handed in drawRoundHUD (1767) and drawHuntHUD (1865) and the joystick-side split in onPointerDown (948).",
+   "The MODE pill (1780-1788) is the guaranteed always-tappable 'back to Move' target, and roundHits stay live while the studio is open (935-936) — never occlude or drop these; a rooted PAINT state with no exit is the failure this design prevents (see also the gatherInput self-heal at 774).",
+   "HEAT must mutate only its per-round diff clone from makeHeatDiff() (comment 2260: 'never the shared const') and recompute ramp fields from the DIFF.EASY base each tick — this is why summary-Retry reusing the mutated clone self-heals (2270).",
+   "practice-only affordances: STUDIO_SLOWMO (2239), debug toggle (pause row 1914, [H] 875), no timer/best-key writes (2290, 2450); PRACTICE_DIFF has LOCK_TIME/SURVIVE_TIME Infinity — code testing 'can you lose' must check round.diff.practice.",
+   "drawRoundHUD's HUNT early-return (1719-1722) means all hider HUD (meters, coach, threat arrows, mode dock, abilities, inspect) is implicitly hider-only; enterPaint/enterInspect also hard-block HUNT (1048/1052). New HUD elements must decide which side of this fork they live on.",
+   "best[] keys are `entry.display+'|'+mode+'|'+diff.label` (2290, 2166, 2223) and settings.lastMode/lastLevel/lastDiff persist from startRound (2120) — renaming modes or level display strings orphans PBs."
+  ],
+  "gotchas": [
+   "drawLevelSelect's subtitle (2388) is hardcoded to 'Practice / Zen' : 'Survive' — for HEAT/HUNT/TA pendingMode it wrongly says 'Survive'. Fix here when polishing.",
+   "SETTINGS is pointer-only: drawSettings sets navList=[] and menuIndex=-1 (2515), and rows/footer live in settingsHits, so keyboard/gamepad users can only Esc/B out — menuConfirm silently does nothing there. A keyboard pass must build navList entries for rows.",
+   "menuHits (753) is dead code — real menu hit-testing moved to navList; don't extend it.",
+   "closeSettings only knows two return targets ('PAUSE'→ROUND/PAUSED, else TITLE). Opening settings from a future screen requires extending settingsReturn, or Done will teleport to TITLE.",
+   "roundState is stale outside ROUND (e.g. stays 'CAUGHT' on the summary screen) and gotoTitle()/finishRound never null `round` — __aac and drawSummary rely on the stale round; guard any new code with appState==='ROUND' before trusting roundState/round.",
+   "drawSummary can call gotoTitle() during a draw pass (2429 self-heal) — a state transition inside a render function; keep new screens tolerant of appState changing between draw and input.",
+   "Escape in-round is overloaded (874): exits PAINT, else exits INSPECT, else pauses — new modal overlays must slot into this chain or Esc will pause underneath them.",
+   "Keyboard input is swallowed while the DOM #hex input is focused (850) — the paint studio hex field; remember when adding global hotkeys.",
+   "drawInspectOverlay draws scan rings using round.diff.SCAN_R for ALL ufos (1836) — correct today because SCAN_R is per-difficulty uniform, but per-UFO scan radii would silently render wrong here (and in beaconSeen 2196).",
+   "drawThreatArrows projects UFOs with inline math (1878) instead of worldToScreen() — duplicate projection; keep in sync if camera math changes.",
+   "First-run tutorial trigger lives in startPlay() (2064) and flips tutorialSeen immediately — if the player quits before reading, it never auto-shows again; drawHelp is also reachable from TITLE and SETTINGS, and it hijacks navList/menuIndex while open (2583).",
+   "HUNT pause/mute buttons in drawHuntHUD use their own hardcoded coords (1863-1864, left side) while hider HUD uses `edge`-based coords (1778) — two places to touch when moving top-left HUD chrome.",
+   "Toast is a single slot (917) — rapid unlock+bank sequences overwrite each other; a queue is a known polish target.",
+   "frame() checks appState==='ROUND' twice (2594, 2602) because finishRound inside the CAUGHT/TIMEOUT branch flips to SUMMARY mid-frame, after which drawMenu runs that same frame (2607) — preserve this ordering when refactoring the loop.",
+   "Gamepad Start while PAUSED resumes via edge(9) at 838 and ALSO would hit togglePause path if the早 return were removed — the `return` after resumeRound is load-bearing.",
+   "TA abduction is NOT a loss: triggerAbduction branches to respawnTA() before setting CAUGHT (2054) — any new 'on caught' hook must go before that branch or TA never sees it.",
+   "LEVEL_SELECT cards bypass navBtn and push into navList manually (2412) so their selected-state drawing is duplicated (2400-2402) — restyle both places.",
+   "drawRound takes an `alpha` param (1410) that the callsite never passes (2605) — vestigial; don't rely on it."
+  ],
+  "extensionPoints": [
+   "New screen: add an appState string; add a draw branch in drawMenu (2328); add its back-route in menuBack (2313); enter via a navBtn fn anywhere (e.g. drawTitle 2354-2359). Keyboard/gamepad/tap support is free if all interactive elements go through navBtn.",
+   "New round mode: (1) card in drawModeSelect's modes[] (2364-2371) calling route('X') or a custom starter like startDaily (2381); (2) branch in selectLevel (2066) — start directly or fall through to DIFFICULTY_SELECT; (3) mode-specific init block in startRound after generic setup (pattern: HUNT block 2094, TA block 2107); (4) per-tick hook in stepSim (dispatch like `if(round.mode==='HUNT'){stepHunt(dt);return;}` 2238 or post-sim like stepTABeacons 2259); (5) terminal fn cloned from endTimeAttack (2215) — set round.summary with a discriminator flag and appState='SUMMARY'; (6) headline+stat rows branch in drawSummary (2431, 2439); (7) timer-panel variant in drawRoundHUD (1748-1758); (8) export a debug blob in window.__aac (pattern: `ta:` 2651, `hunt:` 2652) so the smoke harness can drive it.",
+   "Camera-lock / zoom features: computeZoom (1372) derives zoomBase from TARGET_VISIBLE_TILES — add per-mode multipliers there or blend a new 0..1 ease like inspectZoomT in updateCamera (1373-1389, the `zt` lerp at 1375); pan caps are chosen at the two clampPan callsites (972 in onPointerMove, 1389 in updateCamera) keyed on ctrlMode — extend both; recenter affordance already exists (drawRoundHUD 1790, RECENTER_SHOW threshold).",
+   "Paint-flow features: mode dock buttons in drawRoundHUD (1770-1776) — add uiBtn + pushMode('id',…) so _hud.modeButtons/tests see them; enter/exit lifecycle fns at 1048-1056 (respect the HUNT/PLAYING guards and the studio-close discipline); coach copy hooks in paintCoach (532) and its two render sites (match-meter line 1739, inspect panel 1849); studio panel itself in drawStudio (1922) + studioRects (1070); keyboard at 866-877, gamepad at 831-834.",
+   "Maps: loadLevels (446) reads maps/levels.json entries {file,name,display}; entry shape is {file,name,display,data,loaded,thumb}; drag-drop injection pattern at 904-916 (validates grid/terrain, injects default spawns, appends to LEVELS, starts Practice) — reuse for downloadable/user maps; drawLevelSelect grid (2386) auto-scales to any LEVELS.length; PB badge via levelBadge (2384) keys on display string; tools/validate-maps.mjs (untracked, repo root) is the validator to keep in sync.",
+   "Progression: finishRound (2275) is the single hider-mode funnel — add score terms/metrics there and mirror in endHunt/endTimeAttack; new metrics accrue in stepSim's metrics block (2252-2257); unlock rules in checkUnlocks (615) + grantUnlock toasts (608); surfacing in drawWardrobe (2526: accent chips, medal chips, Blend Book row) and drawSummary stat rows (2438-2449).",
+   "Pause menu rows: append navBtn calls in drawPause (1908-1917) — keyboard/gamepad free; keep the menuIndex clamp (1917) last.",
+   "Settings rows: use the seg/slider/toggle helpers inside drawSettings (2472-2491) — they auto-register settingsHits and call applySettingsRuntime; add the runtime mapping in applySettingsRuntime (638) and defaults in the settings literal (560) + resetSettings (2521).",
+   "Toasts/banners: showToast (917) for transient text; the spotted-reason panel pattern (round.spottedReason/reasonUntil set at 1289, drawn at 1760) is the template for timed contextual banners; full-screen stingers follow the spottedFlash pattern (set 0.3+ at event, decay in stepSim 2272, draw at 1828).",
+   "Threat/target indicators: drawThreatArrows (1875) — iterate additional threat arrays with the same edge-projection math; the drawInspectOverlay edge-arrow (1842-1847) is the reusable 'point at off-screen thing' snippet.",
+   "Tutorial/how-to: content is the lines[] array in drawHelp (2569-2581); triggers are startPlay first-run (2064), TITLE button (2358), SETTINGS row (2510) — a step-based interactive tutorial should replace the showHelp boolean with its own appState screen per the 'new screen' recipe."
+  ]
+ },
+ {
+  "concern": "PROGRESSION & PERSISTENCE in /workspaces/abduct_a_chameleon/index.html (single classic <script>, ~2674 lines): PROGRESS store + LS keys, SKINS/poses/medals unlock pipeline, Blend Book, Wardrobe UI, per-round stats, summary scoring/bests, daily seed — mapped for extending with XP/challenges, more cosmetics, and map unlocks.",
+  "stateObjects": [
+   {
+    "name": "LS_* localStorage keys",
+    "approxLine": 104,
+    "role": "All persistence. Three independent versioned keys, each saved/loaded whole with try/catch fail-soft.",
+    "fields": "LS_BEST='aac.best.v1' (line 104, per-level/mode/diff PBs), LS_SETTINGS='aac.settings.v1' (line 104), LS_PROGRESS='aac.progress.v1' (line 575, unlocks/stats/blendbook)"
+   },
+   {
+    "name": "PROGRESS",
+    "approxLine": 576,
+    "role": "The single progression store (serialized to LS_PROGRESS). Everything unlockable lives here.",
+    "fields": "unlocks:['default','stand','wave','crouch'] (flat string-id array holding BOTH skin ids and pose ids), equipped:{skin:'default'} (single equip slot), stats:{plays,catches,bestSurvive,hardWin,heatBest}, blendbook:{terrainKey→{logged:bool,bestMq:0..1,biome}}, biomeMedals:{biomeKey→true}"
+   },
+   {
+    "name": "SKINS / SKIN_BY",
+    "approxLine": 579,
+    "role": "Head-accent cosmetic catalog. 5 base entries (default/antenna/shades/crown/halo) + 6 'medal_<biome>' entries pushed in a loop at 594-601. SKIN_BY id-index at 605.",
+    "fields": "{id, name, unlock:(null|string — string is DISPLAY METADATA only, never matched; actual check is hasUnlock(s.id)), hint:'Play 3 rounds', draw:(hx,headR,alpha)=>canvas ops, medal?:true}"
+   },
+   {
+    "name": "POSES / POSE_KEYS / POSE_NAMES / UNLOCKABLE_POSES",
+    "approxLine": 1500,
+    "role": "Pose catalog (1502-1509: stand/armsout/cheer/point/wave/crouch as {L:[ang,len],R:[ang,len],body,waveR?}). UNLOCKABLE_POSES=['armsout','cheer','point'] at line 606; stand/wave/crouch free. player.pose is session-only, never persisted.",
+    "fields": "POSE_KEYS array (1500), POSE_NAMES labels (1501), POSES geometry (1502)"
+   },
+   {
+    "name": "BIOME_MEMBERS / BLENDBOOK_KEYS",
+    "approxLine": 603,
+    "role": "Medal-completion tables. BIOME_MEMBERS inverts BIOME_TERRAINS (line 149) into biome→[terrains]; BLENDBOOK_KEYS = PRESET_ORDER minus void/lava = 14 loggable terrains (604).",
+    "fields": "BIOME_TERRAINS maps only 12 terrains (2 per biome: grass+foliage→greenwood, sand+dirt→dunes, snow+ice→tundra, concrete+metal→downtown, moss+crystal→xeno, mud+water→bog); rock and ash belong to NO biome"
+   },
+   {
+    "name": "best",
+    "approxLine": 653,
+    "role": "PB table (serialized to LS_BEST). Keyed by stable string `entry.display+'|'+mode+'|'+diff.label` (e.g. 'Prototype Meadow (baked)|SURVIVE|HARD').",
+    "fields": "best[key] = {bestScore, bestGrade, plays, bestSurvivalMs (survive mode only), updated:Date.now()}"
+   },
+   {
+    "name": "round.metrics",
+    "approxLine": 2091,
+    "role": "Per-round stat accumulator, reset in startRound, accumulated in stepSim (2252-2257), consumed by finishRound scoring.",
+    "fields": "{survivalMs, blendAccum (∫mq dt), lowDetectMs (C<WELL_HIDDEN_C=0.30), streakBestMs/streakCur (C<STREAK_C=0.35 && maxSusp<ENTER_CHASE=0.85), spottedCount, nearMisses, timeMovingMs, timeStillMs, ghostMs}"
+   },
+   {
+    "name": "round._blendHold",
+    "approxLine": 2092,
+    "role": "Blend Book dwell timer {key,t}, reset per round; requires BLEND_LOG_HOLD=1.0s continuous qualifying blend (constants at line 62: BLEND_LOG_MQ=0.85, BLEND_LOG_HOLD=1.0).",
+    "fields": "{key:terrainKey|null, t:seconds}"
+   },
+   {
+    "name": "round.summary",
+    "approxLine": 2288,
+    "role": "Summary-screen payload. Survive shape at 2288-2289 {outcome,score,grade,survSec,avgBlendPct,streak,near,spotted,ghostSec,isBest,prevBest,t0}; Hunt variant at 2164-2165 adds {hunt:true,caught,total,timeUsed} with blend fields zeroed; TA variant at 2221-2222 adds {ta:true,banked,total}.",
+    "fields": "also mirrored to window.__aac.state.summary (2648)"
+   },
+   {
+    "name": "settings (progression-relevant slice)",
+    "approxLine": 560,
+    "role": "LS_SETTINGS carries lastMode/lastLevel/lastDiff (written at end of startRound, 2120, feeds levelBadge PB lookup) plus tutorialSeen/controlsSeen one-shots.",
+    "fields": "lastMode:'SURVIVE', lastLevel:0, lastDiff:'NORMAL', tutorialSeen, controlsSeen"
+   },
+   {
+    "name": "LEVELS",
+    "approxLine": 192,
+    "role": "Level manifest — the map-unlock extension target. Filled by loadLevels() (446) from maps/levels.json + baked prototype appended (457). NO lock/unlock field exists today; every entry is always selectable.",
+    "fields": "{file, name, display, data, loaded, thumb, usedBaked?, _loading?}"
+   }
+  ],
+  "functions": [
+   {
+    "name": "hasUnlock",
+    "signature": "hasUnlock(id) → bool",
+    "approxLine": 607,
+    "role": "THE unlock check, everywhere: PROGRESS.unlocks.indexOf(id)>=0. Used by wardrobe chips (2530, 2544), cyclePose filter (1511), pose row label (2561)."
+   },
+   {
+    "name": "grantUnlock",
+    "signature": "grantUnlock(id) → bool (true if newly granted)",
+    "approxLine": 608,
+    "role": "THE grant choke point: pushes id into PROGRESS.unlocks, saveProgress(), toast '★ Unlocked: <SKIN_BY[id].name+' skin' || POSE_NAMES[id] || id>', SFX.best(). Idempotent via hasUnlock guard."
+   },
+   {
+    "name": "loadProgress",
+    "signature": "loadProgress() → void",
+    "approxLine": 610,
+    "role": "Parses LS_PROGRESS; Object.assign(PROGRESS,p) then PROGRESS.unlocks=p.unlocks (stored array REPLACES defaults wholesale); back-compat defaults for equipped (611), blendbook/biomeMedals (612). New PROGRESS fields must be defaulted here."
+   },
+   {
+    "name": "saveProgress",
+    "signature": "saveProgress() → void",
+    "approxLine": 613,
+    "role": "JSON.stringify(PROGRESS) → LS_PROGRESS, try/catch."
+   },
+   {
+    "name": "checkUnlocks",
+    "signature": "checkUnlocks() → void",
+    "approxLine": 615,
+    "role": "The entire unlock rulebook (5 lines): plays>=3→'antenna'; bestSurvive>=60→'shades'+'armsout'; hardWin>=1→'crown'+'cheer'; catches>=5→'halo'+'point'; bestSurvive>=100→'cheer'. Called after every round from finishRound (2299), endHunt (2169), endTimeAttack (2226). stats.heatBest is tracked but NEVER read here — dormant hook."
+   },
+   {
+    "name": "updateBlendBook",
+    "signature": "updateBlendBook(dt) → void",
+    "approxLine": 622,
+    "role": "Per-sim-tick (called from stepSim 2257). Gate: terrain in BLENDBOOK_KEYS && player.mq>=0.85 && player.C<0.30 && player.S>=0.9 && round.maxSusp<0.85; dwell 1.0s on same dominantKey via round._blendHold, then logBlend. READ-ONLY on the sim by design."
+   },
+   {
+    "name": "logBlend",
+    "signature": "logBlend(key, mq) → void",
+    "approxLine": 628,
+    "role": "Writes PROGRESS.blendbook[key]={logged:true,bestMq:max,biome:round.biome}; first-time toast '★ <TERRAIN_NAME> blended!'+SFX.best; saveProgress on first/improved; first-time → checkBiomeMedals()."
+   },
+   {
+    "name": "checkBiomeMedals",
+    "signature": "checkBiomeMedals() → void",
+    "approxLine": 635,
+    "role": "For each biome in BIOME_MEMBERS: if every member terrain logged → PROGRESS.biomeMedals[b]=true + grantUnlock('medal_'+b) (medal skins are the only case where s.unlock===s.id)."
+   },
+   {
+    "name": "cyclePose",
+    "signature": "cyclePose(d) → void",
+    "approxLine": 1511,
+    "role": "Filters POSE_KEYS by (not in UNLOCKABLE_POSES || hasUnlock), cycles player.pose, toast. Bound to BracketLeft/BracketRight/KeyR (869-870) and the 🕺 HUD button (1776)."
+   },
+   {
+    "name": "drawHumanoid (skin hook)",
+    "signature": "drawHumanoid(x,y,facing,css,conceal,opts{skin,...})",
+    "approxLine": 1577,
+    "role": "Cosmetic render point: `if(o.skin && o.skin!=='default'){ SKIN_BY[o.skin].draw(hx,headR,eyeA*0.85) }` — accent alpha tied to eyeA so cosmetics fade with concealment. Player passes skin:PROGRESS.equipped.skin from drawChameleon (1584); wardrobe preview passes it at 2528."
+   },
+   {
+    "name": "startRound",
+    "signature": "startRound(entry, mode, diff, fixedSeed) → void",
+    "approxLine": 2072,
+    "role": "Resets round.metrics (2091) and round._blendHold (2092); DAILY re-derives dailySeed() when fixedSeed==null (2073) so retry can't reroll; seeds rng=mulberry32(seed) (2083); persists lastMode/lastLevel/lastDiff (2120)."
+   },
+   {
+    "name": "finishRound",
+    "signature": "finishRound(outcome:'WIN'|'LOSE') → void",
+    "approxLine": 2275,
+    "role": "Survive/Heat/Daily scoring: score = survSec*10 + round(avgBlend*500) + round(lowDetectSec*6) + round(streakSec*8) + nearMisses*150 − spottedCount*40 + (win? 300+diffIndex*200 : 0), floor 0 (2280-2283). Grade from perf=0.6*survRatio+0.4*quality vs GRADE thresholds S:0.92/A:0.80/B:0.66/C:0.50/D:0.34 (line 103). Non-practice: best[display|mode|diffLabel] update + saveBest (2290-2294). Stats: plays++, bestSurvive=max, hardWin++ if WIN&&HARD&&!practice, heatBest=max if heat (2296-2298); saveProgress(); checkUnlocks() (2299); appState='SUMMARY'."
+   },
+   {
+    "name": "endHunt",
+    "signature": "endHunt(win) → void",
+    "approxLine": 2156,
+    "role": "Hunt scoring: score=max(0, caught*200 + (win? timeLeft*5:0) − missed*30); grade from perf=0.7*ratio+0.3*(1−timeUsed/HUNT_TIME). best key '<display>|HUNT|<diff>' (2166-2168). Stats: plays++, catches+=caught (feeds 'halo'/'point' unlock) (2169)."
+   },
+   {
+    "name": "endTimeAttack",
+    "signature": "endTimeAttack(win) → void",
+    "approxLine": 2215,
+    "role": "TA scoring: score=max(0, banked*300 + (win? round(timeLeft*10):0)); perf=0.6*ratio+0.4*(tl/TA_TIME). best key '<display>|TA|<diff>' (2223-2225). Stats: only plays++ (2226)."
+   },
+   {
+    "name": "dailySeed",
+    "signature": "dailySeed() → uint32",
+    "approxLine": 2380,
+    "role": "Local-date YYYYMMDD>>>0. Deterministic per calendar day per timezone."
+   },
+   {
+    "name": "startDaily",
+    "signature": "startDaily() → void",
+    "approxLine": 2381,
+    "role": "Level = pool[seed % pool.length] where pool=LEVELS minus last entry (excludes baked prototype); startRound(lv,'DAILY',DIFF.NORMAL,seed)."
+   },
+   {
+    "name": "levelBadge",
+    "signature": "levelBadge(entry) → string",
+    "approxLine": 2384,
+    "role": "'PB <score> (<grade>)' from best[display|pendingMode|(PRACTICE||settings.lastDiff)]; suppressed if entry.usedBaked. Rendered on LEVEL_SELECT cards (2411)."
+   },
+   {
+    "name": "drawSummary",
+    "signature": "drawSummary() → void",
+    "approxLine": 2429,
+    "role": "Summary screen: outcome banner, grade stamp, mode-specific stat rows (TA 2439 / Hunt 2440 / Survive 2442-2448: Survived, Avg blend, Time as ghost, Longest streak, Near misses, Times spotted, Score), '★ NEW BEST!' or 'Best N (+delta)' if !practice (2450-2451), Retry/Change Level/Menu buttons (DAILY is fixedMode: no level re-pick, 2453-2456)."
+   },
+   {
+    "name": "drawWardrobe",
+    "signature": "drawWardrobe() → void",
+    "approxLine": 2526,
+    "role": "WARDROBE screen: live humanoid preview with equipped skin (2528); chip(s,x,y,w) closure (2530-2537) renders lock state (unlock===null||hasUnlock(s.id)), equipped highlight, and pushes navList tap → {PROGRESS.equipped.skin=s.id; saveProgress()}; HEAD ACCENTS row = SKINS.filter(!medal) (2540); BIOME MEDALS 'n/6' row = SKINS.filter(medal) (2547-2552); BLEND BOOK 'n/14' row of terrain swatches with bestMq% stamped on logged pages (2554-2559); poses shown as TEXT ONLY with 🔒 per locked pose (2561) — no pose tap targets."
+   },
+   {
+    "name": "loadPersist / saveBest / saveSettings",
+    "signature": "loadPersist(); saveBest(); saveSettings()",
+    "approxLine": 2618,
+    "role": "Settings+best load (2618-2621); writers at 2622-2623. loadProgress is separate, called from boot() at 2629."
+   },
+   {
+    "name": "boot",
+    "signature": "boot() → void",
+    "approxLine": 2625,
+    "role": "Startup order: buildGlows → loadPersist() + loadProgress() (2629) → resize → loadLevels().then(appState='TITLE') → rAF(frame)."
+   },
+   {
+    "name": "window.__aac state hook",
+    "signature": "window.__aac.state getter",
+    "approxLine": 2641,
+    "role": "Headless-test hook; progression slice at 2662: progress:{blendbook, biomeMedals, unlocks}; also summary (2648), pose (2650), snapCount/ghostMs (2660). The jsdom smoke harness depends on this shape."
+   },
+   {
+    "name": "showToast",
+    "signature": "showToast(t) → void",
+    "approxLine": 917,
+    "role": "2.4s toast used for every unlock/log event."
+   }
+  ],
+  "flows": [
+   "STAT-BASED SKIN/POSE UNLOCK: round ends → finishRound('WIN'|'LOSE') (2275) [or endHunt 2156 / endTimeAttack 2215] → PROGRESS.stats mutated (plays++ always; bestSurvive/hardWin at 2296-2297; catches in endHunt 2169) → saveProgress() → checkUnlocks() (615) compares stats to hardcoded thresholds → grantUnlock(id) (608) pushes id to PROGRESS.unlocks + saveProgress + toast '★ Unlocked' + SFX.best → next drawWardrobe() (2526) shows chip unlocked via hasUnlock(s.id); next cyclePose (1511) includes the pose.",
+   "BLEND BOOK → MEDAL: frame() (2588) → stepSim(DT_FIXED) (2229) → updateBlendBook(dt) (2257→622) → gate (terrain in BLENDBOOK_KEYS && mq>=BLEND_LOG_MQ 0.85 && C<WELL_HIDDEN_C 0.30 && S>=0.9 && round.maxSusp<ENTER_CHASE 0.85) → round._blendHold.t accumulates; t>=BLEND_LOG_HOLD 1.0s → logBlend(key, mq) (628) → blendbook[key]={logged:true,bestMq} + first-time toast/SFX + saveProgress → checkBiomeMedals() (635) → all BIOME_MEMBERS[b] logged → biomeMedals[b]=true + grantUnlock('medal_'+b) → medal chip lights in Wardrobe (2547-2552) and Blend Book swatch shows bestMq% (2559).",
+   "PB / BEST SCORE: finishRound (2275) computes score+grade → if !round.diff.practice: key=display+'|'+mode+'|'+diff.label (2290) → b=best[key]||{bestScore:0,...}; summary.prevBest=b.bestScore; summary.isBest=score>b.bestScore; b.plays++; update bestScore/bestGrade/bestSurvivalMs/updated → best[key]=b; saveBest() (2623 → LS_BEST); isBest→SFX.best → appState='SUMMARY' → drawSummary (2429) renders '★ NEW BEST!' (2450) → later LEVEL_SELECT card shows levelBadge PB (2384/2411).",
+   "DAILY: MODE_SELECT 'Daily Challenge' (2368) → startDaily() (2381): seed=dailySeed() (2380, local YYYYMMDD) → level=pool[seed%pool.length] (pool excludes baked last entry) → startRound(lv,'DAILY',DIFF.NORMAL,seed) → rng=mulberry32(seed) (2083); seedAmbient() AFTER entity spawns (2117) keeps run reproducible → summary Retry calls startRound(entry,'DAILY',diff) with no seed but line 2073 re-derives dailySeed() → same-day retry = identical map+seed; PB key '<display>|DAILY|NORMAL'.",
+   "WARDROBE EQUIP: TITLE '👕 Wardrobe' navBtn (2356) → appState='WARDROBE' → drawMenu (2336) → drawWardrobe each frame rebuilds navList → tap chip (handleMenuTap 2320) → fn: PROGRESS.equipped.skin=s.id; saveProgress(); SFX.ui (2537) → drawChameleon passes skin:PROGRESS.equipped.skin (1584) → drawHumanoid draws SKIN_BY[skin].draw(hx,headR,eyeA*0.85) (1577), fading with concealment → back: navBtn (2563) or menuBack (2315) → TITLE.",
+   "POSE USE: keydown BracketLeft/BracketRight/KeyR (869-870) or HUD 🕺 (1776) → cyclePose(d) (1511) filters POSE_KEYS by UNLOCKABLE_POSES∖unlocks → player.pose set (session-only, not saved) → drawHumanoid geometry from POSES[o.pose] (1525); Wardrobe merely lists poses with 🔒 markers (2561).",
+   "PERSISTENCE LIFECYCLE: boot() (2625) → loadPersist() (2618: settings→applySettingsRuntime, best) + loadProgress() (610: merge + back-compat defaults) → gameplay writes via saveProgress (grantUnlock 608, logBlend 633, equip 2537, end-of-round 2299/2169/2226), saveBest (2294/2168/2225), saveSettings (startRound 2120, settings screen) → all three try/catch no-throw.",
+   "PER-ROUND STAT ACCUMULATION: startRound zeroes round.metrics (2091) + _blendHold (2092) → stepSim per fixed tick (2252-2257): survivalMs, blendAccum+=mq*dt, lowDetectMs (C<0.30), ghostMs (conceal>=GHOST_C), streak windows (C<0.35 && maxSusp<0.85), moving/still split; spottedCount/nearMisses set in UFO logic (1286-1289) → consumed once by finishRound."
+  ],
+  "invariants": [
+   "window.__aac.state must keep its shape — especially progress:{blendbook,biomeMedals,unlocks} (2662), summary (2648), pose (2650) — the jsdom smoke harness (see MEMORY: how-to-test-the-game) reads it; the file must stay a classic <script> (no modules).",
+   "updateBlendBook/logBlend are READ-ONLY on the sim (comment at 621): progression code called from stepSim must never mutate player/round physics or camo state, or determinism and tests break.",
+   "Seeded-RNG order: gameplay entities consume rng before seedAmbient() (2117) — any new progression code must NOT consume `rng` during startRound or per-tick, or DAILY reproducibility breaks (use non-seeded Math.random or pure derivations instead).",
+   "DAILY always re-derives dailySeed() inside startRound when fixedSeed==null (2073) — retry can never reroll; keep this if adding daily streaks/rewards.",
+   "Cosmetics must never break camo: skin draw alpha is tied to eyeA*0.85 (1577) so accents fade with concealment — any new cosmetic slot must inherit this fade.",
+   "grantUnlock is idempotent (hasUnlock guard) and checkUnlocks may be called after every round with no double-grant/toast spam — keep new unlock rules threshold-style (monotonic stats), or guard event-style grants yourself.",
+   "All localStorage IO stays inside try/catch (works under file:// and blocked-storage contexts); a save failure must never throw into the frame loop.",
+   "best[] keys are the stable string `entry.display+'|'+MODE+'|'+DIFF.label` — renaming a level display or diff label silently orphans PBs; practice rounds must never write best[] (guard at 2290, drawSummary guard at 2450).",
+   "loadProgress back-compat pattern: after Object.assign, every newer PROGRESS field needs an explicit default (see 611-612); PROGRESS.unlocks is REPLACED by the stored array, so any new default-unlocked id must be migrated in loadProgress, not just added to the literal at 576.",
+   "checkUnlocks/grantUnlock run before appState='SUMMARY' — unlock toasts render over the summary screen via drawToast (2609); keep grant calls before that state switch so the toast timing works."
+  ],
+  "gotchas": [
+   "SKINS[].unlock strings ('plays3','survive60','hardWin','hunt5') are DECORATIVE — nothing ever matches them. The real system: checkUnlocks grants the SKIN'S id ('antenna','shades',...) and UI checks hasUnlock(s.id); `unlock:null` merely means 'always unlocked'. Only medal skins have unlock===id. A new skin added to SKINS with an `unlock` string does NOTHING until you also wire a grantUnlock(skin.id) call.",
+   "BIOME_TERRAINS (149) covers only 12 of the 14 BLENDBOOK_KEYS — 'rock' and 'ash' map to no biome, so each biome medal actually requires just 2 terrains despite the 'Blend every X terrain' hint, and rock/ash only affect the 14/14 Blend Book counter, never a medal.",
+   "PROGRESS.stats.heatBest is written (2298) but never read by checkUnlocks — a dormant unlock hook; also endHunt line 2169 contains a no-op `heatBest=Math.max(heatBest||0,0)`.",
+   "'cheer' has two grant paths (hardWin>=1 at 618 AND bestSurvive>=100 at 620); hunt catches only accrue via endHunt (2169) — Survive-mode rounds never touch stats.catches.",
+   "Hunt and TA rounds do NOT update bestSurvive/hardWin (only plays/catches), so playing only those modes can never unlock shades/armsout/crown/cheer.",
+   "player.pose and poseIdx are session state — the equipped pose is not persisted (only equipped.skin is); startRound doesn't reset pose, so it carries across rounds but not reloads.",
+   "fetchLevelData falls back to BAKED_MAP on fetch failure and sets entry.usedBaked (467): levelBadge hides the PB badge then (2384), but finishRound still WRITES best[] under the original display key — PBs earned on a fallback map pollute the real level's key.",
+   "drawWardrobe rows are single-line flex: chip width Math.min(52,(vpW-40)/accents.length) (2542) — adding many skins shrinks chips toward unusable; adding a 7th biome breaks the hardcoded '/ 6' label (2550) and mcw divisor 6 (2551); Blend Book similarly hardcodes '/ 14' (2554) and single-row layout.",
+   "grantUnlock's toast label falls back to POSE_NAMES[id]||id (609) — non-skin, non-pose unlock ids (e.g. future map ids) will toast the raw id string unless you extend that lookup.",
+   "resetSettings (2521) resets only settings — there is NO reset path for PROGRESS or best anywhere in the UI (manual localStorage.removeItem only).",
+   "drawSummary reads round.diff.practice and round.entry/mode for buttons (2450-2456) — summary rendering depends on `round` still being alive; don't null it on finalize.",
+   "menuBack (2313-2319) special-cases WARDROBE with an early return BEFORE the state-machine chain — new screens need their own early-return clause there.",
+   "dailySeed uses LOCAL date (2380) — daily rolls over at local midnight, differs across timezones; fine offline, matters if multiplayer/leaderboards come.",
+   "checkUnlocks thresholds use PROGRESS.stats which was loaded wholesale from storage — a hand-edited/corrupt stats object (e.g. missing fields) is only protected by `||0` at some sites (hardWin, heatBest, bestSurvive) but bare `st.plays`/`st.catches` at 616/619 would be undefined→false, silently never unlocking."
+  ],
+  "extensionPoints": [
+   "XP SYSTEM: add PROGRESS.xp/level to the literal (576) + default in loadProgress (after 612). Award XP where score is finalized — finishRound right after line 2295 ('progression stats' block), endHunt after 2169, endTimeAttack after 2226 — e.g. xp += Math.round(score/10) + firstClearBonus. Show gain in drawSummary (insert a stat row before the isBest block at 2450) and a level bar in drawWardrobe header (~2528). Expose in __aac progress object (2662) so the smoke harness can assert it.",
+   "CHALLENGE/QUEST UNLOCKS: model on the Blend Book. Add PROGRESS.challenges={id:{done,progress}}; write a checkChallenges(summaryOrEvent) called from the same three end-of-round sites as checkUnlocks (2299/2169/2226) for round-shaped goals ('win NORMAL with 0 spotted' — read round.summary/round.metrics there), and from logBlend (628) / triggerAbduction / huntPulse for event-shaped goals. Grant rewards through grantUnlock so toast+save+idempotency come free; extend the label lookup at 609 for new reward kinds.",
+   "MORE COSMETICS (same slot): push entries into SKINS (579-601) with draw:(hx,headR,alpha); wire the grant as a new threshold line in checkUnlocks (615-620) or a grantUnlock call at the triggering event. Wardrobe HEAD ACCENTS row auto-includes them (2540-2544) but convert that row to a wrapping grid once count exceeds ~8 (chip() at 2530 already takes x,y,w — just compute multi-row positions like the Blend Book loop at 2556).",
+   "NEW EQUIP SLOTS (trails, footstep FX, body pattern): extend PROGRESS.equipped (add defaults in loadProgress line 611, e.g. equipped.trail='none'); thread through drawChameleon opts (1584) into drawHumanoid — add a second hook next to the skin hook (1577) or, for trails, emit in updateChameleonAnim (1514)/maybeFootstep; add a new chip section in drawWardrobe reusing the chip() closure (2530) with a slot parameter so tap sets equipped[slot]. Keep the eyeA-fade rule.",
+   "MAP UNLOCKS: add `unlock:'<id>'` per entry in maps/levels.json (parsed at 453 — carry the field into the LEVELS entry) with baked prototype always free (457). Gate in drawLevelSelect (2398-2413): if(e.unlock && !hasUnlock(e.unlock)) draw the card dimmed with a 🔒 + hint and SKIP navList.push (2412); also guard selectLevel (2066) and exclude locked levels from startDaily's pool (2382) or dailies can pick a locked map. Grant via grantUnlock(e.unlock) from checkUnlocks/challenges (e.g. 'win NORMAL on the previous map' — read best[] keys, which already encode level+mode+diff). Extend grantUnlock's toast label (609) with a LEVEL name lookup.",
+   "MORE POSES: add geometry to POSES (1502), label to POSE_NAMES (1501), key to POSE_KEYS (1500), id to UNLOCKABLE_POSES (606), grant line in checkUnlocks. cyclePose (1511) and the wardrobe lock row (2561) pick them up automatically. To make poses equippable/persistent, add PROGRESS.equipped.pose and apply it in startRound (~2089).",
+   "MORE BIOMES/TERRAINS FOR MEDALS: BIOME_MEMBERS/BLENDBOOK_KEYS derive automatically from BIOME_TERRAINS (149) and PRESET_ORDER (129), and the medal-skin loop (594) derives from BIOME_LABEL (593) — but you must also fix the hardcoded wardrobe labels '/ 6' (2550), divisor 6 (2551), '/ 14' (2554). Consider mapping the orphaned 'rock'/'ash' terrains into biomes to make medals honest.",
+   "DAILY STREAKS/REWARDS: add PROGRESS.daily={lastDay,streak} defaulted in loadProgress; in finishRound, inside the !practice branch (2290), if(round.mode==='DAILY') compare dailySeed() to lastDay, bump streak, grantUnlock streak cosmetics. dailySeed (2380) is the canonical day key; DAILY PB already isolated under '<display>|DAILY|NORMAL'.",
+   "NEW TRACKED STATS: add fields to round.metrics init (2091), accumulate in the stepSim block (2252-2257) or UFO events (1286-1289), fold into PROGRESS.stats in finishRound (2295-2298) with `||0` back-compat, surface in drawSummary stat rows (2442-2448) and __aac (2660-2662).",
+   "SCHEMA MIGRATION: if PROGRESS shape changes incompatibly, bump LS_PROGRESS to 'aac.progress.v2' and read/upgrade the v1 blob inside loadProgress (610) — the versioned-key convention is already established (aac.best.v1/aac.settings.v1/aac.progress.v1)."
+  ]
+ },
+ {
+  "concern": "MAPS & TERRAIN in /workspaces/abduct_a_chameleon/index.html (single classic <script>, ~2674 lines) + /workspaces/abduct_a_chameleon/tools/generate-levels.mjs — map loading/fallback, scanner-map format, terrain palette/texture baking, cover/objects, biomes, camo sampling (terrainReference/tones), spawns per mode, drag-drop custom maps; groundwork for adding bigger hand-crafted maps.",
+  "stateObjects": [
+   {
+    "name": "TERRAIN_HEX / TERRAIN_NAME / PRESET_ORDER / TERRAIN_RGB",
+    "approxLine": 122,
+    "role": "THE terrain palette. 16 keys: void grass dirt water rock concrete foliage metal sand snow ice mud moss lava ash crystal. TERRAIN_RGB is filled from TERRAIN_HEX in boot() (line 2626) and is the ground truth for all camo math. PRESET_ORDER (129) drives the 16 paint-preset swatches AND (filtered) the Blend Book.",
+    "fields": "TERRAIN_HEX {key:'#rrggbb'}, TERRAIN_NAME {key:label}, PRESET_ORDER [16 keys], TERRAIN_RGB {key:{r,g,b}}"
+   },
+   {
+    "name": "MOVE_MULT / ICE_MOMENTUM_TAU",
+    "approxLine": 36,
+    "role": "Per-terrain movement multipliers used by movePlayer (998): water 0.55, ice 1.10 (+momentum lerp), lava 0.80, void 0.0, _default 1.0.",
+    "fields": "{water,ice,lava,void,_default}"
+   },
+   {
+    "name": "COVER_MAX / COVER_COLOR / COVER_TRUNK / MOVE_BLOCK",
+    "approxLine": 49,
+    "role": "Cover-object tables. COVER_MAX (49) = max concealment bonus per type: wall .85, boulder .75, alien_pod .72, dead_tree .68, tree .66, crate .62, barrel .60, ice_spike .55, cactus .50. COVER_COLOR (95) draw colors. MOVE_BLOCK (100) = {wall:true} — ONLY walls (plus void terrain) block movement; ALL cover types block line-of-sight.",
+    "fields": "9 cover types: tree, dead_tree, boulder, ice_spike, crate, barrel, cactus, wall, alien_pod"
+   },
+   {
+    "name": "BIOME / BIOME_TERRAINS / BIOME_LABEL / BIOME_MEMBERS / BIOME_DRONE",
+    "approxLine": 141,
+    "role": "Per-map mood. BIOME (141) has 6 entries (greenwood/dunes/tundra/downtown/xeno/bog) each {skyTop, skyBottom, moon, grade, ambCount, drifter:{spr,r,vx,vy,sway,drift,tw,a}}. BIOME_TERRAINS (149) maps terrain→biome (used by biomeOf fallback AND inverted at 603 into BIOME_MEMBERS for biome-medal completion). BIOME_LABEL (593) feeds medal skins; BIOME_DRONE (727) per-biome audio drone Hz.",
+    "fields": "biomeKey/biome/skyCache globals at 152; round.biome set in startRound (2085)"
+   },
+   {
+    "name": "LEVELS",
+    "approxLine": 192,
+    "role": "Level manifest array. Entries {file, name, display, data, loaded, thumb} (+_loading, usedBaked). Filled by loadLevels(); baked 'Prototype Meadow' card is ALWAYS appended last (457). Drag-dropped maps are pushed after it (912). settings.lastLevel stores LEVELS.indexOf (2120, write-only).",
+    "fields": "{file:string|null, name, display, data:scanner-map|null, loaded:bool, thumb:canvas|null}"
+   },
+   {
+    "name": "MAP + derived grids",
+    "approxLine": 193,
+    "role": "Active scanner map + derived state rebuilt by rebuildMapDerived(276): mapCols/mapRows/worldW/worldH (194), coverGrid[row][col]→type|null LAST-WINS per cell (195), wallGrid Uint8 (196), coverObjects [{type,col,row,wx,wy}] (197) used for coverBonus + drawing, terrainCanvas/terrainCtx baked world texture (198).",
+    "fields": "scanner-map: {format:'scanner-map', version:1, name, grid:{cols,rows}, terrain:string[rows][cols] (terrain[y][x]), objects:[{x,y,type}], spawns:[{x,y,role:'hider'|'seeker'}]} — tile coords, world = (x+0.5)*TILE, TILE=32 (line 32)"
+   },
+   {
+    "name": "BAKED_MAP",
+    "approxLine": 444,
+    "role": "Offline-guarantee fallback map built by makeBakedMap() (424): 44x32 grass meadow with water/rock/foliage/sand/dirt/moss blobs, 8 hider + 4 corner seeker spawns, seeded mulberry32(20260719). Used whenever fetch of levels.json or a map file fails.",
+    "fields": "same scanner-map shape; name 'Prototype Meadow'"
+   },
+   {
+    "name": "opennessGrid / openCells",
+    "approxLine": 1133,
+    "role": "BFS distance-from-cover/void grid built by buildOpenness() (1134) right after setActiveMap in startRound. openCells = cells with openness>=2, non-void, walkable — the placement pool for UFO patrol waypoints (makePatrol 1151), TA beacons (2109), and Hunt-bot wander targets (2129). Fallback to any-walkable if <8 cells.",
+    "fields": "Int8Array rows; openCells [{col,row,o}]"
+   },
+   {
+    "name": "BLENDBOOK_KEYS / PROGRESS.blendbook / PROGRESS.biomeMedals",
+    "approxLine": 604,
+    "role": "Progression tied to terrain: BLENDBOOK_KEYS = PRESET_ORDER minus void/lava = 14 loggable terrains. updateBlendBook (622) logs a terrain when truly vanished on it; checkBiomeMedals (635) grants medal_<biome> when every BIOME_MEMBERS terrain is logged. New terrains/biomes directly extend this progression surface.",
+    "fields": "blendbook {terrainKey:{logged,bestMq,biome}}, biomeMedals {biomeKey:true}"
+   },
+   {
+    "name": "window.__aac test hook",
+    "approxLine": 2641,
+    "role": "Headless/jsdom diagnostic getter. Exposes terrain: player.ref.dominantKey, tones list, levels: LEVELS.length, playerPos, ta beacon positions, hunt bot states — the smoke harness (per project memory) depends on it.",
+    "fields": "getter returning plain-object snapshot"
+   }
+  ],
+  "functions": [
+   {
+    "name": "terrainAt",
+    "signature": "terrainAt(col,row) -> terrainKey ('void' when OOB/no MAP)",
+    "approxLine": 200,
+    "role": "Grid accessor; MAP.terrain[row][col] || 'void'."
+   },
+   {
+    "name": "coverTypeAt",
+    "signature": "coverTypeAt(col,row) -> type|null",
+    "approxLine": 204,
+    "role": "coverGrid accessor."
+   },
+   {
+    "name": "blocksMove",
+    "signature": "blocksMove(col,row) -> bool",
+    "approxLine": 208,
+    "role": "OOB || terrain==='void' || (cover && MOVE_BLOCK[type]). Movement collision base; circleBlocked(px,py) (986) sweeps it over the 12px player circle."
+   },
+   {
+    "name": "terrainReference",
+    "signature": "terrainReference(px,py) -> {rgb:{r,g,b}, dominantKey, dominantW, tones:[{key,rgb,w}]}",
+    "approxLine": 215,
+    "role": "THE camo sampler + eyedropper source: overlap-area-weighted mean of pure TERRAIN_RGB over the 24x24px player footprint; tones = distinct terrain keys under footprint, heaviest first (single tone on uniform ground — byte-identical match, per Pass 8 invariant)."
+   },
+   {
+    "name": "matchQualityRef / effMatch",
+    "signature": "effMatch(pA,pB,split,ref) -> {mq, mq2}",
+    "approxLine": 239,
+    "role": "Per-tone weighted match (seam tax) + Split Camo two-tone max-per-tone; capped by terrainMatchCap(ref.dominantKey). Shared by sim + studio coach."
+   },
+   {
+    "name": "losClear",
+    "signature": "losClear(ax,ay,bx,by) -> bool",
+    "approxLine": 261,
+    "role": "Segment sampling every TILE*0.5; ANY cover cell blocks sight (271); ink clouds too; void does not block sight."
+   },
+   {
+    "name": "rebuildMapDerived",
+    "signature": "rebuildMapDerived()",
+    "approxLine": 276,
+    "role": "MAP → dims, coverGrid (last object wins per cell), wallGrid, coverObjects list, then buildTerrainCache()."
+   },
+   {
+    "name": "buildTerrainCache",
+    "signature": "buildTerrainCache()",
+    "approxLine": 290,
+    "role": "Bakes the FULL world (worldW x worldH px, OffscreenCanvas if available) once per map: per-tile dithered base fill (shadeHex ±DITHER_AMP=6, hashInt(col,row) deterministic) + terrainMotif + faint grid lines. Blitted culled-to-viewport at 1416-1419."
+   },
+   {
+    "name": "terrainMotif",
+    "signature": "terrainMotif(g,key,x0,y0,base,hh,col,row)",
+    "approxLine": 312,
+    "role": "Per-terrain texture switch (grass/moss blades, foliage blobs, rock facets, concrete seams, ice cracks, lava veins, crystal shards, water waves...). Amplitude clamped so the tile MEAN stays ≈ TERRAIN_HEX (camo-safe). New terrain with no case = plain dither, still valid."
+   },
+   {
+    "name": "biomeOf",
+    "signature": "biomeOf(name) -> biomeKey",
+    "approxLine": 356,
+    "role": "Map name lowercase substring match against BIOME keys ('greenwood' in name → greenwood); fallback: dominant-terrain vote (sampled every 2 cells) through BIOME_TERRAINS."
+   },
+   {
+    "name": "buildSky",
+    "signature": "buildSky()",
+    "approxLine": 362,
+    "role": "Caches viewport-sized sky gradient + moon glow from biome.skyTop/skyBottom/moon into skyCache; called in startRound (2086) and resize (2617)."
+   },
+   {
+    "name": "drawAmbientGround",
+    "signature": "drawAmbientGround(v)",
+    "approxLine": 385,
+    "role": "Terrain-driven emissive pass: lava/crystal/water glow, ice/snow sparkle, alien_pod purple glow (403-405). Capped at AMB_GLOW_MAX=110 sprites."
+   },
+   {
+    "name": "makeBakedMap",
+    "signature": "makeBakedMap() -> scanner-map",
+    "approxLine": 424,
+    "role": "In-code fallback map (offline guarantee)."
+   },
+   {
+    "name": "loadLevels",
+    "signature": "async loadLevels()",
+    "approxLine": 446,
+    "role": "Builds BAKED_MAP, fetch('maps/levels.json'), pushes lazy manifest entries, ALWAYS appends baked card last. Called from boot() (2636); errors swallowed → title still loads on file://."
+   },
+   {
+    "name": "fetchLevelData",
+    "signature": "async fetchLevelData(entry) -> mapData",
+    "approxLine": 459,
+    "role": "Lazy per-map fetch; validates only j.grid && Array.isArray(j.terrain); ANY failure silently returns BAKED_MAP and sets entry.usedBaked."
+   },
+   {
+    "name": "setActiveMap",
+    "signature": "setActiveMap(map)",
+    "approxLine": 469,
+    "role": "MAP=map; rebuildMapDerived()."
+   },
+   {
+    "name": "buildThumb / ensureThumb",
+    "signature": "buildThumb(map) -> canvas (1px/tile)",
+    "approxLine": 472,
+    "role": "Level-select thumbnails: TERRAIN_HEX per cell + dark px per object; ensureThumb (2416) lazy-fetches."
+   },
+   {
+    "name": "terrainMatchCap / terrainConcealCap",
+    "signature": "terrainMatchCap(k); terrainConcealCap(k)",
+    "approxLine": 488,
+    "role": "Terrain gameplay identity: lava caps match 0.35 / conceal 0.40; void 0; water conceal cap 0.90; crystal 0.92; default 0.99. Plus updateStillnessFor (2023): water ripple floor m>=0.35 while moving, ice settles 1.5x slower."
+   },
+   {
+    "name": "coverBonus",
+    "signature": "coverBonus(px,py) -> 0..COVER_MAX[type]",
+    "approxLine": 493,
+    "role": "Best proximity bonus over ALL coverObjects, linear falloff within COVER_RADIUS=44px of object edge (TILE*0.42 circle)."
+   },
+   {
+    "name": "buildOpenness / makePatrol",
+    "signature": "buildOpenness(); makePatrol(rng,fromX,fromY) -> [{x,y}...]",
+    "approxLine": 1134,
+    "role": "Openness BFS + patrol tour: 5-8 random openCells, nearest-neighbor ordered. Consumes the seeded rng stream."
+   },
+   {
+    "name": "drawCover",
+    "signature": "drawCover(o)",
+    "approxLine": 1475,
+    "role": "Per-type shape switch (tree/cactus circle, dead_tree cross, boulder/ice_spike diamond, crate X, barrel/alien_pod ring, wall square). Unknown type draws only a shadow — invisible."
+   },
+   {
+    "name": "computeCamoFor",
+    "signature": "computeCamoFor(a,dt,speed)",
+    "approxLine": 2030,
+    "role": "Per-frame terrain→camo: a.ref=terrainReference; effMatch; onIce/inWater from ref.dominantKey; coverBonus; concealment capped by terrainConcealCap(dominantKey)."
+   },
+   {
+    "name": "selectLevel",
+    "signature": "async selectLevel(entry)",
+    "approxLine": 2066,
+    "role": "fetchLevelData → startRound directly (PRACTICE/HEAT/DAILY) or via DIFFICULTY_SELECT."
+   },
+   {
+    "name": "startRound",
+    "signature": "startRound(entry, mode, diff, fixedSeed)",
+    "approxLine": 2072,
+    "role": "THE map-consuming hub: seeds rng, setActiveMap, buildOpenness, biomeOf, buildSky, picks spawns per mode, places TA beacons, seedAmbient last."
+   },
+   {
+    "name": "respawnTA",
+    "signature": "respawnTA()",
+    "approxLine": 2197,
+    "role": "Time Attack respawn: re-picks a random hider spawn, -12s."
+   },
+   {
+    "name": "startDaily / dailySeed",
+    "signature": "dailySeed() -> yyyymmdd>>>0",
+    "approxLine": 2380,
+    "role": "DAILY level = pool[seed % pool.length] where pool = LEVELS.slice(0, length-1) (excludes the LAST entry, intended to be the baked card)."
+   },
+   {
+    "name": "drop handler",
+    "signature": "addEventListener('drop', e=>{...})",
+    "approxLine": 904,
+    "role": "Drag-drop SCANNER .json → parse, validate grid+terrain, inject default hider (center) / seeker (1,1) spawns if missing, push LEVELS entry, startRound PRACTICE."
+   },
+   {
+    "name": "gen: makeMap",
+    "signature": "makeMap(cfg{name,display,cols,rows,base,patches,cover,buildings,hazards,seed}) -> scanner-map (tools/generate-levels.mjs)",
+    "approxLine": 16,
+    "role": "Generator core: base-fill → blob() organic patches (LCG rngFactory, fuzzy radius ±0.8) → rectangular wall-ring buildings with 1 doorway (47-54) → density-scatter cover rules {type,on:[terrains],density} with per-cell dedupe 'seen' set (56-64) → spawns: open = non-hazard(water/lava/void+cfg.hazards) non-cover interior cells; 5 seekers snapped nearest to 4 corners+center points; 16 random hiders (66-81)."
+   },
+   {
+    "name": "gen: THEMES + main",
+    "signature": "THEMES[6] (line 85); main loop (111-120)",
+    "approxLine": 85,
+    "role": "The 6 shipped maps: greenwood 72x54 seed 11, dunes 74x54 seed 22, tundra 72x54 seed 33, downtown 68x52 seed 44 (+14 buildings), xeno 72x54 seed 55, bog 70x52 seed 66. Writes maps/<name>.json + maps/levels.json manifest [{file,name,display}]."
+   },
+   {
+    "name": "validate-maps (untracked tool)",
+    "signature": "node tools/validate-maps.mjs [files...] (/workspaces/abduct_a_chameleon/tools/validate-maps.mjs)",
+    "approxLine": 1,
+    "role": "Contract checker mirroring the game: format/version, dims, known terrain+cover keys, spawn presence/placement (hider not on water/lava/void/cover), flood-fill reachability >=60% of walkable + no stranded hider spawns. All 6 shipped maps currently pass 100% reachable."
+   }
+  ],
+  "flows": [
+   "BOOT→TITLE: boot() (2625) fills TERRAIN_RGB from TERRAIN_HEX → loadLevels() (446): BAKED_MAP=makeBakedMap(); fetch('maps/levels.json'); for each manifest row push lazy LEVELS entry {file,name,display,data:null,loaded:false}; ALWAYS push baked 'Prototype Meadow' card last (457) → appState='TITLE'. fetch failure (file://) is swallowed → baked-only.",
+   "LEVEL SELECT→ROUND: route(mode) (2378) sets pendingMode → drawLevelSelect (2386) lays adaptive grid over LEVELS, ensureThumb (2416) lazily fetchLevelData+buildThumb (1px/tile) → tap → selectLevel(entry) (2066) awaits fetchLevelData (459; malformed/missing file silently swaps BAKED_MAP + usedBaked flag) → startRound directly (PRACTICE/HEAT/DAILY) or DIFFICULTY_SELECT → startRound(entry,mode,diff).",
+   "startRound MAP WIRING (2072-2121), exact order (rng-stream-critical): (1) seed = fixedSeed (DAILY=dailySeed yyyymmdd) or time^display.length hash; rng=mulberry32(seed) (2083). (2) setActiveMap(entry.data) → rebuildMapDerived (276): dims; per object clamp-check, coverGrid[o.y][o.x]=type (LAST wins), wallGrid for MOVE_BLOCK, coverObjects push with wx=(x+0.5)*TILE; buildTerrainCache (290) bakes full-world texture. (3) buildOpenness() (2084). (4) biomeKey=biomeOf(MAP.name); biome=BIOME[biomeKey]; round.biome (2085). (5) buildSky() (2086). (6) hiders/seekers=MAP.spawns.filter by role (2087); player at random hider via rng (2088). (7) mode HUNT: player at random seeker spawn, N=HIDER_COUNT[diff] bots at hiders[(i*2+1)%len] (2094-2102); else UFO_COUNT UFOs at seekers[i%len], each makeUfo→makePatrol consumes rng (2104-2105). (8) mode TA: beacons from openCells copy, reject <5 tiles from player or <6 tiles from other beacons, 200 tries max (2107-2116). (9) seedAmbient() LAST so drifters never consume the seeded stream (2117 — keeps DAILY reproducible). (10) settings.lastLevel=LEVELS.indexOf(entry) (2120).",
+   "TERRAIN→CAMO each fixed tick: computeCamoFor (2030): ref=terrainReference(x,y) (215: overlap-weighted mean of pure TERRAIN_RGB over 24px footprint + tones[]) → effMatch (246: per-tone weighted, split-camo max-per-tone, capped by terrainMatchCap(dominantKey) — lava 0.35/void 0) → updateStillnessFor (2023: inWater floor m=0.35, onIce tau*1.5) → coverBonus (493: nearest cover within 44px, COVER_MAX falloff) → concealment (502) capped min(0.99, terrainConcealCap(dominantKey)) → conspicuity. Same ref feeds eyedropper/MATCH (applyMatch 1060) and Hunt bots (2143).",
+   "TERRAIN→MOVEMENT: movePlayer (998): mult=MOVE_MULT[ref.dominantKey] (water 0.55, ice 1.10+momentum, lava 0.80); axis-separated integration vs circleBlocked (986) which sweeps blocksMove (208: void terrain or wall cover) over the player circle; clamp to world bounds.",
+   "RENDER each frame: applyScreenTransform → skyCache blit (1412) → world transform → terrainCanvas visible-slab blit (1416-1419, cull via visRect) → drawAmbientGround terrain glows (385: lava/crystal/water/ice/snow + alien_pod) → coverObjects drawn via drawCover (1475) → actors → overlays. Level thumbs separately via buildThumb.",
+   "DRAG-DROP CUSTOM MAP (902-916): window 'drop' → FileReader → JSON.parse → require j.grid && Array.isArray(j.terrain) else toast 'not a SCANNER map export' → if no hider spawn push {cols/2,rows/2,role:'hider'}; if no seeker push {1,1,'seeker'} → push LEVELS entry {file:null, display:name+' — dropped'} → pendingMode='PRACTICE'; startRound(entry,'PRACTICE',PRACTICE_DIFF) → toast.",
+   "DAILY: startDaily (2381): seed=dailySeed(); pool=LEVELS.slice(0,LEVELS.length-1); lv=pool[seed%pool.length]; fetchLevelData→startRound(lv,'DAILY',DIFF.NORMAL,seed) — same map+seed all day, retry cannot reroll (2073).",
+   "GENERATOR (tools/generate-levels.mjs): node tools/generate-levels.mjs → per THEME makeMap: fill base terrain → for each patch rule stamp count blobs at random centers r∈[minR,maxR] with fuzzy edge → buildings: 4-8-tile wall rectangles with one mid-side doorway → for each cover rule scatter type on matching terrain at density with dedupe → open-cell list (interior, non-hazard, uncovered) → 5 seekers nearest corner/center anchor points + 16 random hiders → write maps/<name>.json, then maps/levels.json manifest. Deterministic per seed.",
+   "BLEND BOOK / MEDALS (terrain progression): updateBlendBook (622) per tick: dominantKey ∈ BLENDBOOK_KEYS && mq>=0.85 && C<0.30 && S>=0.9 && maxSusp<0.85 held 1.0s → logBlend(key) (628) → checkBiomeMedals (635): all BIOME_MEMBERS[b] terrains logged → medal_<b> unlock + medal skin (595)."
+  ],
+  "invariants": [
+   "window.__aac hook (2641) must keep working — jsdom smoke harness (project memory) reads appState/terrain/tones/levels/ta/hunt from it; keep classic <script>, no modules, no external fetches beyond maps/.",
+   "Offline fallback must survive: loadLevels/fetchLevelData failures always resolve to BAKED_MAP; boot still reaches TITLE on file:// with no maps/ folder.",
+   "DAILY determinism: rng=mulberry32(seed) is a single consumed-in-order stream. setActiveMap/buildOpenness before spawn picks; makeUfo/makePatrol consume rng; seedAmbient() must remain AFTER all gameplay entity creation (2117). Any new random map-derived placement must use rng() and keep insertion order stable.",
+   "Camo math ground truth is TERRAIN_RGB, not pixels: terrainReference samples pure palette values, so buildTerrainCache/terrainMotif must keep each tile's visual MEAN ≈ TERRAIN_HEX (dither ±6, motif shades clamped ~±22). A new terrain's motif must not shift the mean or paint-to-match will visually lie.",
+   "Per-tone match invariant (Pass 8): on uniform ground tones=[{w:1}] and matchQualityRef === matchQuality byte-identically — calibration and existing tests depend on it.",
+   "Sight/movement split: EVERY cover cell blocks LoS (losClear 271); ONLY MOVE_BLOCK={wall} cover plus void terrain blocks movement (208). Void blocks movement but NOT sight.",
+   "scanner-map contract: {format:'scanner-map', version:1, name, grid:{cols,rows}, terrain[rows][cols] of known keys, objects:[{x,y,type}] known cover types, spawns with >=1 hider and >=1 seeker}. terrain is [y][x]; spawns/objects in tile coords; world = (x+0.5)*TILE, TILE=32.",
+   "Every map must have hider spawns on walkable non-hazard ground (not water/lava/void, not on cover) and the walkable region must be connected (validator threshold: flood-fill from a hider covers >=60% of walkable; no stranded hider spawns) — enforced by tools/validate-maps.mjs, which must be kept in sync with TERRAIN_HEX/COVER/MOVE_BLOCK tables.",
+   "The baked 'Prototype Meadow' card must remain the LAST LEVELS entry: startDaily's pool = LEVELS.slice(0, length-1) relies on it; loadLevels appends it after manifest entries.",
+   "biomeOf resolves by name substring first: shipped map names contain their biome key. round.biome is recorded into Blend Book entries; BIOME/BIOME_TERRAINS/BIOME_LABEL/BIOME_DRONE must stay key-consistent (BIOME_MEMBERS and medal skins are derived from them at boot)."
+  ],
+  "gotchas": [
+   "buildTerrainCache bakes the ENTIRE world at 32px/tile into one canvas (290). Shipped maps ≈74x54 → ~2368x1728 (~16MB RGBA). A 'serious bigger' map at 128x96 → 4096x3072 ≈ 48MB and a slow one-time bake; some mobile GPUs cap canvas at 4096px. Stay ≲110x80 per map or add chunked baking.",
+   "fetchLevelData fails SILENTLY to BAKED_MAP (467) — a typo'd terrain key won't crash but an unparseable/missing file just plays Prototype Meadow with only a suppressed PB badge (levelBadge 2384 checks usedBaked). Always run node tools/validate-maps.mjs after authoring.",
+   "coverGrid is last-object-wins per cell (283) but ALL objects land in coverObjects — two objects on one cell double-draw and double-count for coverBonus. The generator prevents this with its 'seen' set; hand-authored JSON must dedupe (x,y) too.",
+   "Unknown cover type = invisible: drawCover (1475) has no default shape branch (only a shadow), COVER_MAX lookup yields 0, yet it still blocks LoS. Unknown terrain key renders as void-colored fill and camo-samples as void (TERRAIN_RGB[key]||void at 224) — insidious, not fatal.",
+   "LAVA_DOT=2 (56) is a dead constant — lava deals no damage; its identity is match cap 0.35 + conceal cap 0.40 + 0.8x speed. Don't design maps assuming lava hurts.",
+   "Dropping a custom map breaks the 'baked last' assumption: drop pushes AFTER the baked card (912), so startDaily's slice then includes 'prototype' and excludes the dropped map. Harmless today but adding maps must go through maps/levels.json ordering, not runtime pushes.",
+   "openCells requires openness>=2 (two tiles from ANY cover or void, 1147). Dense hand-crafted cover mazes can starve it → <8 cells triggers the any-walkable fallback (1149) and UFO patrols/TA beacons/Hunt wander targets land right next to cover. TA additionally rejects beacons <5 tiles from spawn / <6 tiles apart with only 200 tries (2110) — a cramped map can silently spawn fewer than 5 beacons (win condition guards length, 2212, so it still works).",
+   "HUNT bot spawns use hiders[(i*2+1)%hiders.length] (2101) — with fewer hider spawns than ~2x bot count, bots stack on the same tile. Give big maps 16+ spread hider spawns (generator emits 16).",
+   "Generator treats water as a hazard for SPAWNS only (67) — water is playable (0.55 speed, conceal cap 0.90, ripple stillness floor). Hider spawns in water are flagged by the validator too.",
+   "Seeker spawn anchors in the generator include map center (74) — a seeker spawn can be adjacent to a hider spawn; SPAWN_GRACE=1.5s (70) is the only protection. For hand-crafted maps keep seekers near edges.",
+   "terrain[y][x] vs objects {x,y}: rows-first terrain, x/y-named objects. Easy to transpose when hand-writing JSON; validator catches row-width mismatches only.",
+   "biomeOf substring match runs on the map NAME (356) — 'Downtown Rooftops' works, but a creatively named map ('Neon Alley') falls back to dominant-terrain voting, which for a concrete map still lands downtown; a mixed map may pick an unintended mood. There is no per-map biome field yet.",
+   "settings.lastLevel is a raw LEVELS index (2120) — adding manifest entries reorders it; currently write-only so safe, but don't start reading it for restore without switching to name keys."
+  ],
+  "extensionPoints": [
+   "Add hand-crafted-feel maps WITHOUT touching index.html: author scanner-map JSON files in /workspaces/abduct_a_chameleon/maps/ and insert manifest rows {file,name,display} into maps/levels.json BEFORE the end (game appends baked card itself; keep display format 'Name — subtitle' since UI splits on '—' at 2410). The runtime is data-driven; nothing else needed for a new map on existing terrain/cover/biomes.",
+   "Grow the generator for crafted feel: extend makeMap in /workspaces/abduct_a_chameleon/tools/generate-levels.mjs (line 16). Add stamp primitives alongside blob(): carvePath(points,width,key) for rivers/roads, ring(cx,cy,r,key) for clearings, courtyard(x0,y0,w,h) reusing the building wall+doorway code (47-54) with interior terrain patches, and 'hide pocket' stamps (wall U-shapes whose interior cell carries a non-wall cover like crate/dead_tree → LoS-sealed but enterable). Add per-theme cfg fields and new THEMES entries (85) with larger cols/rows (~96x72 is safe) and hand-placed feature lists evaluated before random patches so seeds stay deterministic.",
+   "Alternatively add a sibling tool (e.g. tools/handcrafted-levels.mjs) that emits fully hand-specified scanner-maps (explicit terrain runs + curated spawns/cover) and MERGES its manifest rows into maps/levels.json ahead of generated ones; wire both into one npm-style script. Validate everything with node tools/validate-maps.mjs (already mirrors the runtime contract incl. reachability).",
+   "Creative hiding spots with existing mechanics: (a) two-tone seam pockets — butt two same-biome terrains (grass|foliage, snow|ice, mud|water edges) in 1-2 tile strips so Split Camo (SPLIT_MIN_W=0.18 second-tone weight, line 60) is rewarded; (b) cover clusters 1 tile apart create LoS shadows without blocking movement (only wall blocks); (c) crystal fields (conceal cap 0.92 + glow) as risk/reward; (d) water moats (speed 0.55 + ripple floor punishes moving, cap 0.90 rewards stillness); (e) walled courtyards with one doorway = beam-proof rooms UFOs must enter to see into.",
+   "New terrain type: add key to TERRAIN_HEX (122) + TERRAIN_NAME (126) + PRESET_ORDER (129) — that alone makes it playable (boot fills TERRAIN_RGB, motif falls back to dither). Optional identity hooks: MOVE_MULT (36), terrainMatchCap/terrainConcealCap (488-492), terrainMotif case (312, keep mean camo-safe), BIOME_TERRAINS (149, also enrolls it in a biome medal via BIOME_MEMBERS), drawAmbientGround glow branch (389) if emissive, footstep freq table (737), and the TERRAIN set in tools/validate-maps.mjs + the comment list in generate-levels.mjs. Note PRESET_ORDER growth affects the 8 keyboard digit shortcuts (1122) and Blend Book size (604).",
+   "New cover type: add to COVER_MAX (49), COVER_COLOR (95), a drawCover shape branch (1475), MOVE_BLOCK (100) only if it should be solid like wall, plus COVER set in validate-maps.mjs and generator cover rules. Remember: every cover type blocks LoS and zeroes openness around it (buildOpenness 1138).",
+   "Per-map explicit biome (for creatively named maps): change startRound line 2085 to biomeKey = MAP.biome || biomeOf(MAP.name); pass biome:'downtown' through in generator output (makeMap return, line 82) and allow the optional field in validate-maps.mjs. New biome moods = new BIOME entry (141) + BIOME_TERRAINS memberships (149) + BIOME_LABEL (593) + BIOME_DRONE (727); medal skin and BIOME_MEMBERS derive automatically (595, 603).",
+   "Curated seeker routes / beacon spots for hand-crafted maps: extend scanner-map with optional patrols:[[{x,y},...]] and beacons:[{x,y}] arrays; in makeUfo (1163) use MAP.patrols?.[i] (tile→world) instead of makePatrol, and in the startRound TA branch (2107) prefer MAP.beacons before the openCells scatter. Keep rng() call count identical on the no-field path to preserve DAILY determinism; add optional-field validation to validate-maps.mjs.",
+   "Bigger-map perf hook: if maps exceed ~110x80, modify buildTerrainCache (290) to bake N x N tile chunks (e.g. 32x32-tile canvases in a 2D array) and swap the single drawImage at 1416-1419 for a visible-chunk loop — everything else (terrainReference, thumbs, openness) already scales by grid math, not pixels.",
+   "Playtest loop without hosting: drag any authored .json onto the window (drop handler 904) for an instant PRACTICE run — it auto-injects missing spawns, so raw terrain sketches are testable early; per project memory there is no browser in-sandbox, so pair this with the jsdom smoke harness via window.__aac for automated checks."
+  ]
+ }
+]
