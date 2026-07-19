@@ -35,6 +35,11 @@ const DT_FIXED = 1/60, MAX_FRAME_DT = 0.05;
 const PLAYER_WALK = 150, PLAYER_CREEP = 55;
 const MOVE_MULT = { water:0.55, ice:1.10, lava:0.80, void:0.0, _default:1.0 };
 const ICE_MOMENTUM_TAU = 0.35;
+// mode-based controls (Move / Paint / Inspect) — analog speed curve + camera pan/inspect tuning
+const IDLE_MAG = 0.12, SNEAK_MAG = 0.55;                       // stick magnitude thresholds → idle / sneak plateau / walk
+const JOY_R = 70, JOY_DEAD = 10, JOY_KNOB = 22, JOY_MARGIN = 16;
+const MOVE_PEEK_MAX = 224, INSPECT_PAN_MAX = 384, PAN_HOME_RATE = 8, RECENTER_SHOW = 40;
+const INSPECT_NUDGE = 45, INSPECT_ZOOM_MUL = 0.78, INSPECT_ZOOM_RATE = 6;
 // camo / concealment
 const D_PERFECT = 12, D_EXPOSED = 220;
 const PAINT_SHIFT_SPEED = 300, SHIFT_DELTA_EPS = 4;
@@ -82,7 +87,8 @@ const DIFF = {
 const PRACTICE_DIFF = Object.assign({}, DIFF.EASY, { LOCK_TIME:Infinity, SURVIVE_TIME:Infinity, label:'PRACTICE', practice:true });
 // rendering
 const TARGET_VISIBLE_TILES = 16, ZOOM_MIN = 1.15, ZOOM_MAX = 2.6;
-const CAM_STIFFNESS = 9.0, CAM_DEADZONE = 6, DITHER_AMP = 6, DPR_CAP = 2;
+const CAM_STIFFNESS = 9.0, CAM_DEADZONE = 6, DITHER_AMP = 6;
+let dprCap = 2, perfBaseCap = 2;   // runtime device-pixel-ratio cap (perf lever); tablets tier to 1.5
 const SHAKE = { beamLock:10, abductStart:14, repaint:2.5, max:14, decay:0.0009 };
 const COL = { bg:'#0E1220', panel:'#151B2C', line:'#2A3350', txt:'#E8EBF5', muted:'#8A93B2',
   amber:'#F2B33D', cyan:'#3FD0E0', danger:'#E0655E', green:'#3AC0A0' };
@@ -407,7 +413,11 @@ function updatePerf(realDt){ _emaDt=_emaDt*0.9+realDt*1000*0.1;
 function applyQuality(){ const base={full:AMB_CAP,reduced:28,minimal:0}[settings.motion]??AMB_CAP;
   AMB_CAP_EFF = qLevel>=1 ? Math.floor(base*0.5) : base;
   if(amb.length>AMB_CAP_EFF) amb.length=AMB_CAP_EFF;
-  if(qLevel>=3 && PCAP>90) PCAP=90; }
+  if(qLevel>=3 && PCAP>90) PCAP=90;
+  // struggling device self-heals: drop DPR at qLevel>=2, but hold it (hysteresis) until a FULL recovery
+  // (qLevel 0) so it can't flip-flop around the boundary and thrash resize().
+  const want = qLevel>=2 ? Math.min(perfBaseCap,1.25) : (qLevel===0 ? perfBaseCap : dprCap);
+  if(want!==dprCap){ dprCap=Math.max(1,want); if(typeof cv!=='undefined' && cv && MAP) resize(); } }
 
 /* ---- map loading (manifest + baked fallback) ---- */
 // RLE-expanded baked map guarantees offline play (no maps/ folder needed)
@@ -551,7 +561,8 @@ let settings={ muted:false, lastMode:'SURVIVE', lastLevel:0, lastDiff:'NORMAL',
   volMaster:0.85, volSfx:1.0, volMusic:0.6,
   motion:'full', screenShake:'full', photosensitive:false,
   colorblind:'off', highContrast:false, textSize:'M',
-  haptics:true, handed:'right', tutorialSeen:false };
+  haptics:true, handed:'right', tutorialSeen:false,
+  perf:'auto', controlsSeen:false };
 let hudScale=1;
 const CB_PAL={
   off:  { hidden:'#3AC0A0', blend:'#E0A030', exposed:'#E0655E', calm:'#3AC0A0', warn:'#E0A030', danger:'#E0655E' },
@@ -635,6 +646,9 @@ function applySettingsRuntime(){
   hcOn = !!settings.highContrast;
   hudScale = {S:0.9, M:1, L:1.15}[settings.textSize] ?? 1;
   if(AC && masterGain) masterGain.gain.value = settings.muted?0:(settings.volMaster*0.9);
+  // PERF: device-pixel-ratio tiering — the biggest lag lever (fillrate scales with dpr²)
+  perfBaseCap = settings.perf==='full'?2 : settings.perf==='smooth'?1.5 : (isCoarse()?1.5:2);   // 'auto'
+  if(perfBaseCap!==dprCap){ dprCap=perfBaseCap; if(typeof cv!=='undefined' && cv && MAP) resize(); }
 }
 let best={};               // localStorage bests
 let rng=mulberry32(1);     // per-round seeded RNG
@@ -735,18 +749,29 @@ function stopAllLoops(){ updateBeamSound(false,0); if(droneOsc){try{droneOsc.sto
 /* ============================ §5 INPUT ============================ */
 const keys = new Set();
 const pointers = new Map();     // pointerId -> {sx,sy,role,startInPanel}
-let joystick = null;            // {id, cx,cy, dx,dy}
-let creepZone = false;
+let joystick = null;            // {id, cx,cy, dx,dy, mag}
 let menuHits = [];              // [{x,y,w,h,fn}] CSS px, rebuilt each menu draw
 let roundHits = [];             // on-screen round buttons
-let input = { mx:0, my:0, creep:false };
+let input = { mx:0, my:0, creep:false, moveMag:0, speed:0, moveTag:'idle' };
 const hexInput = document.getElementById('hex');
+// ===== mode-based controls (Move / Paint / Inspect) =====
+let ctrlMode = 'MOVE';                       // 'MOVE' | 'PAINT' | 'INSPECT' (distinct from round.mode)
+const camPan = { x:0, y:0 };                 // camera peek/free-look offset (world units), added to camFollow
+const camFollow = { x:0, y:0 };              // eased follow anchor; cam = clamp(camFollow + camPan)
+let inspectZoomT = 0;                        // 0..1 ease into seeker-altitude zoom
+let _prevMoveTag = 'idle';
+const _hud = { modeButtons:[], pill:null, recenter:null };
+function clampPan(max){ const m=Math.hypot(camPan.x,camPan.y); if(m>max){ const k=max/m; camPan.x*=k; camPan.y*=k; } }
+function speedFromMag(m){ if(m<IDLE_MAG) return 0; if(m<SNEAK_MAG) return PLAYER_CREEP;
+  return PLAYER_CREEP+(PLAYER_WALK-PLAYER_CREEP)*smoothstep(SNEAK_MAG,1,m); }
 
 function isCoarse(){ return !matchMedia('(pointer:fine)').matches; }
 function screenToWorld(sx,sy){ return { x: cam.x + (sx - vpW/2)/zoom, y: cam.y + (sy - vpH/2)/zoom }; }
+function worldToScreen(wx,wy){ return { x:(wx-cam.x)*zoom+vpW/2, y:(wy-cam.y)*zoom+vpH/2 }; }
 function inRect(sx,sy,r){ return sx>=r.x && sx<=r.x+r.w && sy>=r.y && sy<=r.y+r.h; }
 
 function gatherInput(){
+  if(ctrlMode==='PAINT' && !studio.open) ctrlMode='MOVE';   // heal any close-without-exit desync (never leave the hider rooted)
   let mx=0, my=0;
   if(keys.has('KeyW')||keys.has('ArrowUp')) my-=1;
   if(keys.has('KeyS')||keys.has('ArrowDown')) my+=1;
@@ -754,17 +779,21 @@ function gatherInput(){
   if(keys.has('KeyD')||keys.has('ArrowRight')) mx+=1;
   let creep = keys.has('ShiftLeft')||keys.has('ShiftRight');
   if(joystick){ mx+=joystick.dx; my+=joystick.dy; }
-  if(creepZone) creep=true;
   // gamepad
   const gp=pollGamepad();
   if(gp){ mx+=gp.mx; my+=gp.my; if(gp.creep) creep=true; }
-  const mag=Math.hypot(mx,my); if(mag>1){ mx/=mag; my/=mag; }
+  // direction (unit, magnitude-carrying ≤1) + analog magnitude → speed
+  let mv=Math.hypot(mx,my); let moveMag=Math.min(1,mv); if(mv>1){ mx/=mv; my/=mv; }
   // touch freeze-toggle auto-releases when you steer the joystick
   if(freezeHeld && joystick && (Math.abs(joystick.dx)>0.2||Math.abs(joystick.dy)>0.2)) freezeHeld=false;
   // FREEZE: hold Space (or touch toggle) roots you and settles fast — hider modes only
   player.freeze = (!round||round.mode!=='HUNT') && (keys.has('Space') || freezeHeld) && player.dashT<=0;
-  if(player.freeze){ mx=0; my=0; }
-  input.mx=mx; input.my=my; input.creep=creep;
+  let speed=speedFromMag(moveMag); if(creep) speed=Math.min(speed,PLAYER_CREEP);   // Shift/L2 still forces sneak
+  let tag = speed<=0?'idle':(speed<=PLAYER_CREEP+1?'sneak':'walk');
+  if(player.freeze){ mx=0; my=0; moveMag=0; speed=0; tag='idle'; }
+  if(ctrlMode==='PAINT'){ mx=0; my=0; moveMag=0; speed=0; tag='idle'; }   // rooted while painting
+  if(tag!==_prevMoveTag){ if((tag==='walk'&&_prevMoveTag==='sneak')||(tag==='sneak'&&_prevMoveTag==='walk')) vibe(12); _prevMoveTag=tag; }
+  input.mx=mx; input.my=my; input.creep=creep; input.moveMag=moveMag; input.speed=speed; input.moveTag=tag;
 }
 let freezeHeld=false;
 function useAbility(k){ if(!round||roundState!=='PLAYING'||!player.alive) return;
@@ -799,9 +828,10 @@ function updateGamepadEdges(){
   if(appState==='ROUND' && roundState!=='PAUSED'){
     const hunt = round && round.mode==='HUNT';
     if(hunt){ if(edge(0)||edge(3)) huntPulse(); }                     // HUNT: A/Y scan pulse
-    else { if(edge(3)||edge(2)){ studio.open?closeStudio():openStudio(); }  // Y / X studio
+    else { if(edge(3)||edge(2)) togglePaintMode();                   // Y / X → paint mode
+      if(edge(5)) toggleInspect();                                   // RB → inspect mode
       if(edge(6)||edge(4)) instantMatch();                           // LB match
-      if(edge(1)&&studio.open) closeStudio(); }                      // B close studio
+      if(edge(1)){ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); } }  // B backs out a mode
     if(edge(9)) togglePause();                                       // Start
   } else {
     // menus AND the paused overlay (both use navList)
@@ -833,14 +863,15 @@ addEventListener('keydown', e=>{
       else if(e.code==='KeyM') setMuted(!settings.muted);
       return;
     }
-    if(e.code==='KeyE'||e.code==='KeyP'||e.code==='Tab'){ studio.open?closeStudio():openStudio(); }
+    if(e.code==='KeyE'||e.code==='KeyP'||e.code==='Tab'){ togglePaintMode(); }
+    else if(e.code==='KeyI') toggleInspect();
     else if(e.code==='KeyQ') instantMatch();
     else if(e.code==='BracketLeft') cyclePose(-1);
     else if(e.code==='BracketRight'||e.code==='KeyR') cyclePose(1);
     else if(e.code==='ControlLeft'||e.code==='ControlRight') useAbility('dash');
     else if(e.code==='KeyC') useAbility('decoy');
     else if(e.code==='KeyV') useAbility('ink');
-    else if(e.code==='Escape'){ if(studio.open) closeStudio(); else togglePause(); }
+    else if(e.code==='Escape'){ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); else togglePause(); }
     else if(e.code==='KeyH' && round && round.diff.practice) round.debug=!round.debug;
     else if(e.code==='KeyM') setMuted(!settings.muted);
     else if(studio.open) studioKey(e.code);
@@ -856,7 +887,8 @@ addEventListener('keydown', e=>{
 });
 addEventListener('keyup', e=> keys.delete(e.code));
 // losing OS focus (Alt-Tab, click another window) never delivers keyup — clear held state so you don't walk off unattended
-addEventListener('blur', ()=>{ keys.clear(); joystick=null; creepZone=false; pointers.clear();
+addEventListener('blur', ()=>{ keys.clear(); joystick=null; pointers.clear();
+  ctrlMode='MOVE'; camPan.x=0; camPan.y=0;
   if(appState==='ROUND' && roundState==='PLAYING') togglePause(); });
 
 /* ---- pointer ---- */
@@ -900,26 +932,29 @@ function onPointerDown(e){
   if(studio.open){
     const consumed = studioPointerDown(id,sx,sy,e.pointerType);
     if(consumed) return;
+    // HUD stays live while painting (MODE pill, 👁, MATCH, ⏸, 🔊) so there's always an exit
+    for(const h of roundHits){ if(inRect(sx,sy,h)){ h.fn(); pointers.set(id,{sx,sy,role:'ui'}); return; } }
     const p=studioRects().panel;
     if(!inRect(sx,sy,p)){
-      // outside the panel: drag the pre-sample reticle if enabled, else close
       if(studio.reticleOn){ pointers.set(id,{sx,sy,role:'reticle'}); studioReticleDrag(sx,sy); return; }
-      closeStudio(); return;
+      exitPaint(); return;   // tapping empty space leaves paint → Move
     }
     return;
   }
   // round on-screen buttons first
   for(const h of roundHits){ if(inRect(sx,sy,h)){ h.fn(); pointers.set(id,{sx,sy,role:'ui'}); return; } }
   if(roundState==='CAUGHT'||roundState==='TIMEOUT'){ pointers.set(id,{sx,sy,role:'ui'}); return; }
-  // joystick goes on the movement-hand side (opposite the action buttons); creep on the other
+  // movement-hand side = floating analog stick; other side = camera pan (peek/free-look)
   const joyOnLeft = settings.handed!=='left';   // right-handed → move with left thumb; actions on right
   const onJoySide = joyOnLeft ? (sx < vpW*0.5) : (sx >= vpW*0.5);
   if(onJoySide){
-    joystick={ id, cx:sx, cy:sy, dx:0, dy:0 };
+    const jcx=clamp(sx,JOY_R+JOY_MARGIN,vpW-JOY_R-JOY_MARGIN), jcy=clamp(sy,JOY_R+JOY_MARGIN,vpH-JOY_R-JOY_MARGIN);
+    joystick={ id, cx:jcx, cy:jcy, dx:0, dy:0, mag:0 };
     pointers.set(id,{sx,sy,role:'joystick'});
+  } else if(round.mode!=='HUNT'){                        // right thumb pans the camera (not in HUNT)
+    pointers.set(id,{sx,sy,role:'pan',sx0:sx,sy0:sy,px0:camPan.x,py0:camPan.y});
   } else {
-    creepZone=true;
-    pointers.set(id,{sx,sy,role:'creep'});
+    pointers.set(id,{sx,sy,role:'ui'});
   }
 }
 function onPointerMove(e){
@@ -928,10 +963,13 @@ function onPointerMove(e){
   if((p.role==='sv'||p.role==='hue'||p.role==='reticle') && !studio.open) return;  // studio closed mid-drag
   if(p.role==='joystick' && joystick && joystick.id===e.pointerId){
     let dx=sx-joystick.cx, dy=sy-joystick.cy; const mag=Math.hypot(dx,dy);
-    const dead=8, R=60;
-    if(mag<dead){ joystick.dx=0; joystick.dy=0; }
+    const dead=JOY_DEAD, R=JOY_R;
+    if(mag<dead){ joystick.dx=0; joystick.dy=0; joystick.mag=0; }
     else { const cl=Math.min(mag,R); const nx=dx/mag, ny=dy/mag; const f=(cl-dead)/(R-dead);
-      joystick.dx=nx*f; joystick.dy=ny*f; }
+      joystick.dx=nx*f; joystick.dy=ny*f; joystick.mag=f; }
+  } else if(p.role==='pan'){                              // camera peek (world units, 1:1 grab via zoom)
+    camPan.x=p.px0+(sx-p.sx0)/zoom; camPan.y=p.py0+(sy-p.sy0)/zoom;
+    clampPan(ctrlMode==='INSPECT'?INSPECT_PAN_MAX:MOVE_PEEK_MAX);
   } else if(p.role==='sv'){ studioSV(sx,sy,p.ptype); }
   else if(p.role==='hue'){ studioHue(sx,sy); }
   else if(p.role==='reticle'){ studioReticleDrag(sx,sy); }
@@ -942,9 +980,6 @@ function onPointerUp(e){
   try{ cv.releasePointerCapture(e.pointerId); }catch(_){}
   if(!p) return;
   if(p.role==='joystick' && joystick && joystick.id===e.pointerId){ joystick=null; }  // don't kill a joystick a second finger still owns
-  if(p.role==='creep'){ // creep active only while a right-side pointer is down
-    let anyCreep=false; for(const pp of pointers.values()) if(pp.role==='creep') anyCreep=true;
-    creepZone=anyCreep; }
 }
 
 /* ---- movement + collision (§5.3) ---- */
@@ -968,8 +1003,11 @@ function movePlayer(dt){
     let dx=player.x+player.vx*dt; if(!circleBlocked(dx,player.y)) player.x=dx; else player.dashT=0;
     let dy=player.y+player.vy*dt; if(!circleBlocked(player.x,dy)) player.y=dy; else player.dashT=0;
     player.x=clamp(player.x,PLAYER_RADIUS,worldW-PLAYER_RADIUS); player.y=clamp(player.y,PLAYER_RADIUS,worldH-PLAYER_RADIUS); return; }
-  const base = input.creep ? PLAYER_CREEP : PLAYER_WALK;
-  const desx = input.mx*base*mult, desy = input.my*base*mult;
+  // unit direction × analog curve speed (INSPECT nudges slowly for fine repositioning)
+  const mvp=Math.hypot(input.mx,input.my);
+  const ux=mvp>1e-4?input.mx/mvp:0, uy=mvp>1e-4?input.my/mvp:0;
+  const base=(ctrlMode==='INSPECT')?input.moveMag*INSPECT_NUDGE:input.speed;
+  const desx = ux*base*mult, desy = uy*base*mult;
   if(dominant==='ice'){ const k=Math.min(1, dt/ICE_MOMENTUM_TAU);
     player.vx+=(desx-player.vx)*k; player.vy+=(desy-player.vy)*k; }
   else { player.vx=desx; player.vy=desy; }
@@ -1006,6 +1044,16 @@ function toggleSplit(){ player.splitPaint=!player.splitPaint; SFX.ui();
 function openStudio(){ studio.open=true; studio.state='OPEN_IDLE'; SFX.ui(); syncHexField(); }
 function closeStudio(){ studio.open=false; studio.state='CLOSED'; studio.reticle.active=false; studio.coachHidden=false;
   if(document.activeElement===hexInput) hexInput.blur(); SFX.back(); }
+// ===== control-mode transitions (Move / Paint / Inspect) =====
+function enterPaint(){ if(!round||roundState!=='PLAYING'||round.mode==='HUNT') return;
+  ctrlMode='PAINT'; player.vx=0; player.vy=0; input.mx=0; input.my=0; input.speed=0; input.moveMag=0;
+  joystick=null; freezeHeld=false; camPan.x=0; camPan.y=0; openStudio(); }
+function exitPaint(){ if(studio.open) closeStudio(); ctrlMode='MOVE'; }
+function enterInspect(){ if(!round||roundState!=='PLAYING'||round.mode==='HUNT') return;
+  if(studio.open) closeStudio(); ctrlMode='INSPECT'; joystick=null; camPan.x=0; camPan.y=0; SFX.ui(); }
+function exitInspect(){ ctrlMode='MOVE'; SFX.back(); }
+function togglePaintMode(){ ctrlMode==='PAINT' ? exitPaint() : enterPaint(); }
+function toggleInspect(){ ctrlMode==='INSPECT' ? exitInspect() : enterInspect(); }
 function samplePos(){ return studio.reticleOn && studio.reticle.active ? {x:studio.reticle.x,y:studio.reticle.y} : {x:player.x,y:player.y}; }
 // P8-3: when split camo is on, MATCH samples the two dominant footprint tones into the two paints;
 // otherwise it samples the single footprint mean exactly as before.
@@ -1034,7 +1082,7 @@ function studioRects(){
 function studioLocal(sx,sy){ const r=studioRects(); return { x:(sx-r.panel.x)/r.scale, y:(sy-r.panel.y)/r.scale }; }
 function studioPointerDown(id,sx,sy,ptype){
   const r=studioRects();
-  if(inRect(sx,sy,r.close)){ closeStudio(); return true; }
+  if(inRect(sx,sy,r.close)){ exitPaint(); return true; }   // ✕ returns to Move (not a rooted no-studio limbo)
   if(inRect(sx,sy,r.sv)){ pointers.set(id,{sx,sy,role:'sv',ptype}); studioSV(sx,sy,ptype); return true; }
   if(inRect(sx,sy,r.hue)){ pointers.set(id,{sx,sy,role:'hue'}); studioHue(sx,sy); return true; }
   if(inRect(sx,sy,r.match)){ doMatch(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
@@ -1240,6 +1288,8 @@ function updateUfo(u,dt,D){
   if(prev!=='CHASE'&&prev!=='BEAM' && (u.state==='CHASE'||u.state==='BEAM')){
     round.metrics.spottedCount++; round.spottedReason=spottedReason(player.mq,player.m,player.S,player.ref.dominantKey);
     round.reasonUntil=nowMs()+2600; SFX.spotted(); addTrauma(TRAUMA.spotted); punchZoom(-0.05,90,420); FX.spottedV=1; spawnShards(player.x,player.y,COL.danger,9); vibe([30,50,30]);
+    // forgiving: a kid caught mid-paint/inspect is popped back to Move with a warning
+    if(ctrlMode!=='MOVE' && !round.diff.practice){ ctrlMode==='PAINT'?exitPaint():exitInspect(); showToast('Spotted — move!'); }
   }
   if((prev==='CHASE'||prev==='SCAN'||prev==='INVESTIGATE') && u.suspicion<EXIT_SUSPECT && u.state==='PATROL') SFX.relief();
 }
@@ -1321,16 +1371,27 @@ function updateBlendSnap(dt){
 /* ============================ CAMERA (lookahead + trauma shake + zoom punch) ============================ */
 function computeZoom(){ zoomBase=clamp(Math.min(vpW,vpH)/(TARGET_VISIBLE_TILES*TILE),ZOOM_MIN,ZOOM_MAX); zoom=zoomBase; }
 function updateCamera(dt){
-  zoom = zoomBase*(1+FX.zoomPunch);
-  // velocity lookahead
-  const lx=clamp(player.vx*CAM_LOOK_K,-CAM_LOOK_MAX,CAM_LOOK_MAX), ly=clamp(player.vy*CAM_LOOK_K,-CAM_LOOK_MAX,CAM_LOOK_MAX);
+  // (1) zoom + inspect ease (pull back to seeker altitude in INSPECT)
+  const zt=ctrlMode==='INSPECT'?1:0; inspectZoomT+=(zt-inspectZoomT)*Math.min(1,dt*INSPECT_ZOOM_RATE);
+  zoom=Math.max(ZOOM_MIN*0.8, zoomBase*(1+FX.zoomPunch)*(1+(INSPECT_ZOOM_MUL-1)*inspectZoomT));
+  // (2) eased follow anchor (velocity lookahead ONLY in MOVE)
+  const lead=ctrlMode==='MOVE'?1:0;
+  const lx=clamp(player.vx*CAM_LOOK_K,-CAM_LOOK_MAX,CAM_LOOK_MAX)*lead, ly=clamp(player.vy*CAM_LOOK_K,-CAM_LOOK_MAX,CAM_LOOK_MAX)*lead;
   FX.camLeadX += (lx-FX.camLeadX)*Math.min(1,dt*CAM_LOOK_SMOOTH); FX.camLeadY += (ly-FX.camLeadY)*Math.min(1,dt*CAM_LOOK_SMOOTH);
   const tx=player.x+FX.camLeadX, ty=player.y+FX.camLeadY;
-  const d=Math.hypot(tx-cam.x, ty-cam.y);
-  if(d>CAM_DEADZONE){ const t=1-Math.exp(-CAM_STIFFNESS*dt); cam.x+=(tx-cam.x)*t; cam.y+=(ty-cam.y)*t; }
+  const d=Math.hypot(tx-camFollow.x, ty-camFollow.y);
+  if(d>CAM_DEADZONE){ const t=1-Math.exp(-CAM_STIFFNESS*dt); camFollow.x+=(tx-camFollow.x)*t; camFollow.y+=(ty-camFollow.y)*t; }
+  // (3) pan: PAINT forces 0; MOVE springs home when no pan finger; INSPECT holds the free-look offset
+  if(ctrlMode==='PAINT'){ camPan.x=0; camPan.y=0; }
+  else if(ctrlMode==='MOVE'){ let panActive=false; for(const pp of pointers.values()){ if(pp.role==='pan'){ panActive=true; break; } }
+    if(!panActive){ const t=1-Math.exp(-PAN_HOME_RATE*dt); camPan.x+=(0-camPan.x)*t; camPan.y+=(0-camPan.y)*t;
+      if(Math.hypot(camPan.x,camPan.y)<0.5){ camPan.x=0; camPan.y=0; } } }
+  clampPan(ctrlMode==='INSPECT'?INSPECT_PAN_MAX:MOVE_PEEK_MAX);
+  // (4) derive the true rendered center (cam) = clamp(follow + pan) — projections read cam only
   const halfW=(vpW/2)/zoom, halfH=(vpH/2)/zoom;
-  cam.x = worldW<=vpW/zoom ? worldW/2 : clamp(cam.x, halfW, worldW-halfW);
-  cam.y = worldH<=vpH/zoom ? worldH/2 : clamp(cam.y, halfH, worldH-halfH);
+  const cx=camFollow.x+camPan.x, cy=camFollow.y+camPan.y;
+  cam.x = worldW<=vpW/zoom ? worldW/2 : clamp(cx, halfW, worldW-halfW);
+  cam.y = worldH<=vpH/zoom ? worldH/2 : clamp(cy, halfH, worldH-halfH);
   // trauma shake (offset only — keeps screenToWorld exact)
   const tr=FX.trauma*FX.trauma;
   shake.x=(Math.random()*2-1)*SHAKE_MAXOFF*tr; shake.y=(Math.random()*2-1)*SHAKE_MAXOFF*tr;
@@ -1352,7 +1413,10 @@ function drawRound(alpha){
   applyWorldTransform();
   const v=visRect(); const vx0=v.x0,vx1=v.x1,vy0=v.y0,vy1=v.y1;
   // 2. terrain
-  if(terrainCanvas) ctx.drawImage(terrainCanvas,0,0);
+  if(terrainCanvas){ // cull to the visible slab (follows the pan automatically via cam→visRect)
+    const sx=Math.max(0,Math.floor(vx0)), sy=Math.max(0,Math.floor(vy0));
+    const sw=Math.min(worldW,Math.ceil(vx1))-sx, sh=Math.min(worldH,Math.ceil(vy1))-sy;
+    if(sw>0&&sh>0) ctx.drawImage(terrainCanvas,sx,sy,sw,sh,sx,sy,sw,sh); }
   // 3. ambient ground emissive (under entities)
   drawAmbientGround(v);
   // 4. footstep ripples
@@ -1698,42 +1762,97 @@ function drawRoundHUD(){
     txt('⚠ '+round.spottedReason, vpW/2, vpH-125, 13, COL.danger, 'center', '600'); ctx.globalAlpha=1; }
   // ---- threat arrows (off-screen hunters) ----
   drawThreatArrows();
-  // ---- on-screen action buttons, laid out inward from the action-hand edge ----
-  const bs=54, right=settings.handed!=='left', edge=14, gap=8;
-  let ax = right ? vpW-edge-bs : edge;           // 🎨
-  uiBtn('🎨', ax, vpH-bs-14, bs, bs, ()=> studio.open?closeStudio():openStudio(), {rad:12, size:22, active:studio.open});
-  ax += right ? -(88+gap) : (bs+gap);            // MATCH (88 wide)
-  uiBtn('MATCH', right?ax:ax, vpH-bs-14, 88, bs, ()=> instantMatch(), {rad:12, size:14, fill:'rgba(63,208,224,0.14)', stroke:COL.cyan, color:COL.cyan});
-  ax += right ? -(52+gap) : (88+gap);            // pose (52 wide, glyph only)
-  uiBtn('🕺', ax, vpH-bs-14, 52, bs, ()=> cyclePose(1), {rad:12, size:18});
+  // ---- MODE dock + action buttons (big 64px, mirrored to handedness) ----
+  _hud.modeButtons=[]; _hud.pill=null; _hud.recenter=null;
+  const right=settings.handed!=='left', edge=14, gap=10, BS=Math.round(64*Math.min(1.15,hudScale<1?1:hudScale));
+  const ay=vpH-BS-14; let ax = right ? vpW-edge-BS : edge;
+  const pushMode=(id,x,w)=>_hud.modeButtons.push({id,x,y:ay,w,h:BS});
+  uiBtn('🎨', ax, ay, BS, BS, ()=> togglePaintMode(), {rad:14, size:24, active:ctrlMode==='PAINT'}); pushMode('paint',ax,BS);
+  ax += right ? -(BS+gap) : (BS+gap);
+  uiBtn('👁', ax, ay, BS, BS, ()=> toggleInspect(), {rad:14, size:22, active:ctrlMode==='INSPECT'}); pushMode('inspect',ax,BS);
+  ax += right ? -(96+gap) : (BS+gap);
+  uiBtn('MATCH', ax, ay, 96, BS, ()=> instantMatch(), {rad:14, size:15, fill:'rgba(63,208,224,0.16)', stroke:COL.cyan, color:COL.cyan}); pushMode('match',ax,96);
+  ax += right ? -(60+gap) : (96+gap);
+  uiBtn('🕺', ax, ay, 60, BS, ()=> cyclePose(1), {rad:14, size:20}); pushMode('pose',ax,60);
+  txt(POSE_NAMES[player.pose], ax+30, ay-8, 9, COL.muted, 'center', '600');
   uiBtn('⏸', edge, 14, 40, 40, ()=> togglePause(), {rad:9, size:16});
   uiBtn(settings.muted?'🔇':'🔊', edge+46, 14, 40, 40, ()=> setMuted(!settings.muted), {rad:9, size:14});
-  txt(POSE_NAMES[player.pose], ax+26, vpH-bs-20, 9, COL.muted, 'center', '600');
-  // ---- ability bar (vertical column, action-hand side) ----
+  // MODE pill (always visible, always a "get me back to Move" target)
+  { const mc = ctrlMode==='PAINT'?COL.amber:(ctrlMode==='INSPECT'?COL.green:COL.cyan);
+    const label = ctrlMode==='PAINT'?'🎨 PAINT':(ctrlMode==='INSPECT'?'👁 INSPECT':'🕹 MOVE');
+    const pw=Math.round(96*hudScale), ph=Math.round(Math.max(40,40*hudScale)), pxp=edge, pyp=62;
+    ctx.fillStyle='rgba(21,27,44,0.92)'; rr(pxp,pyp,pw,ph,10); ctx.fill();
+    ctx.strokeStyle=mc; ctx.lineWidth=2; rr(pxp,pyp,pw,ph,10); ctx.stroke();
+    txt(label, pxp+pw/2, pyp+ph/2, 12, mc, 'center', '800');
+    _hud.pill={x:pxp,y:pyp,w:pw,h:ph};
+    roundHits.push({x:pxp,y:pyp,w:pw,h:ph,fn:()=>{ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); }}); }
+  // recenter button — only while panned; on the MOVE side (opposite the ability column) so they never overlap
+  if(Math.hypot(camPan.x,camPan.y)>RECENTER_SHOW){ const rc = right?14:vpW-14-56, ry=Math.round(vpH*0.5-28);
+    uiBtn('⌖', rc, ry, 56, 56, ()=>{ camPan.x=0; camPan.y=0; vibe(8); }, {rad:14, size:22}); _hud.recenter={x:rc,y:ry,w:56,h:56}; }
+  // ---- ability bar (vertical column, action-hand side) — greyed outside MOVE ----
+  const gatedAbil = ctrlMode!=='MOVE';
   const abx = right ? vpW-edge-44 : edge; const cdMax={dash:DASH_CD,decoy:DECOY_CD,ink:INK_CD};
-  const aby = vpH-bs-14-14-44*ABILITIES.length-10*(ABILITIES.length-1);
+  const aby = ay-14-44*ABILITIES.length-10*(ABILITIES.length-1);
   ABILITIES.forEach((ab,i)=>{ const y=aby+i*54;
-    const cd = ab.key==='freeze'?0:(player.cd[ab.key]||0), ready=cd<=0;
+    const cd = ab.key==='freeze'?0:(player.cd[ab.key]||0), ready=cd<=0 && !gatedAbil;
     const on = ab.key==='freeze' && player.freeze;
+    ctx.globalAlpha = gatedAbil?0.4:1;
     ctx.fillStyle=on?'rgba(63,208,224,0.28)':(ready?'rgba(21,27,44,0.88)':'rgba(21,27,44,0.5)'); rr(abx,y,44,44,11); ctx.fill();
     ctx.strokeStyle=on?COL.cyan:(ready?COL.line:'#242c44'); ctx.lineWidth=on?2:1; rr(abx,y,44,44,11); ctx.stroke();
     txt(ab.glyph, abx+22, y+21, 17, ready?COL.txt:COL.muted, 'center','700');
-    if(cd>0){ ctx.globalAlpha=0.55; ctx.fillStyle='#05070d'; ctx.beginPath(); ctx.moveTo(abx+22,y+22);
-      ctx.arc(abx+22,y+22,23,-Math.PI/2,-Math.PI/2+TAU*clamp01(cd/(cdMax[ab.key]||1)),false); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1; }
-    roundHits.push({x:abx,y,w:44,h:44,fn:()=>{ if(ab.key==='freeze') freezeHeld=!freezeHeld; else useAbility(ab.key); }});
+    if(cd>0){ ctx.fillStyle='#05070d'; ctx.globalAlpha=(gatedAbil?0.4:1)*0.55; ctx.beginPath(); ctx.moveTo(abx+22,y+22);
+      ctx.arc(abx+22,y+22,23,-Math.PI/2,-Math.PI/2+TAU*clamp01(cd/(cdMax[ab.key]||1)),false); ctx.closePath(); ctx.fill(); }
+    ctx.globalAlpha=1;
+    roundHits.push({x:abx,y,w:44,h:44,fn:()=>{ if(ctrlMode!=='MOVE') return; if(ab.key==='freeze') freezeHeld=!freezeHeld; else useAbility(ab.key); }});
   });
   // debug overlay (practice)
   if(round.debug){ drawDebug(); }
-  // joystick visual
-  if(joystick){ ctx.globalAlpha=0.5; ctx.strokeStyle=COL.amber; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.arc(joystick.cx,joystick.cy,60,0,Math.PI*2); ctx.stroke();
-    ctx.fillStyle=COL.amber; ctx.beginPath(); ctx.arc(joystick.cx+joystick.dx*60, joystick.cy+joystick.dy*60,16,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1; }
+  // seeker's-eye inspect overlay
+  if(inspectZoomT>0.01) drawInspectOverlay();
+  // joystick visual — sneak/walk knob with a magnitude arc
+  if(joystick){ const sneak = input.moveTag!=='walk';
+    const kc = (input.speed>0 && !sneak) ? COL.amber : COL.cyan;
+    ctx.globalAlpha=0.5; ctx.strokeStyle=kc; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(joystick.cx,joystick.cy,JOY_R,0,TAU); ctx.stroke();
+    if(FX_MOTION>0 && joystick.mag>0.02){ ctx.globalAlpha=0.6; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(joystick.cx,joystick.cy,JOY_R,-Math.PI/2,-Math.PI/2+TAU*joystick.mag); ctx.stroke(); }
+    ctx.globalAlpha=0.85; ctx.fillStyle=kc; const kr=sneak?20:24;
+    ctx.beginPath(); ctx.arc(joystick.cx+joystick.dx*JOY_R, joystick.cy+joystick.dy*JOY_R, kr, 0, TAU); ctx.fill();
+    if(input.speed>0) txt(sneak?'SNEAK':'WALK', joystick.cx, joystick.cy-JOY_R-10, 9, kc, 'center','800');
+    ctx.globalAlpha=1; }
   // studio
   if(studio.open) drawStudio();
   // countdown / banners
   if(roundState==='COUNTDOWN'||roundState==='RESUME_COUNTDOWN') drawCountdown();
   if(roundState==='PAUSED') drawPause();
   if(round.spottedFlash>0){ ctx.globalAlpha=round.spottedFlash; txt('SPOTTED!', vpW/2, vpH*0.3, 40, COL.danger, 'center','800'); ctx.globalAlpha=1; }
+}
+// INSPECT: "see yourself as the hunter's ship does" — reach rings + a YOU marker + your live blend
+function drawInspectOverlay(){
+  const a=inspectZoomT; applyScreenTransform();
+  // each ship's scan reach, projected to screen
+  if(round.ufos){ ctx.lineWidth=2; for(const u of round.ufos){ const s=worldToScreen(u.x,u.y);
+    ctx.strokeStyle=PAL.warn; ctx.globalAlpha=0.32*a;
+    ctx.beginPath(); ctx.arc(s.x,s.y,round.diff.SCAN_R*zoom,0,TAU); ctx.stroke(); } ctx.globalAlpha=1; }
+  // YOU marker: pulsing ring if on-screen, else an edge arrow so you never lose yourself
+  const ps=worldToScreen(player.x,player.y), on=ps.x>=0&&ps.x<=vpW&&ps.y>=0&&ps.y<=vpH;
+  if(on){ const pr=22+((FX_MOTION>0&&!settings.photosensitive)?3*Math.sin(gfx.t*6):0);
+    ctx.globalAlpha=0.9; ctx.strokeStyle=COL.cyan; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(ps.x,ps.y,pr,0,TAU); ctx.stroke();
+    txt('YOU', ps.x, ps.y-pr-8, 9, COL.cyan,'center','800'); ctx.globalAlpha=1; }
+  else { const cx=vpW/2, cy=vpH/2, inset=40, ang=Math.atan2(player.y-cam.y, player.x-cam.x);
+    const hw=vpW/2-inset, hh=vpH/2-inset;
+    const t=Math.min(Math.abs(hw/(Math.cos(ang)||1e-6)), Math.abs(hh/(Math.sin(ang)||1e-6)));
+    const ex=cx+Math.cos(ang)*t, ey=cy+Math.sin(ang)*t;
+    ctx.save(); ctx.translate(ex,ey); ctx.rotate(ang); ctx.globalAlpha=0.9; ctx.fillStyle=COL.cyan;
+    ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-8,-10); ctx.lineTo(-8,10); ctx.closePath(); ctx.fill(); ctx.restore(); ctx.globalAlpha=1; }
+  // framing label + your blend readout, top-center
+  const co=paintCoach(), mqn=Math.round(co.mqNow*100), wc=mqn>=85?PAL.hidden:(mqn>=50?PAL.blend:PAL.exposed);
+  ctx.globalAlpha=a; panel(vpW/2-120, 8, 240, 46, 10);
+  txt("👁 SEEKER'S VIEW", vpW/2, 22, 12, COL.green, 'center','800');
+  txt(co.word+'  ·  '+mqn+'%  —  '+(mqn>=85?'you blend!':'still visible'), vpW/2, 42, 13, wc, 'center','700');
+  ctx.globalAlpha=1;
+  // hint to exit
+  txt('drag to look · 👁 or Esc when done', vpW/2, vpH-70, 10, COL.muted, 'center','600');
 }
 function drawHuntHUD(){
   const caught=round.hunterCaught||0, total=round.bots.length;
@@ -1931,13 +2050,14 @@ function crawlPaint(a,dt){ let maxd=0; for(const ch of ['r','g','b']){ const ste
 /* ============================ §8 SESSION / ROUND ============================ */
 let pendingMode='SURVIVE', pendingLevel=null, showHelp=false;
 function triggerAbduction(u){ if(round.finalized||!player.alive) return;
+  if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0;   // reset BEFORE the TA respawn so mode never leaks
   if(round.mode==='TA'){ respawnTA(); return; }   // Time Attack: respawn with a time penalty, not game over
   player.alive=false; round.caught=true; round.caughtBy=u; roundState='CAUGHT'; player.abductT=0;
   addTrauma(TRAUMA.abduct); hitstopMs(110); punchZoom(0.12,200,600); screenFlash(0.85); vibe([80,60,120]); SFX.lose(); tone(180,0.9,'sine',0.34,1500); noise(0.9,0.12,2400); }
 function endRound(win){ if(round.finalized||roundState==='TIMEOUT'||roundState==='CAUGHT') return;
-  if(win){ roundState='TIMEOUT'; round.summaryT=0; SFX.win(); } }
+  if(win){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; roundState='TIMEOUT'; round.summaryT=0; SFX.win(); } }
 function togglePause(){ if(appState!=='ROUND') return;
-  if(roundState==='PLAYING'){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } roundState='PAUSED'; menuIndex=0; SFX.ui(); stopAllLoops(); }
+  if(roundState==='PLAYING'){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; roundState='PAUSED'; menuIndex=0; SFX.ui(); stopAllLoops(); }
   else if(roundState==='PAUSED') resumeRound(); }
 function resumeRound(){ roundState='RESUME_COUNTDOWN'; round.countdown=RESUME_COUNTDOWN; round.lastCount=null; SFX.ui(); }
 function gotoTitle(){ appState='TITLE'; menuIndex=0; showHelp=false; stopAllLoops(); }
@@ -1996,6 +2116,7 @@ function startRound(entry, mode, diff, fixedSeed){
   }
   seedAmbient();   // AFTER gameplay entities — ambient must not consume the seeded RNG stream (keeps DAILY reproducible)
   appState='ROUND'; roundState='COUNTDOWN'; studio.open=false; studio.reticleOn=false;
+  ctrlMode='MOVE'; camFollow.x=cam.x; camFollow.y=cam.y; camPan.x=0; camPan.y=0; inspectZoomT=0; joystick=null;
   settings.lastMode=mode; settings.lastLevel=Math.max(0,LEVELS.indexOf(entry)); settings.lastDiff=diff.label||'NORMAL'; saveSettings();
 }
 
@@ -2115,7 +2236,7 @@ function stepSim(dt){
   }
   if(roundState!=='PLAYING') return;
   if(round.mode==='HUNT'){ stepHunt(dt); return; }
-  const slow=(round.diff.practice && studio.open)?STUDIO_SLOWMO:1; dt*=slow;
+  const slow=(round.diff.practice && (studio.open || ctrlMode==='INSPECT'))?STUDIO_SLOWMO:1; dt*=slow;
   player.prevx=player.x; player.prevy=player.y;
   gatherInput(); movePlayer(dt);
   const sp=Math.hypot(player.x-player.prevx, player.y-player.prevy)/Math.max(dt,1e-6);
@@ -2375,6 +2496,7 @@ function drawSettings(){
   section('Comfort');
   seg('Motion', [{t:'Full',v:'full'},{t:'Reduced',v:'reduced'},{t:'Minimal',v:'minimal'}], settings.motion, v=>settings.motion=v);
   seg('Screen shake', [{t:'Full',v:'full'},{t:'Low',v:'low'},{t:'Off',v:'off'}], settings.screenShake, v=>settings.screenShake=v);
+  seg('Performance', [{t:'Auto',v:'auto'},{t:'Smooth',v:'smooth'},{t:'Full',v:'full'}], settings.perf, v=>settings.perf=v);
   toggle('Photosensitive-safe', settings.photosensitive, v=>settings.photosensitive=v);
   toggle('Haptics (vibration)', settings.haptics, v=>settings.haptics=v);
   section('Accessibility');
@@ -2446,18 +2568,18 @@ function drawHelp(){ ctx.fillStyle='rgba(8,12,25,0.88)'; ctx.fillRect(0,0,vpW,vp
   txt('HOW TO PLAY', cx, y, 24, COL.amber,'center','800'); y+=44;
   const lines=[
     'You are a person, seen from above — paint your body to match the ground.',
-    'UFOs scan for anything that does not match the terrain beneath it.',
+    'UFOs scan from their ships for anything that does not match the terrain.',
     '',
-    '🎨  Open the PAINT STUDIO (E / Tab / 🎨) and paint your body to match',
-    '      the ground. MATCH (Q) instantly samples the terrain under you.',
-    '⏱  HOLD STILL to settle — a moving chameleon always stands out.',
-    '🌳  Hug cover (trees, walls, boulders) to hide even better.',
-    '👽  Watch each UFO’s scan circle + suspicion ring. Green = calm, red = spotted.',
+    '🕹  MOVE: drag the move side — push gently to SNEAK, far to walk.',
+    '      Drag the other side to look around toward the ships.',
+    '🎨  PAINT: tap 🎨 to strike a pose and paint yourself. MATCH samples',
+    '      the ground under you; nudge the color until you read “HIDDEN”.',
+    '👁  INSPECT: tap 👁 to see yourself the way the hunters do — then adjust.',
+    '⏱  HOLD STILL to settle. 🌳 Hug cover to hide even better.',
     '',
-    'Move: WASD / arrows / left-stick / drag left side   ·   Creep: Shift / hold right',
-    'Match now: Q   ·   Studio: E/Tab   ·   Pause: Esc',
+    'Desktop: WASD/arrows move · Shift sneak · E paint · I inspect · Q match · Esc back',
   ];
-  for(const l of lines){ txt(l, cx, y, 14, l.startsWith('🎨')||l.startsWith('⏱')||l.startsWith('🌳')||l.startsWith('👽')?COL.txt:COL.muted, 'center', '500'); y+=26; }
+  for(const l of lines){ txt(l, cx, y, 13.5, /^(🕹|🎨|👁|⏱)/.test(l)?COL.txt:COL.muted, 'center', '500'); y+=26; }
   y+=14; const bw=Math.min(220,vpW-48); navList=[]; menuIndex=0;
   navBtn('Got it', cx-bw/2, y, bw, 46, ()=>{ showHelp=false; }, {size:15, weight:'700'});
 }
@@ -2489,7 +2611,7 @@ function frame(now){
 }
 
 /* ============================ §12 BOOT ============================ */
-function resize(){ dpr=Math.min(DPR_CAP, window.devicePixelRatio||1); vpW=window.innerWidth||360; vpH=window.innerHeight||640;
+function resize(){ dpr=Math.min(dprCap, window.devicePixelRatio||1); vpW=window.innerWidth||360; vpH=window.innerHeight||640;
   cv.width=Math.max(1,Math.floor(vpW*dpr)); cv.height=Math.max(1,Math.floor(vpH*dpr));
   cv.style.width=vpW+'px'; cv.style.height=vpH+'px'; computeZoom();
   _vigGrad=null; _scanPat=null; if(MAP) buildSky(); }
@@ -2532,12 +2654,19 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   paint:(function(){ const co=paintCoach(); return { mqNow:+co.mqNow.toFixed(3), mqAim:+co.mqAim.toFixed(3), word:co.word, hint:co.hint }; })(),   // mqAim mirrors effMatch (single or 2-tone)
   studio:{ open:studio.open, svV:+player.paintHSV.v.toFixed(3), activeTone:studio.activeTone||0,
            t0:rgb2hex(player.targetPaint), t1:rgb2hex(player.targetPaint2),
-           svRect: studio.open?studioRects().sv:null, splitRect: studio.open?studioRects().split:null },
+           svRect: studio.open?studioRects().sv:null, splitRect: studio.open?studioRects().split:null, closeRect: studio.open?studioRects().close:null },
   split: !!player.splitPaint, mq2:+((player.mq2||0)).toFixed(3),
   tones: player.ref&&player.ref.tones?player.ref.tones.map(t=>({key:t.key,w:+t.w.toFixed(2)})):null,
   snapCount: player.snapCount||0, ghostMs: Math.round(round?(round.metrics.ghostMs||0):0),
   particles: particles.length, dripEmitted: dripEmitted,
-  progress:{ blendbook:PROGRESS.blendbook||{}, biomeMedals:PROGRESS.biomeMedals||{}, unlocks:PROGRESS.unlocks } }; } }; }catch(_){}
+  progress:{ blendbook:PROGRESS.blendbook||{}, biomeMedals:PROGRESS.biomeMedals||{}, unlocks:PROGRESS.unlocks },
+  // ---- mode-based controls ----
+  mode:ctrlMode, cam:{x:Math.round(cam.x),y:Math.round(cam.y)}, camFollow:{x:Math.round(camFollow.x),y:Math.round(camFollow.y)},
+  camPan:{x:Math.round(camPan.x),y:Math.round(camPan.y)}, zoom:+zoom.toFixed(3),
+  inspect:{active:ctrlMode==='INSPECT',zoomT:+inspectZoomT.toFixed(2)},
+  move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},
+  speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
+  perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; } }; }catch(_){}
 boot();
 
 </script>

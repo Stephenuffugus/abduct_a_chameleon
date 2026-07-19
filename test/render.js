@@ -92,7 +92,17 @@ function shot(name){ const cv=doc.getElementById('game'); if(cv&&cv.__napi){ con
   key('KeyQ'); pump(20); shot('08-matched');         // instant match
   // P8-3 two-tone: toggle split via its studio rect, match, capture the 2-tone studio + body
   { const sp = S().studio && S().studio.splitRect; if(sp){ tap(sp.x+sp.w/2, sp.y+sp.h/2, 5); pump(6); key('KeyQ'); pump(20); shot('08b-twotone'); } }
-  key('KeyE'); pump(10);
+  key('KeyE'); pump(10);                              // exit paint → MOVE
+  // MOVE with a camera peek (right thumb pan)
+  down('KeyD'); pump(6); up('KeyD');
+  { const px=Math.floor(W*0.8), py=Math.floor(H*0.55); const e=new window.MouseEvent('pointerdown',{bubbles:true,clientX:px,clientY:py}); try{Object.defineProperty(e,'pointerId',{value:8});}catch(_){}
+    doc.querySelector('canvas').dispatchEvent(e);
+    const m=new window.MouseEvent('pointermove',{bubbles:true,clientX:px-260,clientY:py-40}); try{Object.defineProperty(m,'pointerId',{value:8});}catch(_){}
+    doc.querySelector('canvas').dispatchEvent(m); pump(4); shot('05b-peek');
+    const u=new window.MouseEvent('pointerup',{bubbles:true,clientX:px-260,clientY:py-40}); try{Object.defineProperty(u,'pointerId',{value:8});}catch(_){}
+    doc.querySelector('canvas').dispatchEvent(u); pump(20); }
+  key('KeyI'); pump(18); shot('08c-inspect');         // INSPECT: seeker's-eye view
+  key('KeyI'); pump(12);                              // done → MOVE
   // survive mode gameplay + a difficulty screen
   key('Escape'); pump(6);                            // pause
   shot('09-pause');

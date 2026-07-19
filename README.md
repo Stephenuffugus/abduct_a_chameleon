@@ -40,17 +40,30 @@ Open **http://localhost:8000/** → **Play**. It also runs off `file://` (falls 
 | 👥 **Decoy** | `C` | Drop a painted twin that steals a UFO's attention |
 | 💨 **Ink** | `V` | A cloud that blocks a hunter's line of sight |
 
-### Controls
+### Controls — a comfortable, mode-based scheme (built for tablets)
+
+Three modes, always shown by a **MODE pill** (top-left) that's also your one-tap way back to Move:
+
+- **🕹 Move** — drag the **move side** as a floating analog stick: **push gently to *sneak*, far to *walk*** (the
+  knob shows SNEAK/WALK). Drag the **other side** to **pan the camera** and peek toward the ships; it springs back,
+  or tap **⌖ recenter**.
+- **🎨 Paint** — tap **🎨**: you strike a pose, stop, and paint yourself in the Studio (live coach, one-tap
+  **MATCH**, 2-tone). Tap the pill, 👁, or empty space to leave.
+- **👁 Inspect** — tap **👁**: the camera pulls back to the **hunters' top-down view** so you can see whether you
+  actually blend, then nudge your position. Tap 👁 / Esc when done.
+
 | | Keyboard / Mouse | Touch |
 |---|---|---|
-| Move | `WASD` / arrows | drag the left half (virtual stick) |
-| Creep (slow, sneaky) | hold `Shift` | hold the right half |
-| Paint Studio | `E` / `Tab` / 🎨 | tap 🎨 |
-| **Match** (sample ground) | `Q` | **MATCH** button |
-| Pose (hold while hiding) | `[` `]` / `R` | 🕺 button |
-| Abilities | Space / Ctrl / C / V | ❄ ⚡ 👥 💨 buttons |
-| Hunt: scan pulse | `Space` | **SCAN** button |
-| Pause · Mute | `Esc` · `M` | ⏸ · 🔊 |
+| Move (analog speed) | `WASD` / arrows · hold `Shift` = sneak | drag move side (light = sneak) |
+| Look around | drag mouse on action side | drag the other side |
+| **Paint** mode | `E` / `Tab` / 🎨 | 🎨 |
+| **Inspect** mode | `I` / 👁 | 👁 |
+| **Match** (sample ground) | `Q` | **MATCH** |
+| Pose · Abilities | `[` `]` `R` · Space/Ctrl/C/V | 🕺 · ❄ ⚡ 👥 💨 |
+| Back out one mode · Pause | `Esc` | MODE pill · ⏸ |
+
+**Performance** is tunable in Settings (Auto / Smooth / Full) and auto-scales if a device struggles, so it stays
+smooth on modest tablets.
 
 **The skill:** your painted color is compared to the terrain under you (real perceptual color metric),
 tone by tone. A close match + stillness + hugging cover makes you nearly invisible; moving always gives
