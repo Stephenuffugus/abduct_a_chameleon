@@ -97,6 +97,8 @@ const FREEZE_CAP_MAX=0.985, FREEZE_SETTLE_MULT=0.45;
 const DASH_SPEED=470, DASH_TIME=0.16, DASH_CD=2.4, DASH_FLARE=0.5, DASH_FLARE_TIME=0.5;
 const DECOY_LIFE=6.0, DECOY_CD=12.0, INK_R=95, INK_LIFE=3.6, INK_CD=10.0, INK_MAX=2;
 const HEAT_RAMP=20, HEAT_UFO_EVERY=45, HEAT_UFO_CAP=6;
+// P5+ Time Attack "Beacon Run"
+const TA_BEACONS=5, BEACON_R=34, BEACON_HOLD=1.3, BEACON_CONCEAL=0.5, TA_PENALTY=12, TA_TIME=150;
 // P6 Hunter mode
 const HUNTER_SPD=175, HUNTER_TAU=0.16, PULSE_CD=3.0, PULSE_REVEAL=0.15, PING_HOLD=2.6;
 const HUNT_TIME=120, HIDER_COUNT={EASY:3,NORMAL:4,HARD:5}, BOT_HIDE_SPD=92, HUNT_SCAN_R=175;
@@ -1221,6 +1223,14 @@ function drawRound(alpha){
   ctx.globalAlpha=1;
   if(round.mode==='HUNT'){ drawHunt(); }
   else {
+  // Time Attack beacons (on the ground, under entities)
+  if(round.mode==='TA'){ for(const bc of round.beacons){ const pulse=0.5+0.5*Math.sin(gfx.t*3+bc.x*0.01);
+    if(bc.banked){ ctx.globalAlpha=0.45; ctx.fillStyle=COL.amber; ctx.beginPath(); ctx.arc(bc.x,bc.y,BEACON_R*0.5,0,TAU); ctx.fill();
+      ctx.globalAlpha=0.8; ctx.strokeStyle=COL.amber; ctx.lineWidth=2.5; ctx.beginPath(); ctx.arc(bc.x,bc.y,BEACON_R,0,TAU); ctx.stroke(); ctx.globalAlpha=1; }
+    else { ctx.globalAlpha=0.35+0.25*pulse; ctx.strokeStyle=COL.amber; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(bc.x,bc.y,BEACON_R,0,TAU); ctx.stroke();
+      ctx.globalAlpha=0.12+0.1*pulse; ctx.fillStyle=COL.amber; ctx.beginPath(); ctx.arc(bc.x,bc.y,BEACON_R*0.4,0,TAU); ctx.fill(); ctx.globalAlpha=1;
+      if(bc.hold>0){ ctx.strokeStyle=COL.green; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(bc.x,bc.y,BEACON_R-3,-Math.PI/2,-Math.PI/2+TAU*clamp01(bc.hold/BEACON_HOLD)); ctx.stroke(); } }
+  } }
   // 7. decoys (painted twins) + player + 8. ufos
   for(const dc of round.decoys){ const a=Math.min(1,dc.life/1.0);
     ctx.globalAlpha=a; drawHumanoid(dc.x,dc.y,0,rgb2hex(dc.paint),0.3,{pose:dc.pose,outline:0.5}); ctx.globalAlpha=1; }
@@ -1507,6 +1517,8 @@ function drawRoundHUD(){
   // ---- timer / mode indicator ----
   if(round.heat){ const el=round.metrics.survivalMs/1000, ts=Math.floor(el/60)+':'+String(Math.floor(el%60)).padStart(2,'0');
     panel(vpW-104,12,92,40,9); txt(ts, vpW-58, 30, 18, COL.txt,'center','700'); txt('HEAT · '+round.ufos.length+' 🛸', vpW-58, 46, 8, COL.danger,'center','700');
+  } else if(round.mode==='TA'){ const t=Math.max(0,Math.ceil(round.timeLeft)), ts=Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
+    panel(vpW-108,12,96,40,9); txt(ts, vpW-60,30,18, round.timeLeft<=15?COL.danger:COL.txt,'center','700'); txt('⛯ '+round.taBanked+' / '+round.beacons.length, vpW-60,46,9,COL.amber,'center','700');
   } else if(!round.diff.practice && isFinite(round.timeLeft)){
     const t=Math.max(0,Math.ceil(round.timeLeft)); const ts=Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
     const low=round.timeLeft<=15;
@@ -1712,6 +1724,7 @@ function crawlPaint(a,dt){ let maxd=0; for(const ch of ['r','g','b']){ const ste
 /* ============================ §8 SESSION / ROUND ============================ */
 let pendingMode='SURVIVE', pendingLevel=null, showHelp=false;
 function triggerAbduction(u){ if(round.finalized||!player.alive) return;
+  if(round.mode==='TA'){ respawnTA(); return; }   // Time Attack: respawn with a time penalty, not game over
   player.alive=false; round.caught=true; round.caughtBy=u; roundState='CAUGHT'; player.abductT=0;
   addTrauma(TRAUMA.abduct); hitstopMs(110); punchZoom(0.12,200,600); screenFlash(0.85); vibe([80,60,120]); SFX.lose(); tone(180,0.9,'sine',0.34,1500); noise(0.9,0.12,2400); }
 function endRound(win){ if(round.finalized||roundState==='TIMEOUT'||roundState==='CAUGHT') return;
@@ -1735,7 +1748,7 @@ function startRound(entry, mode, diff, fixedSeed){
   round={ entry, mode, diff, ufos:[], timeLeft:diff.SURVIVE_TIME, countdown:COUNTDOWN_SEC, lastCount:null,
     caught:false, caughtBy:null, finalized:false, spawnGrace:SPAWN_GRACE, nearUfo:0, debug:false,
     spottedReason:'', reasonUntil:0, spottedFlash:0, summaryT:0, seed, summary:null,
-    decoys:[], inks:[], heat:!!diff.heat, heatT:0, heatUfoT:0 };
+    decoys:[], inks:[], beacons:[], taBanked:0, heat:!!diff.heat, heatT:0, heatUfoT:0 };
   player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.cd={dash:0,decoy:0,ink:0};
   rng=mulberry32(seed>>>0);
   setActiveMap(entry.data); buildOpenness();
@@ -1759,6 +1772,16 @@ function startRound(entry, mode, diff, fixedSeed){
   } else {
     for(let i=0;i<diff.UFO_COUNT;i++){ const sp=seekers.length?seekers[i%seekers.length]:{x:2,y:2};
       round.ufos.push(makeUfo((sp.x+0.5)*TILE,(sp.y+0.5)*TILE)); }
+  }
+  if(mode==='TA'){   // Beacon Run: scatter beacons on open ground away from the spawn
+    round.beacons=[]; round.taBanked=0; round.timeLeft=TA_TIME;
+    const pool=openCells.length?openCells.slice():[]; let tries=0;
+    while(round.beacons.length<TA_BEACONS && pool.length && tries++<200){
+      const c=pool[(rng()*pool.length)|0]; const bx=(c.col+0.5)*TILE, by=(c.row+0.5)*TILE;
+      if(Math.hypot(bx-player.x,by-player.y)<TILE*5) continue;
+      if(round.beacons.some(b=>Math.hypot(b.x-bx,b.y-by)<TILE*6)) continue;
+      round.beacons.push({ x:bx, y:by, banked:false, hold:0 });
+    }
   }
   seedAmbient();   // AFTER gameplay entities — ambient must not consume the seeded RNG stream (keeps DAILY reproducible)
   appState='ROUND'; roundState='COUNTDOWN'; studio.open=false; studio.reticleOn=false;
@@ -1836,6 +1859,41 @@ function stepHunt(dt){
   round.timeLeft-=dt; round.metrics.survivalMs+=dt*1000;
   if(round.timeLeft<=0){ round.timeLeft=0; endHunt(round.hunterCaught>=round.bots.length); }
 }
+/* ============================ TIME ATTACK "Beacon Run" ============================ */
+function beaconSeen(bc){ for(const u of round.ufos){ if(u.state==='COOLDOWN') continue;
+  if(Math.hypot(u.x-bc.x,u.y-bc.y)<round.diff.SCAN_R && losClear(u.x,u.y,bc.x,bc.y)) return true; } return false; }
+function respawnTA(){ const hiders=MAP.spawns.filter(s=>s.role==='hider');
+  let hs=hiders.length?hiders[(rng()*hiders.length)|0]:{x:(mapCols/2)|0,y:(mapRows/2)|0};
+  player.x=(hs.x+0.5)*TILE; player.y=(hs.y+0.5)*TILE; player.vx=0; player.vy=0; player.S=1;
+  round.spawnGrace=SPAWN_GRACE; round.timeLeft=Math.max(0,round.timeLeft-TA_PENALTY);
+  for(const u of round.ufos){ u.suspicion=0; u.state='PATROL'; }
+  addTrauma(0.3); screenFlash(0.5); SFX.lose(); showToast('Caught! −'+TA_PENALTY+'s'); }
+function stepTABeacons(dt){
+  for(const bc of round.beacons){ if(bc.banked) continue;
+    const near=Math.hypot(bc.x-player.x,bc.y-player.y)<BEACON_R;
+    if(near && player.conceal>=BEACON_CONCEAL && !beaconSeen(bc)){
+      bc.hold+=dt;
+      if(bc.hold>=BEACON_HOLD){ bc.banked=true; round.taBanked++; SFX.relief(); addTrauma(0.15); punchZoom(0.03,90,260); spawnShards(bc.x,bc.y,COL.amber,10); showToast('Beacon '+round.taBanked+'/'+round.beacons.length); }
+    } else bc.hold=Math.max(0,bc.hold-dt*2);
+  }
+  round.timeLeft-=dt;
+  if(round.taBanked>=round.beacons.length && round.beacons.length){ endTimeAttack(true); }
+  else if(round.timeLeft<=0){ round.timeLeft=0; endTimeAttack(false); }
+}
+function endTimeAttack(win){ if(round.finalized) return;
+  const banked=round.taBanked, total=round.beacons.length, tl=Math.max(0,round.timeLeft);
+  const score=Math.max(0, banked*300 + (win?Math.round(tl*10):0));
+  const ratio=total?banked/total:0, perf=0.6*ratio+0.4*(win?clamp01(tl/TA_TIME):0);
+  const grade=perf>=GRADE.S?'S':perf>=GRADE.A?'A':perf>=GRADE.B?'B':perf>=GRADE.C?'C':perf>=GRADE.D?'D':'F';
+  round.finalized=true; stopAllLoops();
+  round.summary={ outcome:win?'WIN':'LOSE', ta:true, banked, total, score, grade, timeUsed:TA_TIME-tl,
+    survSec:TA_TIME-tl, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0 };
+  const key=round.entry.display+'|TA|'+round.diff.label, bb=best[key]||{bestScore:0,bestGrade:'F',plays:0};
+  round.summary.prevBest=bb.bestScore; round.summary.isBest=score>bb.bestScore; bb.plays++;
+  if(score>bb.bestScore){bb.bestScore=score;bb.bestGrade=grade;} bb.updated=Date.now(); best[key]=bb; saveBest();
+  PROGRESS.stats.plays++; saveProgress(); checkUnlocks(); if(round.summary.isBest) SFX.best();
+  appState='SUMMARY'; menuIndex=0;
+}
 function stepSim(dt){
   if(roundState==='COUNTDOWN'||roundState==='RESUME_COUNTDOWN'){
     round.countdown-=dt; const c=Math.ceil(round.countdown);
@@ -1862,7 +1920,8 @@ function stepSim(dt){
   if(player.C<WELL_HIDDEN_C) M.lowDetectMs+=ms;
   if(player.C<STREAK_C && (round.maxSusp||0)<ENTER_CHASE){ M.streakCur+=ms; M.streakBestMs=Math.max(M.streakBestMs,M.streakCur); } else M.streakCur=0;
   if(sp>10) M.timeMovingMs+=ms; else M.timeStillMs+=ms;
-  if(!round.diff.practice && isFinite(round.timeLeft)){ round.timeLeft-=dt; if(round.timeLeft<=0){ round.timeLeft=0; endRound(true); } }
+  if(!round.diff.practice && isFinite(round.timeLeft) && round.mode!=='TA'){ round.timeLeft-=dt; if(round.timeLeft<=0){ round.timeLeft=0; endRound(true); } }
+  if(round.mode==='TA') stepTABeacons(dt);
   // HEAT: escalate over time (mutates the per-round diff clone, never the shared const)
   if(round.heat){ round.heatT+=dt; round.heatUfoT+=dt; const d=round.diff, step=Math.floor(round.heatT/HEAT_RAMP), ramp=1+step*0.12;
     d.SCAN_R=Math.min(240,DIFF.EASY.SCAN_R*ramp); d.SUSPECT_GAIN=DIFF.EASY.SUSPECT_GAIN*ramp;
@@ -1973,7 +2032,7 @@ function drawModeSelect(){ const cx=vpW/2;
     {n:'Heat · Endless', s:'Escalates forever', go:()=>route('HEAT')},
     {n:'Daily Challenge', s:'One seeded run/day', go:()=>startDaily()},
     {n:'🛸 Hunt', s:'BE the alien — catch chameleons', go:()=>route('HUNT'), color:COL.cyan},
-    {n:'Time Attack', s:'Coming soon', disabled:true},
+    {n:'Time Attack', s:'Bank hidden beacons vs the clock', go:()=>route('TA')},
   ];
   const cols=vpW>620?2:1, cw=Math.min(300,(vpW-56)/cols), gap=14;
   const gridW=cols*cw+(cols-1)*gap, gx=(vpW-gridW)/2, top=vpH*0.22, ch=Math.min(86,(vpH*0.52)/3-gap);
@@ -2033,8 +2092,8 @@ function drawDifficulty(){ const cx=vpW/2; const hunt=pendingMode==='HUNT';
   navBtn('‹ Back', bx,by,bw,42, ()=>menuBack(), {size:14});
 }
 function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); return; }
-  const win=s.outcome==='WIN', hunt=!!s.hunt;
-  txt(hunt?(win?'BOARD CLEARED':'TIME UP'):(win?'ESCAPED':'ABDUCTED'), cx, vpH*0.14, 32, win?COL.cyan:COL.danger,'center','800');
+  const win=s.outcome==='WIN', hunt=!!s.hunt, ta=!!s.ta;
+  txt(ta?(win?'ALL BEACONS BANKED':'TIME UP'):hunt?(win?'BOARD CLEARED':'TIME UP'):(win?'ESCAPED':'ABDUCTED'), cx, vpH*0.14, 30, win?COL.cyan:COL.danger,'center','800');
   // grade stamp
   ctx.save(); ctx.translate(cx, vpH*0.30); const gc=s.grade==='S'?COL.amber:s.grade==='F'?COL.danger:COL.cyan;
   ctx.strokeStyle=gc; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(0,0,46,0,Math.PI*2); ctx.stroke();
@@ -2042,7 +2101,8 @@ function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); re
   // stats
   const bw=Math.min(360,vpW-48), bx=cx-bw/2; let sy=vpH*0.44;
   const stat=(k,v)=>{ txt(k,bx,sy,13,COL.muted,'left','500'); txt(v,bx+bw,sy,13,COL.txt,'right','700'); sy+=24; };
-  if(hunt){ stat('Chameleons caught', s.caught+' / '+s.total); stat('Time used', s.timeUsed.toFixed(1)+'s'); stat('Score', String(s.score)); }
+  if(ta){ stat('Beacons banked', s.banked+' / '+s.total); stat('Time', s.timeUsed.toFixed(1)+'s'); stat('Score', String(s.score)); }
+  else if(hunt){ stat('Chameleons caught', s.caught+' / '+s.total); stat('Time used', s.timeUsed.toFixed(1)+'s'); stat('Score', String(s.score)); }
   else {
   stat('Survived', s.survSec.toFixed(1)+'s');
   stat('Avg blend', s.avgBlendPct+'%');
@@ -2237,6 +2297,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   summary: round&&round.summary?round.summary:null,
   ability: round?{freeze:player.freeze,dashCd:+player.cd.dash.toFixed(2),decoyCd:+player.cd.decoy.toFixed(2),inkCd:+player.cd.ink.toFixed(2),freezeCap:+player.freezeCap.toFixed(3)}:null,
   decoys: round?round.decoys.length:0, inks: round?round.inks.length:0, pose: player.pose,
+  ta: round&&round.mode==='TA'?{ beacons:round.beacons.length, banked:round.taBanked, timeLeft:Math.round(round.timeLeft), beaconPos:round.beacons.map(b=>({x:Math.round(b.x),y:Math.round(b.y),banked:b.banked})) }:null,
   hunt: round&&round.mode==='HUNT'?{ bots: round.bots.length, caught: round.hunterCaught||0, pinged: round.bots.filter(b=>b.pinged>0).length, botStates: round.bots.map(b=>b.state), botC: round.bots.map(b=>+b.C.toFixed(2)), pulseCd:+player.pulseCd.toFixed(2), botPos: round.bots.map(b=>({x:Math.round(b.x),y:Math.round(b.y),caught:b.caught,C:+b.C.toFixed(2),pinged:+(b.pinged>0)})) }:null }; } }; }catch(_){}
 boot();
 
