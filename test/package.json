@@ -1,0 +1,11 @@
+{ "name": "aac-tests", "private": true, "type": "commonjs",
+  "scripts": {
+    "smoke":     "node smoke.js ../index.html 220",
+    "survive":   "node survive.js",
+    "abilities": "node abilities.js",
+    "hunt":      "node hunt.js",
+    "math":      "node mathcheck.mjs",
+    "shots":     "node render.js ../index.html shots 640 400 1",
+    "all":       "node smoke.js ../index.html 220 && node survive.js && node abilities.js && node hunt.js"
+  },
+  "devDependencies": { "jsdom": "^24", "@napi-rs/canvas": "^0.1" } }

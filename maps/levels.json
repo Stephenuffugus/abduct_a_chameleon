@@ -1,0 +1,32 @@
+[
+  {
+    "file": "maps/greenwood.json",
+    "name": "greenwood",
+    "display": "Greenwood — dense forest"
+  },
+  {
+    "file": "maps/dunes.json",
+    "name": "dunes",
+    "display": "Dunes — desert flats"
+  },
+  {
+    "file": "maps/tundra.json",
+    "name": "tundra",
+    "display": "Tundra — frozen north"
+  },
+  {
+    "file": "maps/downtown.json",
+    "name": "downtown",
+    "display": "Downtown — city blocks"
+  },
+  {
+    "file": "maps/xeno.json",
+    "name": "xeno",
+    "display": "Xeno — alien world"
+  },
+  {
+    "file": "maps/bog.json",
+    "name": "bog",
+    "display": "Bog — sunken swamp"
+  }
+]
