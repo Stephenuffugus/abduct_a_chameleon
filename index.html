@@ -2774,6 +2774,7 @@ function drawTitle(){
   txt('CHAMELEON', cx, vpH*0.40+t1, t2, COL.amber,'center','800');
   const tagY=vpH*0.40+t1+t2*0.62+22;
   txt('Paint yourself to vanish. Outlast the hunters.', cx, tagY, Math.min(14,vpH*0.032), COL.muted,'center','500');
+  if(vpH>=520) txt('six regions · twelve hiding grounds · one long night', cx, tagY+16, 10, 'rgba(140,150,175,0.75)','center','500');
   const k=clamp(vpH/560,0.68,1);                                  // compress the button stack on short viewports
   const bw=Math.min(300,vpW-60), bx=cx-bw/2; let by=Math.max(vpH*0.62, tagY+22*k);
   navBtn('▶  PLAY', bx,by,bw,Math.round(54*k), ()=>{ startPlay(); }, {size:20}); by+=Math.round(64*k);
@@ -2786,6 +2787,7 @@ function drawTitle(){
 }
 function drawModeSelect(){ const cx=vpW/2;
   txt('CHOOSE MODE', cx, vpH*0.16, 24, COL.txt,'center','800');
+  txt('how will you spend the night?', cx, vpH*0.16+22, 11, COL.muted,'center','500');
   const modes=[
     {n:'Practice / Zen', s:'No fail · learn to blend', go:()=>route('PRACTICE')},
     {n:'Survive', s:'Outlast the hunters', go:()=>route('SURVIVE')},
@@ -2864,8 +2866,9 @@ function drawLevelSelect(){ const cx=vpW/2;
   for(const g of groups){ const hy=gy+g.hy; if(hy+headH<top-6||hy>top+availH+6) continue;
     const mc=(g.b&&BIOME[g.b]&&BIOME[g.b].moon)||COL.amber;
     ctx.fillStyle=mc; ctx.beginPath(); ctx.arc(gx+5,hy+12,4,0,TAU); ctx.fill();
-    txt(g.b?REGION_NAME[g.b]:'ELSEWHERE', gx+16, hy+12, 11, COL.txt,'left','800');
-    if(vpW>=560) txt(g.b?REGION_TAG[g.b]:'', gx+gridW, hy+12, 9, COL.muted,'right','500'); }
+    const mastered=g.b && PROGRESS.biomeMedals && PROGRESS.biomeMedals[g.b];
+    txt((g.b?REGION_NAME[g.b]:'ELSEWHERE')+(mastered?'  ✦':''), gx+16, hy+12, 11, mastered?COL.amber:COL.txt,'left','800');
+    if(vpW>=560) txt(mastered?'region mastered — every terrain blended':(g.b?REGION_TAG[g.b]:''), gx+gridW, hy+12, 9, mastered?COL.amber:COL.muted,'right','500'); }
   for(let i=0;i<pos.length;i++){ const {e,x}=pos[i]; const y=gy+pos[i].y;
     const idx=navList.length; const sel=idx===menuIndex;
     const locked=(e.unlockLevel||0)>plv;                                     // P12 map-unlock arc
