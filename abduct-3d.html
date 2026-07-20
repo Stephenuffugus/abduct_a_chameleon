@@ -145,7 +145,7 @@
   <div id="reticle"><div class="ring"></div></div>
 
   <div id="controls">
-    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · mouse look · <kbd>V</kbd> view from the sky · <kbd>E</kbd> paint yourself</div>
+    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>V</kbd> sky view · <kbd>E</kbd> paint · <kbd>T</kbd> taunt — you EARN while they look at you and see nothing</div>
     <div id="ctrlSeeker" class="hidden"><b>Seeker (UFO)</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd>/<kbd>Shift</kbd> altitude · hold <kbd>Mouse</kbd> to beam (drains — catches refill) · <kbd>V</kbd> view</div>
     <div id="ctrlSpec" class="hidden"><b>Spectating</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · mouse look · back next round</div>
     <div id="ctrlPad" style="margin-top:5px;opacity:.72"><b>Controller</b> — sticks move/look · RT beam · A camo · X pose · Y view · RB/LB altitude</div>
@@ -216,6 +216,8 @@
         border:1.5px solid var(--line);color:var(--txt);font-size:20px">👁</button>
       <button id="tPose" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:var(--panel);
         border:1.5px solid var(--line);color:var(--txt);font-size:20px">🕺</button>
+      <button id="tTaunt" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:rgba(224,101,94,.14);
+        border:1.5px solid var(--danger);color:var(--danger);font-size:20px">📣</button>
       <button id="tBeam" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(63,208,224,.16);
         border:1.5px solid var(--cyan);color:var(--cyan);font-size:13px;font-weight:800">BEAM</button>
     </div>
@@ -664,8 +666,8 @@ function addCover(type, gx, gy){
 /* ============================ Characters & poses ============================ */
 const WHITE = new THREE.Color(0xEDEFF4);
 const TORSO_Y = 0.95;
-const POSE_KEYS = ['idle','tpose','hips','wave','point','cheer','crouch'];
-const POSE_NAMES = { idle:'Stand', tpose:'T-pose', hips:'Hands on hips', wave:'Wave', point:'Point', cheer:'Cheer', crouch:'Crouch' };
+const POSE_KEYS = ['idle','tpose','hips','wave','point','cheer','crouch','ball','lie'];
+const POSE_NAMES = { idle:'Stand', tpose:'T-pose', hips:'Hands on hips', wave:'Wave', point:'Point', cheer:'Cheer', crouch:'Crouch', ball:'Curl up', lie:'Lie down' };
 let myPose = 'idle', poseIdx = 0;
 
 // gamepad state
@@ -721,7 +723,12 @@ const POSES = {
   cheer(J){ J.lArm.sh.rotation.z = 2.6; J.rArm.sh.rotation.z = -2.6; },
   crouch(J){ J.torso.position.y = TORSO_Y - 0.32; J.torso.rotation.x = 0.32;
     J.lLeg.hp.rotation.x = 0.7; J.lLeg.kn.rotation.x = -1.2; J.rLeg.hp.rotation.x = 0.7; J.rLeg.kn.rotation.x = -1.2;
-    J.lArm.sh.rotation.x = -0.5; J.rArm.sh.rotation.x = -0.5; }
+    J.lArm.sh.rotation.x = -0.5; J.rArm.sh.rotation.x = -0.5; },
+  ball(J){ J.torso.position.y = TORSO_Y - 0.55; J.torso.rotation.x = 0.9; J.head.rotation.x = 0.8;
+    J.lLeg.hp.rotation.x = 1.9; J.lLeg.kn.rotation.x = -2.3; J.rLeg.hp.rotation.x = 1.9; J.rLeg.kn.rotation.x = -2.3;
+    J.lArm.sh.rotation.x = -1.7; J.lArm.el.rotation.x = -1.4; J.rArm.sh.rotation.x = -1.7; J.rArm.el.rotation.x = -1.4; },
+  lie(J){ J.torso.position.y = 0.42; J.torso.rotation.x = -1.45; J.head.rotation.x = 0.5;
+    J.lArm.sh.rotation.z = 0.25; J.rArm.sh.rotation.z = -0.25; }
 };
 function applyPose(J, key){
   J.torso.rotation.set(0,0,0); J.torso.position.y = TORSO_Y; J.head.rotation.set(0,0,0);
@@ -825,6 +832,7 @@ function setupInput(){
     }
     if(e.code==='KeyE'){ setPaintOpen(!paintOpen); }                                   // P30: E = the paint studio
     if(e.code==='Escape' && paintOpen) setPaintOpen(false);
+    if(e.code==='KeyT') tauntWhistle();                          // P33: bait them closer
     if(e.code==='KeyQ' || e.code==='BracketRight') cyclePose(1);
     if(e.code==='BracketLeft') cyclePose(-1);
   });
@@ -1023,6 +1031,47 @@ function setupPaintUI(){
 // matches (visibility = 1 - camoLevel), beams you like a real seeker, and catching
 // you respawns you with a sting — the full loop, no second player required.
 let bot = null, botLock = 0, botCatches = 0;
+// P33: MECCHA-style scoring — you earn ONLY while a hunter can see you and doesn't notice.
+// Blended + in their sights = the money zone. The taunt whistle triples it for a few seconds.
+let earnAccum = 0, earnRate = 0, tauntUntil = 0, tauntCd = 0, soloStars = 0;
+const EARN_SEE_R = 26;            // a hunter this close with clear LOS counts as 'looking'
+function tauntWhistle(){
+  if(myRole()!=='hider' || amAbducted()) return;
+  const t = performance.now();
+  if(t < tauntCd) return;
+  tauntCd = t + 6000; tauntUntil = t + 4500;
+  me.setState('taunt', Date.now(), true);
+  tone(1180, 0.22, 'sine', 0.30, 1560); setTimeout(()=>tone(1560,0.3,'sine',0.26,980), 200);
+  if(bot){ bot.state='chase'; }                                   // solo: the whistle really does bait it
+}
+function earnTick(dt){
+  if(myRole()!=='hider' || amAbducted()) { earnRate = 0; return; }
+  const phase = getState('phase');
+  let watchers = 0;
+  if(phase==='playing'){
+    for(const p of players){
+      if(p.state.getState('role')!=='seeker' || p.state.getState('abducted')) continue;
+      const sp = posOf(p); const dx=sp.x-localPos.x, dz=sp.z-localPos.z;
+      if(dx*dx+dz*dz < EARN_SEE_R*EARN_SEE_R && hasLOS(sp, {x:localPos.x,y:0,z:localPos.z})) watchers++;
+    }
+  } else if(bot){
+    const dx=bot.g.position.x-localPos.x, dz=bot.g.position.z-localPos.z;
+    if(dx*dx+dz*dz < EARN_SEE_R*EARN_SEE_R &&
+       hasLOS({x:bot.g.position.x,y:bot.alt,z:bot.g.position.z}, {x:localPos.x,y:0,z:localPos.z})) watchers = 1;
+  }
+  // the rule that makes it a game of nerve: seen + blended = earn; seen + visible = you're just bait
+  const blended = camoLevel > 0.55;
+  const taunting = performance.now() < tauntUntil;
+  earnRate = (watchers > 0 && blended) ? (2 * watchers * (taunting ? 3 : 1)) : 0;
+  if(earnRate > 0){
+    earnAccum += earnRate * dt;
+    if(earnAccum >= 1){
+      const pts = Math.floor(earnAccum); earnAccum -= pts;
+      if(phase==='playing') me.setState('score', (me.getState('score')||0) + pts, true);
+      else soloStars += pts;
+    }
+  }
+}
 function makeBotUfo(){
   const g = new THREE.Group();
   const saucer = new THREE.Mesh(new THREE.CylinderGeometry(1.9,1.9,0.5,24),
@@ -1107,6 +1156,7 @@ function setupTouch(){
     if(myRole()==='seeker') seekerView = seekerView==='topdown'?'follow':'topdown';
     else { hiderView = hiderView==='topdown'?'third':'topdown'; SFX.blip(); } };
   document.getElementById('tPose').onclick = ()=> cyclePose(1);
+  document.getElementById('tTaunt').onclick = ()=> tauntWhistle();
   const tb = document.getElementById('tBeam');
   tb.addEventListener('pointerdown', e=>{ e.preventDefault(); setBeam(true); });
   tb.addEventListener('pointerup', ()=> setBeam(false));
@@ -1247,6 +1297,7 @@ function clientTick(dt){
 
   gatherGamepad(role, abd);
   botTick(dt);                                                   // P32 training UFO when you're alone
+  earnTick(dt);                                                  // P33 nerve scoring — earn while watched
   if(role==='seeker' && !abd){                                   // P31 beam battery
     if(beamOn){ beamEnergy = Math.max(0, beamEnergy - dt/4);
       if(beamEnergy<=0){ setBeam(false); overheat = 3; SFX.lose(); } }
@@ -1280,6 +1331,12 @@ function clientTick(dt){
     const gone = !!p.state.getState('abducted');
     p.hider.visible = r==='hider'; p.ufo.visible = r==='seeker';
 
+    // P33: someone whistled — everyone hears it, louder when close (hunters: that's a dare)
+    const tv = p.state.getState('taunt');
+    if(tv && tv !== p.lastTaunt){ p.lastTaunt = tv;
+      if(p.state !== me){ const d = p.group.position.distanceTo(camera.position);
+        const vol = clamp(0.34 - d/220, 0.05, 0.34);
+        tone(1180, 0.22, 'sine', vol, 1560); setTimeout(()=>tone(1560,0.3,'sine',vol*0.9,980), 200); } }
     // abduction trigger — sound + beam-up animation
     if(gone && !p.prevAbducted){ p.abductT = 0; SFX.abduct();
       if(myRole()==='seeker' && beamOn){ const dx=p.group.position.x-localPos.x, dz=p.group.position.z-localPos.z;
@@ -1453,6 +1510,7 @@ function updateHUD(role, abd){
   if(touch.on){
     $('tPaint').classList.toggle('hidden', abd || role==='seeker');
     $('tPose').classList.toggle('hidden', abd || role==='seeker');
+    $('tTaunt').classList.toggle('hidden', abd || role==='seeker');
     $('tBeam').classList.toggle('hidden', abd || role!=='seeker');
     $('altUI').classList.toggle('hidden', abd || role!=='seeker');
   }
@@ -1472,8 +1530,10 @@ function updateHUD(role, abd){
     if(liveLock>0.02){ $('meterLabel').textContent='⚠ BEING ABDUCTED — RUN'; fill.style.width=(liveLock*100)+'%'; fill.style.background='var(--danger)';
       if(paintOpen && myLock>0.15) setPaintOpen(false); }
     else{ const mp=Math.round(myMatch*100), hp=Math.round(camoLevel*100);
-      $('meterLabel').textContent = 'paint match '+mp+'% · hidden '+hp+'%' + (myMatch<0.5?' — 🎨 paint to match!':'');
-      fill.style.width=(camoLevel*100)+'%'; fill.style.background = camoLevel>0.8 ? 'var(--cyan)' : 'var(--amber)'; }
+      const earning = earnRate>0 ? ('  ·  ⭐ EARNING'+(performance.now()<tauntUntil?' ×3':'')) : '';
+      $('meterLabel').textContent = 'paint match '+mp+'% · hidden '+hp+'%' + (myMatch<0.5?' — 🎨 paint to match!':earning);
+      fill.style.width=(camoLevel*100)+'%';
+      fill.style.background = earnRate>0 ? 'var(--cyan)' : (camoLevel>0.8 ? 'var(--cyan)' : 'var(--amber)'); }
   }else if(!abd && phase==='playing' && role==='seeker'){
     mEl.classList.remove('hidden');
     const maxLock = hiders.reduce((m,h)=> Math.max(m, h.state.getState('lock')||0), 0);
@@ -1494,9 +1554,9 @@ function updateHUD(role, abd){
   // banner
   const bEl=$('banner');
   if(phase==='waiting'){
-    if(bot) showBanner('','Training grounds', botCatches>0
-      ? ('Caught '+botCatches+'× — paint to match and HOLD STILL to shrink its vision. Another player joining starts real rounds.')
-      : 'A training UFO is hunting you. E to paint yourself · V to see yourself from its sky. A second player (any device, same URL) starts real rounds.');
+    if(bot) showBanner('','Training grounds',
+      '⭐ '+soloStars+' earned · caught '+botCatches+'× — points flow while it LOOKS at you and sees nothing. '
+      +'E paint · V sky check · T whistle to bait it closer. A second player (same URL) starts real rounds.');
     else showBanner('','Waiting for players','Roam around to try the controls. Open this URL in another tab (or use Add a Player) to start a round.');
   }
   else if(phase==='intermission'){
