@@ -3011,6 +3011,7 @@ function drawTitle(){
   const bw=Math.min(300,vpW-60), bx=cx-bw/2; let by=Math.max(vpH*0.62, tagY+22*k);
   navBtn('▶  PLAY', bx,by,bw,Math.round(54*k), ()=>{ startPlay(); }, {size:20}); by+=Math.round(64*k);
   navBtn('🌐  Play Online — 1v1', bx,by,bw,Math.round(46*k), ()=>{ appState='ONLINE'; menuIndex=0; SFX.ui(); }, {size:15}); by+=Math.round(56*k);
+  navBtn('🧪  3D — new, in the lab', bx,by,bw,Math.round(40*k), ()=>{ try{ location.href='abduct-3d.html'; }catch(_){} }, {size:13, color:COL.green}); by+=Math.round(50*k);
   const hw=(bw-10)/2;
   navBtn('👕  Wardrobe', bx,by,hw,Math.round(44*k), ()=>{ appState='WARDROBE'; menuIndex=0; SFX.ui(); }, {size:14});
   navBtn('⚙  Settings', bx+hw+10,by,hw,Math.round(44*k), ()=>{ openSettings('TITLE'); }, {size:14}); by+=Math.round(54*k);
