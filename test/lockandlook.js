@@ -101,11 +101,20 @@ async function main(){
   ok('L1 ＋ button steps up a detent (0.55→0.78)', Math.abs(st().hold.vzTarget-0.78)<0.01, 'vzT='+st().hold.vzTarget);
 
   // ---- L2 the stillness law: 🎨 from LOOK holds the shot ----
-  // drag DOWN-left: camera drops below the body so it frames in the upper half — clear of the studio panel,
-  // so the (designed) compose nudge stays out of this stillness assertion
+  // frame the body in the upper third DETERMINISTICALLY (compute the drag from the live camera state),
+  // so the (designed) compose nudge stays out of this stillness assertion regardless of random spawn
+  const st0=st();
+  const needCamY = st0.playerPos.y + (VH()*0.20)/st0.zoom;                    // cam below body → body at ~30% height
+  const dyPix = Math.max(-400, Math.min(400, Math.round((needCamY-st0.cam.y)*st0.zoom)));
   const px=Math.floor(VW()*0.8), py=Math.floor(VH()*0.35);
-  fire('pointerdown',{clientX:px,clientY:py,pointerId:5}); fire('pointermove',{clientX:px-180,clientY:py+110,pointerId:5});
-  fire('pointerup',{clientX:px-180,clientY:py+110,pointerId:5}); pump(40);   // held pan + let vz settle
+  fire('pointerdown',{clientX:px,clientY:py,pointerId:5}); fire('pointermove',{clientX:px-180,clientY:py+dyPix,pointerId:5});
+  fire('pointerup',{clientX:px-180,clientY:py+dyPix,pointerId:5}); pump(40);  // held pan + let vz settle
+  { const s1=st(); const bodyY=(s1.playerPos.y-s1.cam.y)*s1.zoom+VH()/2;      // world-edge clamp fallback: recenter puts the body mid-screen
+    if(bodyY>VH()*0.5 && s1.hud && s1.hud.recenter){ tapRect(s1.hud.recenter, 36); pump(30); } }
+  // horizontal pan is achievable at ANY spawn (vertical can clamp at world edges) — this is the pan the hold must preserve
+  fire('pointerdown',{clientX:px,clientY:Math.floor(VH()*0.5),pointerId:6});
+  fire('pointermove',{clientX:px-160,clientY:Math.floor(VH()*0.5),pointerId:6});
+  fire('pointerup',{clientX:px-160,clientY:Math.floor(VH()*0.5),pointerId:6}); pump(30);
   const F1=frame();
   key('KeyE'); pump(3);
   ok('L2 🎨 from LOOK → PAINT with the shot HELD', st().mode==='PAINT' && st().studio.open===true && st().hold.locked===true, 'locked='+st().hold.locked);

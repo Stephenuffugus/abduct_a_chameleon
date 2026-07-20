@@ -25,8 +25,9 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 let fails=0; const ok=(n,c,x='')=>{ console.log(`${c?'OK  ':'FAIL'}  ${n}${x?'  — '+x:''}`); if(!c) fails++; };
 (async()=>{
  await wait(200); pump(20);
+ const manifest=JSON.parse(fs.readFileSync(path.resolve(path.dirname(htmlPath),'maps/levels.json'),'utf8'));
  const total=S().levels;
- ok('manifest loaded (12 maps + baked = 13)', total===13, 'levels='+total);
+ ok(`manifest loaded (${manifest.length} maps + baked)`, total===manifest.length+1, 'levels='+total+' manifest='+manifest.length);
  for(let i=0;i<total;i++){
    // TITLE → MODE_SELECT → Practice → LEVEL_SELECT
    key('Enter'); pump(6); key('Enter'); pump(6);
@@ -41,7 +42,17 @@ let fails=0; const ok=(n,c,x='')=>{ console.log(`${c?'OK  ':'FAIL'}  ${n}${x?'  
    key('Escape'); pump(4); key('ArrowUp'); pump(2); key('Enter'); pump(8);
    if(S().appState!=='TITLE'){ key('Escape'); pump(4); }   // safety
  }
+ // big-map pressure: Survive EASY on a >=4800-cell expansion map fields UFO_COUNT+1 hunters
+ { const big=manifest.findIndex(m=>m.name==='frostharbor');
+   if(big>=0){
+     key('Enter'); pump(6);                       // TITLE → MODE_SELECT
+     key('ArrowDown'); pump(2); key('Enter'); pump(6);   // Survive → LEVEL_SELECT
+     for(let k=0;k<big;k++){ key('ArrowRight'); pump(1); }
+     key('Enter'); await wait(80); pump(10);      // → DIFFICULTY_SELECT (menuIndex=1)
+     key('ArrowUp'); pump(2); key('Enter'); await wait(60); pump(220);   // EASY → PLAYING
+     ok('big-map Survive fields an extra hunter (EASY 1→2)', S().roundState==='PLAYING' && S().ufos===2, 'ufos='+S().ufos+' rs='+S().roundState);
+   } else ok('big-map pressure check (frostharbor present)', false, 'frostharbor missing from manifest'); }
  if(errors.length){ console.log('ERRORS:'); [...new Set(errors)].slice(0,8).forEach(e=>console.log('  • '+e.split('\n').slice(0,2).join(' '))); fails+=errors.length; }
- console.log(fails? `\nMAPS: FAIL (${fails})` : `\nMAPS: PASS — all ${total} levels boot into PLAYING with hunters; 0 errors`);
+ console.log(fails? `\nMAPS: FAIL (${fails})` : `\nMAPS: PASS — all ${total} levels boot into PLAYING with hunters (+1 on big ground); 0 errors`);
  process.exit(fails?1:0);
 })();

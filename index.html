@@ -634,10 +634,12 @@ function grantUnlock(id){ if(!hasUnlock(id)){ PROGRESS.unlocks.push(id); savePro
 function loadProgress(){ try{ const p=JSON.parse(localStorage.getItem(LS_PROGRESS)||'null'); if(p&&p.unlocks){ PROGRESS=Object.assign(PROGRESS,p); PROGRESS.unlocks=p.unlocks; } }catch(_){}
   if(!PROGRESS.equipped) PROGRESS.equipped={skin:'default'};
   if(!PROGRESS.blendbook) PROGRESS.blendbook={}; if(!PROGRESS.biomeMedals) PROGRESS.biomeMedals={};   // P8-6 back-compat
-  if(typeof PROGRESS.xp!=='number') PROGRESS.xp=0; if(!PROGRESS.challenges) PROGRESS.challenges={}; } // P12 back-compat
+  if(typeof PROGRESS.xp!=='number'||!isFinite(PROGRESS.xp)||PROGRESS.xp<0) PROGRESS.xp=0;   // P12 back-compat + corrupt-storage armor
+  PROGRESS.xp=Math.min(PROGRESS.xp, 75*200*201);                                            // level-200 cap keeps xpLevel() bounded
+  if(typeof PROGRESS.challenges!=='object'||PROGRESS.challenges===null||Array.isArray(PROGRESS.challenges)) PROGRESS.challenges={}; }
 function saveProgress(){ try{ localStorage.setItem(LS_PROGRESS, JSON.stringify(PROGRESS)); }catch(_){} }
 // ===== P12: XP + levels (triangular curve — reaching level L costs 75·(L−1)·L total XP) =====
-function xpLevel(xp){ let L=1; while(xp>=75*L*(L+1)) L++; return L; }
+function xpLevel(xp){ let L=1; while(xp>=75*L*(L+1) && L<999) L++; return L; }
 function xpFloor(L){ return L<=1?0:75*(L-1)*L; }
 function xpCeil(L){ return 75*L*(L+1); }
 function awardXP(amount){ if(!amount) return; const before=xpLevel(PROGRESS.xp||0);
@@ -1978,7 +1980,8 @@ function drawRoundHUD(){
     roundHits.push({x:pxp,y:pyp,w:pw,h:ph,fn:()=>{ if(ctrlMode!=='MOVE') goHome(); }}); }
   // P9 camera cluster while looking / holding a shot: ＋ ⌖ － on the MOVE-hand side (buttons cover everything gestures do)
   _hud.zoom=null;
-  if(heldCam()){
+  const clusterOK = heldCam() && !(studio.open && vpW<700);   // on narrow screens the lifted studio owns that band — pinch/wheel still zoom
+  if(clusterOK){
     const rc = right?14:vpW-14-56; let ry=Math.round(vpH*0.5-96);
     uiBtn('＋', rc, ry, 56, 56, ()=>stepDetent(1), {rad:14, size:22}); const zin={x:rc,y:ry,w:56,h:56};
     ry+=66;
@@ -1987,14 +1990,14 @@ function drawRoundHUD(){
     ry+=66;
     uiBtn('－', rc, ry, 56, 56, ()=>stepDetent(-1), {rad:14, size:22}); const zout={x:rc,y:ry,w:56,h:56};
     _hud.zoom={ zin, zout };
-    // detent dots — which named altitude you're nearest (FAR · SEEKER · NORMAL · CLOSE)
-    { const dx0=rc+(right?-14:56+8), dyc=Math.round(vpH*0.5-3);
+    // detent dots — which named altitude you're nearest (FAR · SEEKER · NORMAL · CLOSE); always on the INNER side
+    { const dx0=rc+(right?56+10:-12), dyc=Math.round(vpH*0.5-3);
       let ni=0, bd=1e9; VZ_DETENTS.forEach((d,j)=>{ const e=Math.abs(vz-d); if(e<bd){ bd=e; ni=j; } });
       for(let j=0;j<VZ_DETENTS.length;j++){ const y=dyc+(VZ_DETENTS.length-1-j)*12-18;
         ctx.globalAlpha=j===ni?0.95:0.35; ctx.fillStyle=j===1?COL.green:COL.txt;
         ctx.beginPath(); ctx.arc(dx0,y,j===ni?4:2.5,0,TAU); ctx.fill(); }
       ctx.globalAlpha=1; }
-  } else if(Math.hypot(camPan.x,camPan.y)>RECENTER_SHOW){
+  } else if(!heldCam() && Math.hypot(camPan.x,camPan.y)>RECENTER_SHOW){
     // MOVE: recenter appears only while panned (unchanged legacy behavior)
     const rc = right?14:vpW-14-56, ry=Math.round(vpH*0.5-28);
     uiBtn('⌖', rc, ry, 56, 56, ()=>{ camPan.x=0; camPan.y=0; vibe(8); }, {rad:14, size:22}); _hud.recenter={x:rc,y:ry,w:56,h:56}; }
@@ -2563,7 +2566,8 @@ function navBtn(label,x,y,w,h,fn,opts){ opts=opts||{}; const idx=navList.length;
   if(!opts.disabled) navList.push({x,y,w,h,fn}); }
 function menuNav(dx,dy){
   if(appState==='SETTINGS' && !showHelp){ if(dx) settingsAdjust(dx); else settingsNav(dy||1); return; }   // P10: settings is keyboard-first now
-  if(!navList.length) return; const d=(dy||dx||1); menuIndex=(menuIndex+d+navList.length)%navList.length; SFX.ui(); }
+  if(!navList.length) return; const d=(dy||dx||1); menuIndex=(menuIndex+d+navList.length)%navList.length;
+  if(appState==='LEVEL_SELECT') levelNavPending=true; SFX.ui(); }
 function menuConfirm(){ if(showHelp){ showHelp=false; return; }
   if(appState==='SETTINGS'){ settingsConfirm(); return; }
   const n=navList[menuIndex]; if(n){ n.fn(); } }
@@ -2624,7 +2628,7 @@ function drawTitle(){
   navBtn('⚙  Settings', bx+hw+10,by,hw,Math.round(44*k), ()=>{ openSettings('TITLE'); }, {size:14}); by+=Math.round(54*k);
   navBtn('How to Play', bx,by,hw,Math.round(42*k), ()=>{ showHelp=true; SFX.ui(); }, {size:13});
   navBtn(settings.muted?'🔇  Muted':'🔊  Sound', bx+hw+10,by,hw,Math.round(42*k), ()=>{ setMuted(!settings.muted); }, {size:13});
-  txt('v0.2 "Photo Loop" · offline · drag a SCANNER .json onto the window to playtest it', cx, vpH-22, 11, COL.muted,'center','500');
+  if(vpH>=440) txt('v0.2 "Photo Loop" · offline · drag a SCANNER .json onto the window to playtest it', cx, vpH-22, 11, COL.muted,'center','500');
 }
 function drawModeSelect(){ const cx=vpW/2;
   txt('CHOOSE MODE', cx, vpH*0.16, 24, COL.txt,'center','800');
@@ -2647,10 +2651,12 @@ function makeHeatDiff(){ return Object.assign({}, DIFF.EASY, { label:'HEAT', hea
 function dailySeed(){ const d=new Date(); return (d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate())>>>0; }
 function startDaily(){ SFX.confirm(); const seed=dailySeed();
   const pool=LEVELS.slice(0,Math.max(1,LEVELS.length-1)); const lv=pool[seed%pool.length]||LEVELS[0];
+  if(lv.unlockLevel && xpLevel(PROGRESS.xp||0)<lv.unlockLevel)                      // the daily stays globally seeded — a locked pick is a preview, say so
+    showToast('🎁 Daily preview: '+lv.display.split('—')[0].trim()+' (unlocks at Lv '+lv.unlockLevel+')');
   pendingMode='DAILY'; fetchLevelData(lv).then(data=>{ lv.data=data; startRound(lv,'DAILY',DIFF.NORMAL,seed); }); }
 function levelBadge(entry){ if(entry.usedBaked) return ''; const key=entry.display+'|'+pendingMode+'|'+(pendingMode==='PRACTICE'?'PRACTICE':settings.lastDiff);
   const b=best[key]; return b?('PB '+b.bestScore+' ('+b.bestGrade+')'):''; }
-let levelScroll=0, levelMaxScroll=0;
+let levelScroll=0, levelMaxScroll=0, levelNavPending=false;   // follow the selection only on a KEYBOARD move — never fight finger/wheel scroll
 function drawLevelSelect(){ const cx=vpW/2;
   txt('SELECT LEVEL', cx, 40, 22, COL.txt,'center','800');
   const sub = pendingMode==='PRACTICE'?'Practice / Zen' : pendingMode==='HEAT'?'Heat · Endless'
@@ -2666,9 +2672,10 @@ function drawLevelSelect(){ const cx=vpW/2;
   const gridW=cols*cw+(cols-1)*pad, gx=(vpW-gridW)/2;
   const gridH=rows*chh+(rows-1)*pad;
   levelMaxScroll=Math.max(0, gridH-availH); if(!levelMaxScroll) levelScroll=0; levelScroll=clamp(levelScroll,0,levelMaxScroll);
-  // keyboard/gamepad: keep the selected card in view
-  if(menuIndex>=0 && menuIndex<n && levelMaxScroll){ const ry=((menuIndex/cols)|0)*(chh+pad);
+  // keyboard/gamepad: reveal the selected card, but only when a key actually moved the selection
+  if(levelNavPending && menuIndex>=0 && menuIndex<n && levelMaxScroll){ const ry=((menuIndex/cols)|0)*(chh+pad);
     if(ry-levelScroll<0) levelScroll=ry; else if(ry+chh-levelScroll>availH) levelScroll=ry+chh-availH; }
+  levelNavPending=false;
   const gy=top+Math.max(0,(availH-gridH)/2)-levelScroll;
   ctx.save(); ctx.beginPath(); ctx.rect(0,top-4,vpW,availH+8); ctx.clip();
   const plv=xpLevel(PROGRESS.xp||0);
@@ -2870,7 +2877,7 @@ function drawWardrobe(){ const cx=vpW/2; navList=[];
   const accents=SKINS.filter(s=>!s.medal);
   txt('HEAD ACCENTS', cx, y, 9, COL.amber,'center','700'); y+=12;
   const perRow=Math.min(accents.length, Math.max(5, Math.floor((vpW-40)/60)));
-  const cw=Math.min(52,(vpW-40)/perRow);
+  const cw=Math.min(vpH<520?38:52,(vpW-40)/perRow);   // short viewports compress the chips so the page still fits
   for(let r0=0; r0<accents.length; r0+=perRow){
     const rowN=Math.min(perRow, accents.length-r0);
     const aw=rowN*cw+(rowN-1)*gap, axx=(vpW-aw)/2;

@@ -46,7 +46,8 @@ let fails=0; const ok=(n,c,x='')=>{ console.log(`${c?'OK  ':'FAIL'}  ${n}${x?'  
  ok('P12 reached SUMMARY', fin.appState==='SUMMARY', 'appState='+fin.appState);
  ok('P12 summary carries earned XP', fin.summary && fin.summary.xp>0, 'xp='+(fin.summary&&fin.summary.xp));
  ok('P12 PROGRESS.xp accrued', fin.progress.xp>0 && fin.progress.xp===((fin.summary&&fin.summary.xp)||0), 'progress.xp='+fin.progress.xp);
- ok('P12 level derived (≥1)', fin.progress.level>=1, 'level='+fin.progress.level);
+ const expLvl=(xp)=>{ let L=1; while(xp>=75*L*(L+1) && L<999) L++; return L; };   // mirror of xpLevel — consistency, not vacuity
+ ok('P12 level consistent with the curve', fin.progress.level===expLvl(fin.progress.xp), 'level='+fin.progress.level+' xp='+fin.progress.xp);
  const stored=JSON.parse(_ls['aac.progress.v1']||'{}');
  ok('P12 xp persisted to localStorage', stored.xp===fin.progress.xp, 'stored.xp='+stored.xp);
  if(errors.length){ console.log('ERRORS:', errors.slice(0,6)); fails+=errors.length; }
