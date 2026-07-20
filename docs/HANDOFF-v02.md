@@ -1,5 +1,15 @@
 # HANDOFF — v0.2 "Photo Loop" session (2026-07-19)
 
+> ⚠ **DIRECTION PIVOT (2026-07-20, after the owner's first playtest):** the owner rejected the
+> top-down 2D as the main product and ordered the **3D version** built on `abduct-3d.html`
+> (Three.js + Playroom multiplayer). P30 added: canvas-texture body painting with a studio
+> (brushes/swatches/MATCH), the hider's sky-check camera (V), hiding = stillness × paint match,
+> per-instance colored landmarks as paint targets, touch controls. P31 added: HSV color wheel,
+> studio pose row + 🕺 touch, patterned landmarks (stripes/checkers/dots), in-client 🎲 random
+> map generation (5 themed recipes), and a beam battery with overheat so seekers can't spam
+> abduct. The 2D game remains live (portal card) with a '🧪 3D' door on its title. Everything
+> below this line documents the 2D build.
+
 This is the complete record of the v0.2 build session so nothing is lost if the environment stops.
 Read this + `docs/NEXT_SPEC.md` + the project memory to resume with full context.
 
