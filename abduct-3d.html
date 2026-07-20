@@ -265,6 +265,7 @@
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
     "playroomkit": "https://esm.sh/playroomkit"
   }
 }
@@ -272,6 +273,8 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { insertCoin, onPlayerJoin, myPlayer, isHost, getState, setState } from 'playroomkit';
 
 /* ============================ Tunables ============================ */
@@ -388,6 +391,7 @@ async function init(){
   try{
     setupScene();
     renderer.setAnimationLoop(loop);
+    await loadCharacter();                    // P35: rigged body (falls back to the capsule rig)
     await insertCoin();
     me = myPlayer();
     setupInput();
@@ -704,8 +708,11 @@ function addCover(type, gx, gy){
 /* ============================ Characters & poses ============================ */
 const WHITE = new THREE.Color(0xEDEFF4);
 const TORSO_Y = 0.95;
-const POSE_KEYS = ['idle','tpose','hips','wave','point','cheer','crouch','ball','lie'];
-const POSE_NAMES = { idle:'Stand', tpose:'T-pose', hips:'Hands on hips', wave:'Wave', point:'Point', cheer:'Cheer', crouch:'Crouch', ball:'Curl up', lie:'Lie down' };
+const POSE_KEYS = ['idle','sit','lie','dead','tpose','cheer'];
+const POSE_NAMES = { idle:'Stand', sit:'Sit', lie:'Lie down', dead:'Play dead', tpose:'Statue', cheer:'Cheer' };
+// P35: still poses are hiding silhouettes — each maps to a clip on the rigged body
+const POSE_CLIP = { idle:'Idle', sit:'Sit_Floor_Idle', lie:'Lie_Idle', dead:'Death_A_Pose', tpose:'T-Pose', cheer:'Cheer' };
+const CLIP_MOVE = 'Running_A';
 let myPose = 'idle', poseIdx = 0;
 
 // gamepad state
@@ -752,6 +759,60 @@ function buildDoorGuy(base){
   return { root, joints, skin:[skin], accent:[accent], paint };
 }
 
+/* P35: real rigged character — KayKit Adventurers (CC0). One plain body for everyone,
+   painted by the same 128x128 canvas skin. KayKit ships palette-atlas UVs, so we re-project
+   them (front projection) at load: canvas top = head, bottom = feet — the painting WRAPS you. */
+const CHAR_URL = 'assets/characters/character.glb';
+const CHAR_HEIGHT = 2.0;
+const CHAR_FACING = 0;                 // set to Math.PI if the rig ever runs backwards
+let charBase = null;
+async function loadCharacter(){
+  try{
+    const gltf = await new GLTFLoader().loadAsync(CHAR_URL);
+    const gear = /sword|shield|helmet|cape|bow|dagger|axe|quiver|arrow|mug/i;
+    gltf.scene.traverse(o=>{ if(gear.test(o.name)) o.visible = false; });
+    gltf.scene.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const size = box.getSize(new THREE.Vector3());
+    const v = new THREE.Vector3();
+    gltf.scene.traverse(o=>{
+      if(!o.isMesh && !o.isSkinnedMesh) return;
+      const pos = o.geometry.attributes.position, uv = o.geometry.attributes.uv;
+      if(!uv) return;
+      for(let i=0;i<pos.count;i++){
+        v.fromBufferAttribute(pos,i); o.localToWorld(v);
+        uv.setXY(i, (v.x-box.min.x)/Math.max(1e-6,size.x), (v.y-box.min.y)/Math.max(1e-6,size.y));
+      }
+      uv.needsUpdate = true;
+    });
+    const sc = CHAR_HEIGHT/Math.max(1e-6,size.y);
+    charBase = { scene:gltf.scene, animations:gltf.animations, scale:sc, lift:-box.min.y*sc };
+  }catch(e){ console.warn('character.glb unavailable — using built-in rig', e); }
+}
+function buildRealGuy(base){
+  const paint = makePaintSkin();
+  const skin = new THREE.MeshStandardMaterial({ color:0xffffff, map:paint.tex, roughness:.55, transparent:true });
+  const root = new THREE.Group();
+  const rig = SkeletonUtils.clone(charBase.scene);
+  rig.scale.setScalar(charBase.scale);
+  rig.position.y = charBase.lift;
+  rig.rotation.y = CHAR_FACING;
+  rig.traverse(o=>{ if(o.isMesh || o.isSkinnedMesh){ o.material = skin; o.frustumCulled = false; } });
+  root.add(rig);
+  const mixer = new THREE.AnimationMixer(rig);
+  const actions = {};
+  for(const clip of charBase.animations) actions[clip.name] = mixer.clipAction(clip);
+  return { root, joints:null, skin:[skin], accent:[], paint, mixer, actions };
+}
+function setCharAction(p, name){
+  if(p.curAction === name) return;
+  const next = p.actions[name] || p.actions.Idle; if(!next) return;
+  const prev = p.actions[p.curAction];
+  next.reset().fadeIn(0.16).play();
+  if(prev && prev !== next) prev.fadeOut(0.16);
+  p.curAction = name;
+}
+
 const POSES = {
   idle(J){},
   tpose(J){ J.lArm.sh.rotation.z = 1.45; J.rArm.sh.rotation.z = -1.45; },
@@ -773,7 +834,8 @@ function applyPose(J, key){
   for(const a of [J.lArm, J.rArm]){ a.sh.rotation.set(0,0,0); a.el.rotation.set(0,0,0); }
   for(const l of [J.lLeg, J.rLeg]){ l.hp.rotation.set(0,0,0); l.kn.rotation.set(0,0,0); }
   J.lArm.sh.rotation.z = 0.14; J.rArm.sh.rotation.z = -0.14;      // resting splay
-  (POSES[key] || POSES.idle)(J);
+  const ALIAS = { sit:'ball', dead:'lie' };
+  (POSES[ALIAS[key]||key] || POSES.idle)(J);
 }
 function cyclePose(dir){
   poseIdx = (poseIdx + (dir||1) + POSE_KEYS.length) % POSE_KEYS.length;
@@ -824,7 +886,7 @@ function handleJoin(state){
   const base = baseColor(state);
   const group = new THREE.Group();
 
-  const dg = buildDoorGuy(base);
+  const dg = charBase ? buildRealGuy(base) : buildDoorGuy(base);
   const hider = dg.root;
 
   const ufo = new THREE.Group();
@@ -851,6 +913,7 @@ function handleJoin(state){
   groundRing.rotation.x = -Math.PI/2; groundRing.visible = false; scene.add(groundRing);
 
   const p = { state, group, hider, ufo, beamMesh, groundRing, skin:dg.skin, accent:dg.accent, joints:dg.joints,
+              mixer:dg.mixer, actions:dg.actions, curAction:null,
               paint:dg.paint, lastPtex:null, stillT:0, lastX:0, lastZ:0,
               appliedPose:'idle', base, target:new THREE.Vector3(), targetYaw:0, prevAbducted:false, abductT:-1 };
   players.push(p);
@@ -1495,7 +1558,13 @@ function clientTick(dt){
     // P30 camouflage look + pose (hiders): the PAINT is the camo — bodies fade only as paint+stillness earn it
     if(r==='hider'){
       const pk = (p.state===me) ? myPose : (p.state.getState('pose')||'idle');
-      if(pk !== p.appliedPose){ applyPose(p.joints, pk); p.appliedPose = pk; }
+      if(p.mixer){                                            // P35: rigged body — run vs pose clips
+        const ax = p.group.position.x, az = p.group.position.z;
+        const sp = Math.hypot(ax-(p.animX ?? ax), az-(p.animZ ?? az)) / Math.max(1e-4, dt);
+        p.animX = ax; p.animZ = az;
+        setCharAction(p, sp > 1.5 ? CLIP_MOVE : (POSE_CLIP[pk] || 'Idle'));
+        p.mixer.update(dt);
+      } else if(pk !== p.appliedPose){ applyPose(p.joints, pk); p.appliedPose = pk; }
       if(p.state!==me){                                        // apply their published body paint
         const pt = p.state.getState('ptex');
         if(pt && pt !== p.lastPtex){ p.lastPtex = pt;
