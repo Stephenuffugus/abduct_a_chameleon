@@ -2405,7 +2405,9 @@ function togglePause(){ if(appState!=='ROUND') return;
   else if(roundState==='PAUSED') resumeRound(); }
 function resumeRound(){ showHelp=false; roundState='RESUME_COUNTDOWN'; round.countdown=RESUME_COUNTDOWN; round.lastCount=null; SFX.ui(); }
 function gotoTitle(){ appState='TITLE'; menuIndex=0; showHelp=false; stopAllLoops(); }
-function startPlay(){ SFX.confirm(); if(!settings.tutorialSeen){ settings.tutorialSeen=true; saveSettings(); showHelp=true; } appState='MODE_SELECT'; menuIndex=0; }
+// First Flight (the in-game tour) is the teacher now — no wall of text on first PLAY.
+// tutorialSeen persists for back-compat; How to Play stays one tap away on title/settings/pause.
+function startPlay(){ SFX.confirm(); if(!settings.tutorialSeen){ settings.tutorialSeen=true; saveSettings(); } appState='MODE_SELECT'; menuIndex=0; }
 
 async function selectLevel(entry){ SFX.confirm(); const data=await fetchLevelData(entry); entry.data=data;
   if(pendingMode==='PRACTICE') startRound(entry,'PRACTICE',PRACTICE_DIFF);
