@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
 <title>ABDUCTEE — Multiplayer</title>
 <style>
   :root{
@@ -117,6 +117,33 @@
     border:1px solid var(--line);border-radius:7px;padding:5px 9px;cursor:pointer}
   #levelBtns button:hover{color:var(--cyan);border-color:var(--cyan)}
 
+  /* ---- P35 phone mode: the world is the UI ---- */
+  body.touch #controls, body.touch #maphint, body.touch #poseBar, body.touch #scores { display:none !important }
+  body.touch #status { padding:5px 10px; min-width:0 }
+  body.touch #status .row { display:none }
+  body.touch #role { margin-bottom:0; font-size:11.5px }
+  body.touch #timer { top:8px; padding:4px 13px; font-size:15px }
+  body.touch #banner { align-items:flex-start }
+  body.touch #banner .inner { margin-top:52px; padding:7px 13px; max-width:88vw; border-radius:10px }
+  body.touch #bannerTitle { font-size:12.5px; margin:0 0 2px }
+  body.touch #bannerSub { font-size:10px; line-height:1.35 }
+  body.touch #meter { bottom:92px; width:min(300px,54vw) }
+  body.touch #paint { right:8px; transform:translateY(-50%) scale(.92); transform-origin:right center }
+  #mapsToggle{ position:fixed; top:14px; left:50%; transform:translateX(calc(-50% - 110px)); z-index:12;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; color:var(--txt);
+    width:38px; height:38px; font-size:16px; cursor:pointer }
+  body.touch #mapsToggle{ top:8px; width:34px; height:34px }
+  #levelBar{ top:60px }
+  #rotate{ position:fixed; inset:0; z-index:70; display:none; flex-direction:column; gap:14px;
+    align-items:center; justify-content:center; background:var(--bg); text-align:center }
+  #rotate .ph{ font-size:44px; animation:rot 1.6s ease-in-out infinite }
+  @keyframes rot{ 0%,20%{ transform:rotate(0) } 60%,100%{ transform:rotate(90deg) } }
+  body.touch.portrait #rotate{ display:flex }
+  #tapStart{ position:fixed; inset:0; z-index:65; display:none; flex-direction:column; gap:12px;
+    align-items:center; justify-content:center; background:rgba(8,12,25,.92); text-align:center }
+  #tapStart .big{ font-size:22px; font-weight:800; letter-spacing:.1em; color:var(--amber) }
+  #tapStart .sm{ color:var(--muted); font-size:12px }
+
   /* drop target flash */
   #dropzone{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;
     background:rgba(63,208,224,.10);border:3px dashed var(--cyan);font-family:var(--mono);color:var(--cyan);font-size:18px}
@@ -166,6 +193,11 @@
     <div class="card"><h2>Couldn't start</h2><p id="errorMsg"></p>
       <p>Serve this over <b>http</b>, not <code>file://</code>. Run <code>npx serve</code> or <code>python3 -m http.server</code> in this folder and open the localhost URL.</p></div>
   </div>
+
+  <button id="mapsToggle" class="hidden">🗺</button>
+  <div id="rotate"><div class="ph">📱</div><div style="font-weight:700">Turn your phone sideways</div>
+    <div style="color:var(--muted);font-size:12px">this game is played in landscape</div></div>
+  <div id="tapStart"><div class="big">▶ TAP TO PLAY</div><div class="sm">goes fullscreen · sound on</div></div>
 
   <div id="dropzone">Release to load map</div>
 
@@ -501,7 +533,7 @@ function loadMapFromDrop(json){                 // host loads a SCANNER export -
   setState('mapV', (getState('mapV')||0) + 1, true);
 }
 
-let levelListLoaded = false;
+let levelListLoaded = false, mapsOpen = false;
 async function loadLevelList(){                 // reads maps/levels.json and builds the host picker
   try{
     const res = await fetch('maps/levels.json'); if(!res.ok) throw 0;
@@ -518,13 +550,16 @@ async function loadLevelList(){                 // reads maps/levels.json and bu
   const box2 = document.getElementById('levelBtns');
   if(box2){ const rb = document.createElement('button');
     rb.textContent = '🎲 Random'; rb.style.borderColor = 'var(--amber)'; rb.style.color = 'var(--amber)';
-    rb.onclick = ()=>{ if(!isHost()) return;
+    rb.onclick = ()=>{ if(!isHost()) return; mapsOpen = false;
       setState('map', makeRandomMap((Math.random()*0x7fffffff)|0), true);
       setState('mapV', (getState('mapV')||0) + 1, true); };
     box2.appendChild(rb); }
+  const mt = document.getElementById('mapsToggle');
+  if(mt) mt.onclick = ()=>{ mapsOpen = !mapsOpen; SFX.click(); };
 }
 async function loadLevel(file){                 // host only: fetch a themed map and publish it
   if(!isHost()) return;
+  mapsOpen = false;
   try{
     const res = await fetch(file); if(!res.ok) throw 0;
     const json = await res.json();
@@ -1219,8 +1254,18 @@ function setupTouch(){
   const coarse = !matchMedia('(pointer:fine)').matches;
   if(!coarse) return;
   touch.on = true;
+  document.body.classList.add('touch');
   document.getElementById('touchUI').classList.remove('hidden');
   document.getElementById('clickToPlay').classList.add('hidden');
+  // P35: tap once → fullscreen + landscape; the world becomes the whole screen
+  const ts = document.getElementById('tapStart'); ts.style.display = 'flex';
+  ts.addEventListener('click', ()=>{
+    ensureAudio(); ts.style.display = 'none';
+    try{ document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); }catch(_){}
+    try{ screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(()=>{}); }catch(_){}
+  });
+  const orient = ()=> document.body.classList.toggle('portrait', innerHeight > innerWidth);
+  addEventListener('resize', orient); orient();
   const L = document.getElementById('stickL'), R = document.getElementById('stickR');
   let lId=null, lx0=0, ly0=0, rId=null, rx0=0, ry0=0;
   L.addEventListener('pointerdown', e=>{ ensureAudio(); lId=e.pointerId; lx0=e.clientX; ly0=e.clientY; L.setPointerCapture(lId); });
@@ -1597,7 +1642,9 @@ function updateHUD(role, abd){
   $('ctrlSeeker').classList.toggle('hidden', abd || role!=='seeker');
   $('ctrlSpec').classList.toggle('hidden', !abd);
   $('poseBar').classList.toggle('hidden', abd || role==='seeker');
-  $('levelBar').classList.toggle('hidden', !(isHost() && levelListLoaded && phase!=='playing'));
+  const canPick = isHost() && levelListLoaded && phase!=='playing';
+  $('mapsToggle').classList.toggle('hidden', !canPick);
+  $('levelBar').classList.toggle('hidden', !(canPick && mapsOpen));
   $('reticle').style.display = (!abd && role==='seeker' && seekerView==='topdown') ? 'block' : 'none';
   if(touch.on){
     $('tPaint').classList.toggle('hidden', abd || role==='seeker');
@@ -1649,8 +1696,7 @@ function updateHUD(role, abd){
   const bEl=$('banner');
   if(phase==='waiting'){
     if(bot) showBanner('','Training grounds',
-      '⭐ '+soloStars+' earned · caught '+botCatches+'× — points flow while it LOOKS at you and sees nothing. '
-      +'E paint · V sky check · T whistle to bait it closer. A second player (same URL) starts real rounds.');
+      '⭐ '+soloStars+' · caught '+botCatches+'× — earn while it looks and sees nothing. 🎨 paint · 👁 sky · 📣 bait. Second player = real rounds.');
     else showBanner('','Waiting for players','Roam around to try the controls. Open this URL in another tab (or use Add a Player) to start a round.');
   }
   else if(phase==='intermission'){
