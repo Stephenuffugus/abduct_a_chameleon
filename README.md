@@ -120,6 +120,32 @@ the summary). The wardrobe tracks Level, challenges, ten head accents, biome med
 
 ---
 
+## 🌐 Play Online — 1v1 hider vs hunter
+
+One of you **hides and paints**; the other **flies the ship and hunts with their eyes** — no scanner
+online, human perception is the whole game. Title → **Play Online** → one player hosts (gets a
+4-letter code), the other joins with it. The hider picks the map; the round is on.
+
+**Hosting it:** the game itself is static (any web host). Multiplayer needs the tiny relay in
+`server/`:
+
+```bash
+cd server && npm install && npm start     # serves the game AND the relay on :8080
+```
+
+One Node process = the whole stack (game + `/ws` relay). Deploy it on anything that runs Node
+(Render / Railway / Fly free tiers work). If the game lives on a static host instead, deploy just
+the relay and open the game with `?mp=wss://your-relay.example.com/ws`.
+
+Under the hood: the hider's client runs the real, authoritative simulation (the hunter's ship is
+driven by the remote player's inputs; detection/beam rules are identical to single-player), the
+hunter's client plays Hunt mode against a live human streamed in snapshots with local prediction.
+The relay is a dumb pipe — no accounts, no state, no game logic server-side. Verified headlessly:
+`cd test && npm run online` boots the real relay + two full game instances and plays a round to the
+catch.
+
+---
+
 ## Design a level — SCANNER
 
 `scanner-level-editor.html` is a standalone top-down level editor. Paint terrain, drop cover and

@@ -1007,6 +1007,13 @@ addEventListener('keydown', e=>{
     else if(e.code==='KeyM') setMuted(!settings.muted);
     else if(studio.open) studioKey(e.code);
   } else {
+    if(appState==='ONLINE_JOIN'){                                 // P20: type the room code straight from the keyboard
+      const mm=/^Key([A-Z])$/.exec(e.code);
+      if(mm && 'IO'.indexOf(mm[1])<0 && NET.codeInput.length<4){ NET.codeInput+=mm[1]; SFX.ui();
+        if(NET.codeInput.length===4){ netConnect(()=>{ try{NET.ws.send(JSON.stringify({t:'join',code:NET.codeInput}));}catch(_){} appState='ONLINE'; }); } return; }
+      if(e.code==='Backspace'){ NET.codeInput=NET.codeInput.slice(0,-1); SFX.back(); return; }
+      if(e.code==='Escape'){ appState='ONLINE'; menuIndex=0; SFX.back(); return; }
+    }
     if(e.code==='Enter'||e.code==='Space') menuConfirm();
     else if(e.code==='Escape'||e.code==='Backspace') menuBack();
     else if(e.code==='ArrowLeft') menuNav(-1,0);
@@ -1418,7 +1425,7 @@ function updateBots(dt){
           b.suspicion=Math.max(b.suspicion,0.5); } } } } }
   }
   let nearest=0;
-  for(const u of ufos){ updateUfo(u,dt,D);
+  for(const u of ufos){ if(u.remote){ remoteUfoStep(u,dt,D); } else updateUfo(u,dt,D);
     const d=Math.hypot(u.x-player.x,u.y-player.y); const prox=clamp01(1-d/(D.SCAN_R*2)); if(prox>nearest)nearest=prox; }
   round.nearUfo=nearest;
   let maxS=0; for(const u of ufos) if(u.suspicion>maxS) maxS=u.suspicion; round.maxSusp=maxS;
@@ -2047,8 +2054,10 @@ function drawRoundHUD(){
   ax += right ? -(60+gap) : (96+gap);
   uiBtn('🕺', ax, ay, 60, BS, ()=> cyclePose(1), {rad:14, size:20}); pushMode('pose',ax,60);
   txt(POSE_NAMES[player.pose], ax+30, ay-8, 9, COL.muted, 'center', '600');
-  uiBtn('⏸', edge, 14, 40, 40, ()=> togglePause(), {rad:9, size:16});
-  uiBtn(settings.muted?'🔇':'🔊', edge+46, 14, 40, 40, ()=> setMuted(!settings.muted), {rad:9, size:14});
+  if(round.online){ uiBtn('LEAVE', edge, 14, 62, 40, ()=>{ netLeave(); gotoTitle(); }, {rad:9, size:11, color:COL.danger, stroke:COL.danger});
+    txt('🌐 LIVE', edge+70, 34, 10, COL.cyan, 'left','800'); }
+  else uiBtn('⏸', edge, 14, 40, 40, ()=> togglePause(), {rad:9, size:16});
+  uiBtn(settings.muted?'🔇':'🔊', edge+46+(round.online?22:0), 14, 40, 40, ()=> setMuted(!settings.muted), {rad:9, size:14});
   // MODE pill (always visible, always the one road ALL the way home to Move)
   { const held = ctrlMode==='PAINT' && camLock;
     const mc = ctrlMode==='PAINT'?COL.amber:(ctrlMode==='INSPECT'?COL.green:COL.cyan);
@@ -2213,8 +2222,11 @@ function drawHuntHUD(){
   txt('SCAN to reveal hiders · fly over to abduct', vpW/2, 45, 8.5, COL.muted,'center','500');
   const t=Math.max(0,Math.ceil(round.timeLeft)), ts=Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
   panel(vpW-96,12,84,40,9); txt(ts, vpW-54,32,20, round.timeLeft<=15?COL.danger:COL.txt,'center','700'); txt('HUNT', vpW-54,48,8,COL.muted,'center','700');
-  uiBtn('⏸',14,14,40,40,()=>togglePause(),{rad:9,size:16});
-  uiBtn(settings.muted?'🔇':'🔊',60,14,40,40,()=>setMuted(!settings.muted),{rad:9,size:14});
+  if(round.online){ uiBtn('LEAVE',14,14,62,40,()=>{ netLeave(); gotoTitle(); },{rad:9,size:11,color:COL.danger,stroke:COL.danger});
+    uiBtn(settings.muted?'🔇':'🔊',82,14,40,40,()=>setMuted(!settings.muted),{rad:9,size:14}); }
+  else { uiBtn('⏸',14,14,40,40,()=>togglePause(),{rad:9,size:16});
+  uiBtn(settings.muted?'🔇':'🔊',60,14,40,40,()=>setMuted(!settings.muted),{rad:9,size:14}); }
+  if(!round.online){                                             // P20: 1v1 has no scanner — you hunt with your eyes
   const right=settings.handed!=='left', bs=66, bx=right?vpW-14-bs:14, by=vpH-bs-14, ready=player.pulseCd<=0;
   ctx.fillStyle=ready?'rgba(63,208,224,0.22)':'rgba(21,27,44,0.6)'; rr(bx,by,bs,bs,15); ctx.fill();
   ctx.strokeStyle=ready?COL.cyan:COL.line; ctx.lineWidth=2; rr(bx,by,bs,bs,15); ctx.stroke();
@@ -2222,6 +2234,7 @@ function drawHuntHUD(){
   if(player.pulseCd>0){ ctx.globalAlpha=0.5; ctx.fillStyle='#05070d'; ctx.beginPath(); ctx.moveTo(bx+bs/2,by+bs/2);
     ctx.arc(bx+bs/2,by+bs/2,bs/2,-Math.PI/2,-Math.PI/2+TAU*clamp01(player.pulseCd/PULSE_CD)); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1; }
   roundHits.push({x:bx,y:by,w:bs,h:bs,fn:()=>huntPulse()});
+  }
   if(joystick){ ctx.globalAlpha=0.5; ctx.strokeStyle=COL.cyan; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(joystick.cx,joystick.cy,60,0,TAU); ctx.stroke();
     ctx.fillStyle=COL.cyan; ctx.beginPath(); ctx.arc(joystick.cx+joystick.dx*60,joystick.cy+joystick.dy*60,16,0,TAU); ctx.fill(); ctx.globalAlpha=1; }
 }
@@ -2291,6 +2304,7 @@ function drawPause(){ ctx.fillStyle='rgba(8,12,25,0.7)'; ctx.fillRect(0,0,vpW,vp
   navBtn('Settings', bx,by,bw,bh, ()=>openSettings('PAUSE'), {size:15}); by+=step;
   navBtn('Quit to Menu', bx,by,bw,bh, ()=>gotoTitle(), {size:15,stroke:COL.danger,color:COL.danger});
   if(menuIndex>=navList.length) menuIndex=navList.length-1;
+  navListApp=appState;
 }
 
 /* ---- Paint Studio panel ---- */
@@ -2425,6 +2439,199 @@ function crawlPaint(a,dt){ let maxd=0; for(const ch of ['r','g','b']){ const ste
   a.currentPaint[ch]+=clamp(a.targetPaint[ch]-a.currentPaint[ch],-step,step);
   maxd=Math.max(maxd,Math.abs(a.targetPaint[ch]-a.currentPaint[ch])); } a.shifting=maxd>SHIFT_DELTA_EPS; }
 
+/* ============================ P20 ONLINE — 1v1 hider vs hunter ============================ */
+// Host = the HIDER, runs the real authoritative sim (their UFO #1 is driven by the remote human).
+// Guest = the HUNTER, literally plays HUNT mode — except the "bot" is a live human streamed in
+// snapshots, and all catch/win decisions come from the host. The relay is a dumb pipe (server/).
+const NET={ ws:null, on:false, role:null, code:null, peer:false, status:'off', err:'',
+  codeInput:'', pend:null, sendT:0, snapT:0, lastSnapAt:0, intent:{mx:0,my:0} };
+function mpServerUrl(){
+  try{ const q=new URLSearchParams(location.search).get('mp'); if(q) return q; }catch(_){}
+  if(location.protocol==='file:') return 'ws://localhost:8080/ws';
+  return (location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
+}
+function netConnect(then){
+  if(NET.ws && NET.on){ then&&then(); return; }
+  NET.status='connecting'; NET.err='';
+  let ws; try{ ws=new WebSocket(mpServerUrl()); }catch(e){ NET.status='off'; NET.err='bad server address'; return; }
+  NET.ws=ws;
+  ws.onopen=()=>{ NET.on=true; NET.status='lobby'; then&&then(); };
+  ws.onmessage=(ev)=>{ let m; try{ m=JSON.parse(ev.data); }catch(_){ return; } netOnServer(m); };
+  ws.onerror=()=>{ NET.err='could not reach the relay'; };
+  ws.onclose=()=>{ const was=NET.on; netReset(false);
+    if(was && appState==='ROUND'){ showToast('🌐 connection lost'); gotoTitle(); }
+    else if(appState==='ONLINE'||appState==='ONLINE_JOIN'){ NET.status='off'; } };
+}
+function netSend(data){ try{ if(NET.ws&&NET.ws.readyState===1) NET.ws.send(JSON.stringify({t:'msg',data})); }catch(_){} }
+function netReset(closeWs){ if(closeWs!==false){ try{ NET.ws&&NET.ws.close(); }catch(_){} }
+  NET.ws=null; NET.on=false; NET.role=null; NET.code=null; NET.peer=false; NET.status='off'; NET.pend=null; NET.codeInput=''; }
+function netLeave(){ netSend({k:'bye'}); netReset(); }
+function netOnServer(m){
+  if(m.t==='hosted'){ NET.role='host'; NET.code=m.code; NET.status='lobby'; }
+  else if(m.t==='joined'){ NET.role='guest'; NET.code=m.code; NET.status='lobby'; }
+  else if(m.t==='err'){ NET.err=m.why||'error'; SFX.back(); }
+  else if(m.t==='peer'){ NET.peer=!!m.on;
+    if(m.on){ SFX.confirm();
+      if(NET.role==='host'){ pendingMode='VS'; appState='LEVEL_SELECT'; menuIndex=0; showToast('🌐 Player joined — pick the hiding ground'); } }
+    else { if(appState==='ROUND'||appState==='SUMMARY'){ showToast('🌐 the other player left'); netReset(); gotoTitle(); }
+      else if(NET.role==='host'&&appState==='LEVEL_SELECT'&&pendingMode==='VS'){ showToast('🌐 the other player left'); appState='ONLINE'; }
+      else showToast('🌐 the other player left'); } }
+  else if(m.t==='msg') netOnPeer(m.data||{});
+}
+function netOnPeer(d){
+  if(d.k==='init' && NET.role==='guest'){
+    const e=LEVELS.find(x=>x.name===d.name);
+    if(!e){ NET.err='missing map: '+d.name; netSend({k:'ready',ok:0}); return; }
+    NET.pend={ entry:e, seed:d.seed>>>0 };
+    fetchLevelData(e).then(data=>{ e.data=data; netSend({k:'ready',ok:1}); });
+  }
+  else if(d.k==='ready' && NET.role==='host' && NET.pend){
+    if(!d.ok){ showToast('🌐 guest is missing that map'); appState='LEVEL_SELECT'; return; }
+    netSend({k:'start'}); netStartHost(NET.pend.entry, NET.pend.seed);
+  }
+  else if(d.k==='start' && NET.role==='guest' && NET.pend){ netStartGuest(NET.pend.entry, NET.pend.seed); }
+  else if(d.k==='in' && NET.role==='host'){ NET.intent.mx=clamp(+d.mx||0,-1,1); NET.intent.my=clamp(+d.my||0,-1,1); }
+  else if(d.k==='st' && NET.role==='guest'){ netApplySnap(d); }
+  else if(d.k==='end' && NET.role==='guest'){ netGuestEnd(d); }
+  else if(d.k==='bye'){ if(appState==='ROUND'||appState==='SUMMARY'){ showToast('🌐 the other player left'); netReset(); gotoTitle(); } }
+}
+function netHostPickedLevel(entry){ NET.pend={ entry, seed:(((Math.random()*0x7fffffff)|0))>>>0 };
+  netSend({k:'init', name:entry.name, seed:NET.pend.seed}); appState='ONLINE'; NET.status='loading'; }
+function netStartHost(entry, seed){
+  startRound(entry,'SURVIVE',DIFF.NORMAL,seed);
+  const sk=MAP.spawns.filter(s=>s.role==='seeker'); const s0=sk[0]||{x:2,y:2};
+  round.ufos.length=1; const u=round.ufos[0];                    // exactly one hunter, and it's human
+  u.x=(s0.x+0.5)*TILE; u.y=(s0.y+0.5)*TILE; u.remote=true; u.state='PATROL'; u.suspicion=0; u.beamCharge=0;
+  round.online='host'; NET.status='playing'; NET.snapT=0;
+}
+function netStartGuest(entry, seed){
+  startRound(entry,'HUNT',DIFF.NORMAL,seed);
+  const sk=MAP.spawns.filter(s=>s.role==='seeker'); const s0=sk[0]||{x:2,y:2};
+  player.x=(s0.x+0.5)*TILE; player.y=(s0.y+0.5)*TILE; player.vx=0; player.vy=0;
+  round.bots.length=1; const b=round.bots[0];                    // the "bot" is the human hider, streamed
+  if(b){ b.caught=false; b.pinged=0; b.state='HIDE'; }
+  round.online='guest'; round.timeLeft=DIFF.NORMAL.SURVIVE_TIME; NET.status='playing'; NET.lastSnapAt=nowMs();
+}
+// ---- host side: drive the remote hunter + stream snapshots (called from the fixed-step sim) ----
+function remoteUfoStep(u,dt,D){
+  const SPD=D.CHASE_SPD*1.12;                                    // region tuning carries into the human hunter
+  const mx=NET.intent.mx, my=NET.intent.my, mv=Math.hypot(mx,my);
+  if(mv>0.05){ u.vx=mx/Math.max(1,mv)*SPD; u.vy=my/Math.max(1,mv)*SPD; u.heading=Math.atan2(my,mx); }
+  else { u.vx*=0.85; u.vy*=0.85; }
+  u.x=clamp(u.x+u.vx*dt,0,worldW); u.y=clamp(u.y+u.vy*dt,0,worldH);
+  u.scanPhase+=2.2*dt;
+  // sensing stays SIMULATED (same rules as bots) so the detection meter + threat arrows tell the truth
+  const dx=player.x-u.x, dy=player.y-u.y, d=Math.hypot(dx,dy);
+  let signal=0;
+  if(d<=D.SCAN_R && losClear(u.x,u.y,player.x,player.y)) signal=player.C*smoothstep(0,1,clamp01(1-d/D.SCAN_R));
+  if(signal>D.NOISE_FLOOR){ const grace=round.spawnGrace>0?0.5:1; u.suspicion+=D.SUSPECT_GAIN*signal*dt*grace;
+    u.lastSuspect.x+=(player.x-u.lastSuspect.x)*Math.min(1,clamp(signal,0.1,1)*BELIEF_TRACK*dt);
+    u.lastSuspect.y+=(player.y-u.lastSuspect.y)*Math.min(1,clamp(signal,0.1,1)*BELIEF_TRACK*dt); }
+  else u.suspicion-=D.SUSPECT_DECAY*dt;
+  u.suspicion=clamp01(u.suspicion); u.signal=signal;
+  // the beam is proximity-engaged like HUNT mode; re-hide still breaks the lock (the hider's tools all work)
+  const prev=u.state;
+  if(d<BEAM_R && losClear(u.x,u.y,player.x,player.y) && player.C>=BEAM_HOLD_C && round.spawnGrace<=0){
+    if(u.state!=='BEAM'){ addTrauma(TRAUMA.beamLock); vibe(40); }
+    u.state='BEAM'; u.beamCharge+=(1/D.LOCK_TIME)*dt;
+    if(u.beamCharge>=1) triggerAbduction(u);
+  } else { u.state = u.suspicion>=ENTER_CHASE ? 'CHASE' : (mv>0.05?'SCAN':'PATROL');
+    u.beamCharge=Math.max(0,u.beamCharge-BEAM_DRAIN*dt); }
+  if(prev==='BEAM'&&u.state!=='BEAM'&&!round.caught&&u.beamCharge>0.05){ round.metrics.nearMisses++; nearMiss(); }
+  if(prev!=='CHASE'&&prev!=='BEAM'&&(u.state==='CHASE'||u.state==='BEAM')){ round.metrics.spottedCount++;
+    round.spottedReason=spottedReason(player.mq,player.m,player.S,player.ref.dominantKey);
+    round.reasonUntil=nowMs()+2600; SFX.spotted(); FX.spottedV=1;
+    if(ctrlMode!=='MOVE'&&!round.diff.practice){ goHome(); panBoost=HOLD_GLIDE_MUL; showToast('Spotted — move!'); } }
+}
+function stepHostNet(dt){
+  NET.snapT+=dt; if(NET.snapT<1/12) return; NET.snapT=0;
+  const u=round.ufos[0]||{};
+  netSend({ k:'st', tl:Math.round(round.timeLeft*10)/10, gr:round.spawnGrace>0?1:0,
+    h:{ x:Math.round(player.x), y:Math.round(player.y), c1:rgb2hex(player.currentPaint),
+        c2:player.splitPaint?rgb2hex(player.currentPaint2):null, cz:+player.conceal.toFixed(2),
+        po:player.pose, al:player.alive?1:0, fa:+player.facing.toFixed(2) },
+    u:{ x:Math.round(u.x||0), y:Math.round(u.y||0), st:u.state, bc:+(u.beamCharge||0).toFixed(2), su:+(u.suspicion||0).toFixed(2) } });
+}
+// ---- guest side: send input, predict own saucer, render the streamed hider ----
+function netApplySnap(d){
+  if(!round||round.online!=='guest') return;
+  NET.lastSnapAt=nowMs();
+  round.timeLeft=d.tl; round.spawnGrace=d.gr?1:0;
+  const b=round.bots[0];
+  if(b){ b._tx=d.h.x; b._ty=d.h.y; b.currentPaint=hex2rgb(d.h.c1)||b.currentPaint;
+    b.currentPaint2=d.h.c2?hex2rgb(d.h.c2):null; b.conceal=d.h.cz; b.C=clamp01(1-d.h.cz);
+    b.pose=d.h.po; b.facing=d.h.fa; b.alive=!!d.h.al; }
+  NET.uSnap=d.u;
+}
+function stepGuestNet(dt){
+  // countdown runs locally for feel; the host clock arrives with every snapshot
+  if(roundState==='COUNTDOWN'){ round.countdown-=dt;
+    const c=Math.ceil(round.countdown); if(c!==round.lastCount&&c>0){ round.lastCount=c; SFX.count(); }
+    if(round.countdown<=0){ roundState='PLAYING'; SFX.go(); } return; }
+  if(roundState!=='PLAYING') return;
+  gatherInput();
+  NET.sendT+=dt; if(NET.sendT>=1/20){ NET.sendT=0; netSend({k:'in', mx:+input.mx.toFixed(2), my:+input.my.toFixed(2)}); }
+  // predict own saucer, then ease toward the host's authority — snappy but honest
+  const D=round.diff, SPD=D.CHASE_SPD*1.12, mv=Math.hypot(input.mx,input.my);
+  if(mv>0.05){ player.x+=input.mx/Math.max(1,mv)*SPD*dt; player.y+=input.my/Math.max(1,mv)*SPD*dt;
+    player.facing=Math.atan2(input.my,input.mx); }
+  player.x=clamp(player.x,0,worldW); player.y=clamp(player.y,0,worldH);
+  if(NET.uSnap){ player.x+=(NET.uSnap.x-player.x)*Math.min(1,dt*3); player.y+=(NET.uSnap.y-player.y)*Math.min(1,dt*3);
+    player.beamCharge=NET.uSnap.bc||0; }
+  const b=round.bots[0];
+  if(b){ if(b._tx!=null){ b.x+=(b._tx-b.x)*Math.min(1,dt*12); b.y+=(b._ty-b.y)*Math.min(1,dt*12); }
+    b.breathP=(b.breathP||0)+dt*1.6;
+    player.beamTarget = (player.beamCharge>0.02 && !b.caught) ? b : null; }
+  if(nowMs()-NET.lastSnapAt>4000){ showToast('🌐 connection lost'); netReset(); gotoTitle(); }
+}
+function netGuestEnd(d){
+  if(!round) return;
+  const win=d.win==='hunter';
+  round.finalized=true; if(round.bots[0]&&win){ round.bots[0].caught=true; }
+  round.summary={ outcome:win?'WIN':'LOSE', hunt:true, vs:true, caught:win?1:0, total:1,
+    score:win?800:120, grade:win?'A':'C', timeUsed:DIFF.NORMAL.SURVIVE_TIME-(round.timeLeft||0),
+    survSec:0, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0, t0:nowMs() };
+  appState='SUMMARY'; menuIndex=0; SFX[win?'win':'lose']();
+}
+// ---- lobby screens ----
+function drawOnline(){ const cx=vpW/2; navList=[];
+  txt('PLAY ONLINE', cx, vpH*0.14, 24, COL.txt,'center','800');
+  txt('one of you hides and paints · the other flies the ship and hunts', cx, vpH*0.14+24, 11, COL.muted,'center','500');
+  const bw=Math.min(300,vpW-60), bx=cx-bw/2; let by=vpH*0.30;
+  if(NET.status==='connecting'){ txt('connecting…', cx, by+20, 14, COL.muted,'center','600'); }
+  else if(NET.role==='host' && NET.code && !NET.peer){
+    txt('YOUR ROOM CODE', cx, by, 11, COL.muted,'center','700');
+    txt(NET.code.split('').join(' '), cx, by+40, 44, COL.amber,'center','800');
+    txt('the hunter joins with this code — you will HIDE', cx, by+74, 11, COL.muted,'center','500'); by+=104;
+    navBtn('Cancel', bx,by,bw,44, ()=>{ netLeave(); }, {size:14});
+  }
+  else if(NET.status==='loading'){ txt('waiting for the hunter to load…', cx, by+20, 13, COL.muted,'center','600'); }
+  else if(NET.role==='guest' && NET.peer){ txt('joined '+NET.code+' — the hider is picking a map…', cx, by+20, 13, COL.cyan,'center','600'); }
+  else {
+    navBtn('🏠  Host a game (you hide)', bx,by,bw,52, ()=>{ netConnect(()=>{ try{NET.ws.send(JSON.stringify({t:'host'}));}catch(_){} }); }, {size:15}); by+=62;
+    navBtn('🛸  Join with a code (you hunt)', bx,by,bw,52, ()=>{ NET.codeInput=''; appState='ONLINE_JOIN'; menuIndex=0; }, {size:15}); by+=70;
+  }
+  if(NET.err) txt('⚠ '+NET.err, cx, vpH-92, 12, COL.danger,'center','600');
+  txt('relay: '+mpServerUrl()+'   (override with ?mp=wss://…)', cx, vpH-70, 9, COL.muted,'center','500');
+  const bw2=Math.min(200,vpW-48); navBtn('‹ Back', cx-bw2/2, vpH-56, bw2, 42, ()=>menuBack(), {size:14});
+}
+function drawOnlineJoin(){ const cx=vpW/2; navList=[];
+  txt('ENTER ROOM CODE', cx, vpH*0.12, 22, COL.txt,'center','800');
+  const slots=4, sw=44, gap=10, x0=cx-(slots*sw+(slots-1)*gap)/2;
+  for(let i=0;i<slots;i++){ const x=x0+i*(sw+gap);
+    ctx.fillStyle='rgba(21,27,44,0.9)'; rr(x,vpH*0.18,sw,54,9); ctx.fill();
+    ctx.strokeStyle=i===NET.codeInput.length?COL.amber:COL.line; ctx.lineWidth=i===NET.codeInput.length?2:1; rr(x,vpH*0.18,sw,54,9); ctx.stroke();
+    if(NET.codeInput[i]) txt(NET.codeInput[i], x+sw/2, vpH*0.18+28, 26, COL.txt,'center','800'); }
+  const AL='ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const perRow=6, kw=Math.min(52,(vpW-40)/perRow-8), kh=Math.min(46,kw), top=vpH*0.30;
+  for(let i=0;i<AL.length;i++){ const r=(i/perRow)|0, c=i%perRow;
+    const rowN=Math.min(perRow, AL.length-r*perRow), rw=rowN*(kw+8)-8, x=cx-rw/2+c*(kw+8), y=top+r*(kh+8);
+    navBtn(AL[i], x,y,kw,kh, ()=>{ if(NET.codeInput.length<4){ NET.codeInput+=AL[i]; SFX.ui();
+      if(NET.codeInput.length===4){ netConnect(()=>{ try{NET.ws.send(JSON.stringify({t:'join',code:NET.codeInput}));}catch(_){} appState='ONLINE'; }); } } }, {size:15}); }
+  navBtn('⌫', cx-(kw+8)*2, top+4*(kh+8), kw*2+8, kh, ()=>{ NET.codeInput=NET.codeInput.slice(0,-1); SFX.back(); }, {size:15});
+  navBtn('‹ Back', cx+8, top+4*(kh+8), kw*2+8, kh, ()=>{ appState='ONLINE'; }, {size:13});
+  if(NET.err) txt('⚠ '+NET.err, cx, vpH-40, 12, COL.danger,'center','600');
+}
 /* ============================ §8 SESSION / ROUND ============================ */
 let pendingMode='SURVIVE', pendingLevel=null, showHelp=false;
 function triggerAbduction(u){ if(round.finalized||!player.alive) return;
@@ -2435,6 +2642,7 @@ function triggerAbduction(u){ if(round.finalized||!player.alive) return;
 function endRound(win){ if(round.finalized||roundState==='TIMEOUT'||roundState==='CAUGHT') return;
   if(win){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null; roundState='TIMEOUT'; round.summaryT=0; SFX.win(); } }
 function togglePause(){ if(appState!=='ROUND') return;
+  if(round && round.online){ showToast('🌐 no pausing online — use LEAVE to quit'); return; }
   if(roundState==='PLAYING'){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null; roundState='PAUSED'; menuIndex=0; SFX.ui(); stopAllLoops(); }
   else if(roundState==='PAUSED') resumeRound(); }
 function resumeRound(){ showHelp=false; roundState='RESUME_COUNTDOWN'; round.countdown=RESUME_COUNTDOWN; round.lastCount=null; SFX.ui(); }
@@ -2444,6 +2652,7 @@ function gotoTitle(){ appState='TITLE'; menuIndex=0; showHelp=false; stopAllLoop
 function startPlay(){ SFX.confirm(); if(!settings.tutorialSeen){ settings.tutorialSeen=true; saveSettings(); } appState='MODE_SELECT'; menuIndex=0; }
 
 async function selectLevel(entry){ SFX.confirm(); const data=await fetchLevelData(entry); entry.data=data;
+  if(pendingMode==='VS'){ netHostPickedLevel(entry); return; }
   if(pendingMode==='PRACTICE') startRound(entry,'PRACTICE',PRACTICE_DIFF);
   else if(pendingMode==='HEAT') startRound(entry,'HEAT',makeHeatDiff());
   else if(pendingMode==='DAILY') startRound(entry,'DAILY',DIFF.NORMAL);   // seed re-derived in startRound
@@ -2546,6 +2755,7 @@ function botHiderThink(b,dt){ b.stateT+=dt; b.animT+=dt;
   const sp=Math.hypot(b.vx,b.vy); b.walkPhase+=dt*(sp>8?7:0); b.breathP+=dt*(sp>8?0.5:1.6);
   b.blinkT-=dt; if(b.blinkE>0)b.blinkE=Math.max(0,b.blinkE-dt*7); if(b.blinkT<=0){b.blinkE=1;b.blinkT=2+(b.animT*7%3);} }
 function huntPulse(){ if(!round||round.mode!=='HUNT'||player.pulseCd>0||roundState!=='PLAYING') return;
+  if(round.online){ showToast('🌐 no scanner in 1v1 — hunt with your eyes'); return; }   // fairness: the human hider gets no ping
   player.pulseCd=PULSE_CD; player.pulseT=0.55; SFX.match(0.5); addTrauma(0.08);
   for(const b of round.bots){ if(b.caught) continue; const d=Math.hypot(b.x-player.x,b.y-player.y);
     if(d<HUNT_SCAN_R*1.4 && losClear(player.x,player.y,b.x,b.y)) b.pinged=PING_HOLD; } }
@@ -2641,7 +2851,9 @@ function stepSim(dt){
     return;
   }
   if(roundState!=='PLAYING') return;
+  if(round.online==='guest'){ stepGuestNet(dt); return; }        // P20: the hunter's world is streamed, not simulated
   if(round.mode==='HUNT'){ stepHunt(dt); return; }
+  if(round.online==='host') stepHostNet(dt);                     // P20: stream snapshots to the hunter
   const slow=(round.diff.practice && (studio.open || ctrlMode==='INSPECT'))?STUDIO_SLOWMO:1; dt*=slow;
   player.prevx=player.x; player.prevy=player.y;
   gatherInput(); movePlayer(dt);
@@ -2711,7 +2923,7 @@ function finishRound(outcome){
 }
 
 /* ============================ §8 MENUS ============================ */
-let navList=[], menuIndex=0;
+let navList=[], menuIndex=0, navListApp=null;   // navListApp: which screen built the list — stale lists must never receive input
 function navBtn(label,x,y,w,h,fn,opts){ opts=opts||{}; const idx=navList.length; const sel=(idx===menuIndex)&&!opts.disabled;
   ctx.fillStyle=opts.disabled?'rgba(21,27,44,0.45)':(sel?'rgba(242,179,61,0.16)':(opts.fill||'rgba(21,27,44,0.9)')); rr(x,y,w,h,opts.rad||10); ctx.fill();
   ctx.strokeStyle=opts.disabled?COL.line:(sel?COL.amber:(opts.stroke||COL.line)); ctx.lineWidth=sel?2.5:1.5; rr(x,y,w,h,opts.rad||10); ctx.stroke();
@@ -2724,15 +2936,19 @@ function menuNav(dx,dy){
   if(appState==='LEVEL_SELECT') levelNavPending=true; SFX.ui(); }
 function menuConfirm(){ if(showHelp){ showHelp=false; return; }
   if(appState==='SETTINGS'){ settingsConfirm(); return; }
+  if(navListApp!==appState) return;   // an async flip (peer joined, round ended) outran the draw — swallow, next frame rebuilds
   const n=navList[menuIndex]; if(n){ n.fn(); } }
 function menuBack(){ if(showHelp){ showHelp=false; SFX.back(); return; }
   if(appState==='SETTINGS'){ closeSettings(); return; }
-  if(appState==='WARDROBE'){ appState='TITLE'; menuIndex=0; SFX.back(); return; } SFX.back();
+  if(appState==='WARDROBE'){ appState='TITLE'; menuIndex=0; SFX.back(); return; }
+  if(appState==='ONLINE'){ netLeave(); appState='TITLE'; menuIndex=0; SFX.back(); return; }
+  if(appState==='ONLINE_JOIN'){ appState='ONLINE'; menuIndex=0; SFX.back(); return; } SFX.back();
   if(appState==='MODE_SELECT') gotoTitle();
-  else if(appState==='LEVEL_SELECT'){ appState='MODE_SELECT'; menuIndex=0; }
+  else if(appState==='LEVEL_SELECT'){ if(pendingMode==='VS'){ appState='ONLINE'; menuIndex=0; return; } appState='MODE_SELECT'; menuIndex=0; }
   else if(appState==='DIFFICULTY_SELECT'){ appState='LEVEL_SELECT'; menuIndex=0; }
   else if(appState==='SUMMARY') gotoTitle(); }
 function handleMenuTap(sx,sy){ if(showHelp){ showHelp=false; return; }
+  if(navListApp!==appState) return;   // same staleness guard as menuConfirm
   for(let i=0;i<navList.length;i++){ const h=navList[i]; if(inRect(sx,sy,h)){ menuIndex=i; SFX.ui(); h.fn(); return; } } }
 
 function drawMenuBg(){ ctx.fillStyle=COL.bg; ctx.fillRect(0,0,vpW,vpH);
@@ -2755,8 +2971,11 @@ function drawMenu(){ applyScreenTransform(); drawMenuBg(); navList=[];
   else if(appState==='SUMMARY') drawSummary();
   else if(appState==='SETTINGS') drawSettings();
   else if(appState==='WARDROBE') drawWardrobe();
+  else if(appState==='ONLINE') drawOnline();
+  else if(appState==='ONLINE_JOIN') drawOnlineJoin();
   ctx.restore(); ctx.globalAlpha=1;
   if(showHelp) drawHelp();
+  navListApp=appState;   // the list on screen now belongs to THIS screen
 }
 function drawBoot(){ txt('ABDUCT A CHAMELEON', vpW/2, vpH/2-10, 26, COL.amber,'center','800');
   txt('loading…', vpW/2, vpH/2+24, 13, COL.muted,'center','500'); }
@@ -2778,6 +2997,7 @@ function drawTitle(){
   const k=clamp(vpH/560,0.68,1);                                  // compress the button stack on short viewports
   const bw=Math.min(300,vpW-60), bx=cx-bw/2; let by=Math.max(vpH*0.62, tagY+22*k);
   navBtn('▶  PLAY', bx,by,bw,Math.round(54*k), ()=>{ startPlay(); }, {size:20}); by+=Math.round(64*k);
+  navBtn('🌐  Play Online — 1v1', bx,by,bw,Math.round(46*k), ()=>{ appState='ONLINE'; menuIndex=0; SFX.ui(); }, {size:15}); by+=Math.round(56*k);
   const hw=(bw-10)/2;
   navBtn('👕  Wardrobe', bx,by,hw,Math.round(44*k), ()=>{ appState='WARDROBE'; menuIndex=0; SFX.ui(); }, {size:14});
   navBtn('⚙  Settings', bx+hw+10,by,hw,Math.round(44*k), ()=>{ openSettings('TITLE'); }, {size:14}); by+=Math.round(54*k);
@@ -2833,7 +3053,8 @@ const REGION_HUNT={
 function drawLevelSelect(){ const cx=vpW/2;
   txt('SELECT LEVEL', cx, 40, 22, COL.txt,'center','800');
   const sub = pendingMode==='PRACTICE'?'Practice / Zen' : pendingMode==='HEAT'?'Heat · Endless'
-    : pendingMode==='HUNT'?'🛸 Hunt' : pendingMode==='TA'?'Time Attack · Beacon Run' : 'Survive';
+    : pendingMode==='HUNT'?'🛸 Hunt' : pendingMode==='TA'?'Time Attack · Beacon Run'
+    : pendingMode==='VS'?'🌐 Online 1v1 — pick where you will hide' : 'Survive';
   txt(sub, cx, 64, 12, COL.amber,'center','600');
   const pad=14, top=84, bottomReserve=62, headH=26;
   const cols=clamp(Math.floor(vpW/240),1,4);
@@ -2914,7 +3135,11 @@ function drawDifficulty(){ const cx=vpW/2; const hunt=pendingMode==='HUNT';
   navBtn('‹ Back', bx,by,bw,42, ()=>menuBack(), {size:14});
 }
 function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); return; }
+  // P20: the host announces the verdict exactly once; the guest builds its own summary from it
+  if(round.online==='host' && !round._netEnd){ round._netEnd=1;
+    netSend({k:'end', win: s.outcome==='WIN' ? 'hider' : 'hunter', score:s.score}); }
   const win=s.outcome==='WIN', hunt=!!s.hunt, ta=!!s.ta;
+  if(round.online){ txt(NET.role==='host'?'🌐 you HID — human hunter':'🌐 you HUNTED — human hider', cx, vpH*0.14-24, 11, COL.cyan,'center','700'); }
   // staged reveal: headline → grade slam → stat rows cascade → score counts up (instant under reduced motion)
   const age=FX_MOTION>0 ? (nowMs()-(s.t0||0))/1000 : 99;
   const headA=clamp01(age/0.25);
@@ -2959,6 +3184,16 @@ function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); re
     sy+=20; }
   ctx.globalAlpha=1;   // buttons below are always fully visible and tappable
   const by=Math.min(sy+10, vpH-64); const bw3=(bw-16)/3;
+  if(round.online){                                              // P20: online rematches go through the lobby (host re-picks)
+    const obw=Math.min(280,vpW-48);
+    if(NET.peer && NET.role==='host')
+      navBtn('Rematch — pick a map', cx-obw/2, by, obw, 46, ()=>{ pendingMode='VS'; appState='LEVEL_SELECT'; menuIndex=0; }, {size:14});
+    else if(NET.peer)
+      navBtn('Waiting for the hider…', cx-obw/2, by, obw, 46, ()=>{}, {size:13});
+    else navBtn('Back to Title', cx-obw/2, by, obw, 46, ()=>{ netLeave(); gotoTitle(); }, {size:14});
+    if(NET.peer) navBtn('Leave', cx-obw/2, by+54, obw, 40, ()=>{ netLeave(); gotoTitle(); }, {size:13, stroke:COL.danger, color:COL.danger});
+    return;
+  }
   const fixedMode = round.mode==='DAILY';   // DAILY has a fixed level+seed — no re-pick
   navBtn('Retry', bx, by, bw3, 46, ()=>startRound(round.entry, round.mode, round.diff), {size:14});
   navBtn(fixedMode?'Modes':'Change Level', bx+bw3+8, by, bw3, 46,
@@ -3168,6 +3403,7 @@ function drawHelp(){ ctx.fillStyle='rgba(8,12,25,0.88)'; ctx.fillRect(0,0,vpW,vp
   for(const l of lines){ txt(l, cx, y, 13.5, /^(🕹|🎨|👁|⏱)/.test(l)?COL.txt:COL.muted, 'center', '500'); y+=Math.min(26,(vpH*0.62)/lines.length); }
   y+=14; const bw=Math.min(220,vpW-48); navList=[]; menuIndex=0;
   navBtn('Got it', cx-bw/2, y, bw, 46, ()=>{ showHelp=false; }, {size:15, weight:'700'});
+  navListApp=appState;
 }
 
 /* ============================ MAIN LOOP ============================ */
@@ -3260,6 +3496,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   hold:{locked:camLock, vz:+vz.toFixed(3), vzTarget:+vzTarget.toFixed(3), pinch:!!pinch, brackets:+holdBracketT.toFixed(2)},
   tour:{active:tut.active, step:tut.step}, levelOrder:levelOrderNames,
   region: round?{ biome:round.biome||null, tuned:round.diff._regionTuned||null, scanR:Math.round(round.diff.SCAN_R||0) }:null,
+  net:{ status:NET.status, role:NET.role, code:NET.code, peer:NET.peer, online:round?(round.online||null):null },
   move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},
   speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
   perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; } }; }catch(_){}
