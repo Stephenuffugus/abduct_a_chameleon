@@ -101,7 +101,7 @@ Every scored round pays **XP** (score-based + win bonus) toward levels; the summ
 the bar to the next level. **Challenges** (Untouchable, Ghost Hunter, Quick Banker, Marathon Ghost,
 Field Guide, Three-Day Ghost, Week of Shadows) grant skins or bonus XP — the wardrobe lists them all
 with hints. Playing the **Daily** on consecutive days builds a 🔥 streak (shown on the mode card and
-the summary). The wardrobe tracks Level, challenges, ten head accents, biome medals, and the Blend Book.
+the summary). The wardrobe tracks Level, challenges, ten head accents, biome medals, **trail effects** (Bubbles Lv2 · Sparks Lv6 · Leaves via Marathon Ghost — trails go quiet as you settle, so they never break camo), and the Blend Book.
 
 ### Comfort & unlocks
 - **Settings** (title or pause): master/SFX volume, **motion** (full/reduced/minimal), **screen shake**,

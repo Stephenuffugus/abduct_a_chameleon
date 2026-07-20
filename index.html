@@ -639,11 +639,21 @@ const BIOME_MEMBERS={}; for(const t in BIOME_TERRAINS){ const b=BIOME_TERRAINS[t
 const BLENDBOOK_KEYS=PRESET_ORDER.filter(k=>k!=='void'&&k!=='lava');   // 14 loggable terrains (void/lava are unhidable)
 const SKIN_BY={}; for(const s of SKINS) SKIN_BY[s.id]=s;
 const UNLOCKABLE_POSES=['armsout','cheer','point'];   // stand/wave/crouch are default
+// P16 trail cosmetics — a second equip slot; emission stops as you settle, so a trail can never break camo
+const TRAILS=[
+  { id:'trail_none',    name:'None',    unlock:null },
+  { id:'trail_bubbles', name:'Bubbles', unlock:'lv2',         hint:'Reach Level 2' },
+  { id:'trail_sparks',  name:'Sparks',  unlock:'lv6',         hint:'Reach Level 6' },
+  { id:'trail_leaves',  name:'Leaves',  unlock:'ch_marathon', hint:'Marathon Ghost challenge' },
+];
+const TRAIL_BY={}; for(const t of TRAILS) TRAIL_BY[t.id]=t;
 function hasUnlock(id){ return PROGRESS.unlocks.indexOf(id)>=0; }
 function grantUnlock(id){ if(!hasUnlock(id)){ PROGRESS.unlocks.push(id); saveProgress();
-    const s=SKIN_BY[id]; showToast('★ Unlocked: '+(s?s.name+' skin':POSE_NAMES[id]||id)); if(typeof SFX!=='undefined')SFX.best(); return true; } return false; }
+    const s=SKIN_BY[id], tr=TRAIL_BY[id];
+    showToast('★ Unlocked: '+(s?s.name+' skin':tr?tr.name+' trail':POSE_NAMES[id]||id)); if(typeof SFX!=='undefined')SFX.best(); return true; } return false; }
 function loadProgress(){ try{ const p=JSON.parse(localStorage.getItem(LS_PROGRESS)||'null'); if(p&&p.unlocks){ PROGRESS=Object.assign(PROGRESS,p); PROGRESS.unlocks=p.unlocks; } }catch(_){}
   if(!PROGRESS.equipped) PROGRESS.equipped={skin:'default'};
+  if(!PROGRESS.equipped.trail) PROGRESS.equipped.trail='trail_none';   // P16 back-compat
   if(!PROGRESS.blendbook) PROGRESS.blendbook={}; if(!PROGRESS.biomeMedals) PROGRESS.biomeMedals={};   // P8-6 back-compat
   if(typeof PROGRESS.xp!=='number'||!isFinite(PROGRESS.xp)||PROGRESS.xp<0) PROGRESS.xp=0;   // P12 back-compat + corrupt-storage armor
   PROGRESS.xp=Math.min(PROGRESS.xp, 75*200*201);                                            // level-200 cap keeps xpLevel() bounded
@@ -659,7 +669,8 @@ function awardXP(amount){ if(!amount) return; const before=xpLevel(PROGRESS.xp||
   const after=xpLevel(PROGRESS.xp);
   if(after>before){ showToast('⬆ Level '+after+'!'); if(typeof SFX!=='undefined') SFX.levelup(); checkLevelUnlocks(after); }
   saveProgress(); }
-function checkLevelUnlocks(L){ if(L>=3) grantUnlock('beret'); if(L>=5) grantUnlock('sprout'); if(L>=8) grantUnlock('headset'); }
+function checkLevelUnlocks(L){ if(L>=2) grantUnlock('trail_bubbles'); if(L>=3) grantUnlock('beret');
+  if(L>=5) grantUnlock('sprout'); if(L>=6) grantUnlock('trail_sparks'); if(L>=8) grantUnlock('headset'); }
 // ===== P12: challenges — one-shot feats checked at round end (each grants a skin or bonus XP) =====
 const CHALLENGES=[
   { id:'ch_untouchable', name:'Untouchable', hint:'Win Survive (Normal+) without being spotted', grant:'bolt',
@@ -668,7 +679,7 @@ const CHALLENGES=[
     test:()=> (PROGRESS.stats.catches||0)>=15 },
   { id:'ch_quick_banker', name:'Quick Banker', hint:'Bank every beacon with 30s+ to spare', xp:500,
     test:(s,r)=> r.mode==='TA' && s.outcome==='WIN' && (TA_TIME-s.timeUsed)>=30 },
-  { id:'ch_marathon', name:'Marathon Ghost', hint:'Last 5 minutes in Heat', xp:750,
+  { id:'ch_marathon', name:'Marathon Ghost', hint:'Last 5 minutes in Heat', xp:750, grant:'trail_leaves',
     test:(s,r)=> !!r.heat && s.survSec>=300 },
   { id:'ch_full_book', name:'Field Guide', hint:'Blend on all 14 terrains', xp:1000,
     test:()=> BLENDBOOK_KEYS.every(k=>PROGRESS.blendbook[k]&&PROGRESS.blendbook[k].logged) },
@@ -1739,7 +1750,21 @@ function updateChameleonAnim(dt){ const p=player; p.animT+=dt;
   p.blinkT-=dt; if(p.blinkE>0) p.blinkE=Math.max(0,p.blinkE-dt*7);
   if(p.blinkT<=0){ p.blinkE=1; p.blinkT=1.6+(p.animT*13.1%3); }
   if(p.repaintT>0) p.repaintT-=dt;
+  // P16 trail emission — only while visibly moving; settling silences it, so a trail can never break camo
+  if(round && appState==='ROUND' && roundState==='PLAYING' && round.mode!=='HUNT' && p.alive && FX_MOTION>0){
+    const tr=PROGRESS.equipped.trail;
+    if(tr && tr!=='trail_none'){
+      _trailT-=dt;
+      if(sp>40 && p.conceal<0.5 && _trailT<=0){ _trailT=0.085;
+        const bx=p.x-p.vx*0.06+(Math.random()*8-4), by=p.y-p.vy*0.06+(Math.random()*8-4);
+        if(tr==='trail_bubbles') addParticle({x:bx,y:by,vx:Math.random()*14-7,vy:Math.random()*14-13,life:0,maxLife:0.55,color:'rgba(150,220,235,0.85)',r:1.6+Math.random()*1.8,type:'puff'});
+        else if(tr==='trail_sparks') addParticle({x:bx,y:by,vx:-p.vx*0.12+(Math.random()*20-10),vy:-p.vy*0.12+(Math.random()*20-10),life:0,maxLife:0.3,color:COL.amber,r:1.5+Math.random()*1.5,type:'shard'});
+        else if(tr==='trail_leaves') addParticle({x:bx,y:by,vx:Math.random()*24-12,vy:8+Math.random()*10,life:0,maxLife:0.8,color:'#5fae52',r:1.8+Math.random()*1.6,type:'puff'});
+      }
+    }
+  }
 }
+let _trailT=0;
 // draws a humanoid at (x,y). opts: {alien, paint(css), conceal, pose, anim(bool), moving, walkPhase, squash, breathP, blinkE, outline}
 function drawHumanoid(x,y,f,css,conceal,o){ o=o||{};
   const R=o.r||PLAYER_DRAW_R, alien=!!o.alien, pose=POSES[o.pose]||POSES.stand;
@@ -2959,6 +2984,23 @@ function drawWardrobe(){ const cx=vpW/2; navList=[];
     y+=cw+18;
   }
   y+=4;
+  // --- trails (P16 second equip slot) ---
+  txt('TRAILS', cx, y, 9, COL.amber,'center','700'); y+=12;
+  { const tcw=Math.min(46,(vpW-40)/TRAILS.length), tw2=TRAILS.length*tcw+(TRAILS.length-1)*gap, txx=(vpW-tw2)/2;
+    const dotCol={trail_bubbles:'rgba(150,220,235,0.9)', trail_sparks:'#F2B33D', trail_leaves:'#5fae52'};
+    TRAILS.forEach((t,i)=>{ const x=txx+i*(tcw+gap);
+      const unlocked=t.unlock===null||hasUnlock(t.id), eq=PROGRESS.equipped.trail===t.id;
+      ctx.fillStyle=eq?'rgba(242,179,61,0.18)':'rgba(21,27,44,0.9)'; rr(x,y,tcw,tcw,9); ctx.fill();
+      ctx.strokeStyle=eq?COL.amber:(unlocked?COL.line:'#242c44'); ctx.lineWidth=eq?2:1; rr(x,y,tcw,tcw,9); ctx.stroke();
+      ctx.save(); ctx.translate(x+tcw/2,y+tcw/2); const k=tcw/46;
+      if(!dotCol[t.id]){ ctx.strokeStyle=unlocked?COL.muted:'#333a4e'; ctx.lineWidth=1.5;
+        ctx.beginPath(); ctx.moveTo(-10*k,10*k); ctx.lineTo(10*k,-10*k); ctx.stroke(); }
+      else { ctx.fillStyle=unlocked?dotCol[t.id]:'#333a4e';
+        for(const [dx,dy,r] of [[-9,7,1.8],[-2,1,2.5],[6,-5,3.2]]){ ctx.beginPath(); ctx.arc(dx*k,dy*k,r*k,0,TAU); ctx.fill(); } }
+      ctx.restore();
+      txt(unlocked?t.name:'🔒', x+tcw/2, y+tcw+8, 8, eq?COL.amber:COL.muted,'center','600');
+      if(unlocked) navList.push({x,y,w:tcw,h:tcw,fn:()=>{ PROGRESS.equipped.trail=t.id; saveProgress(); SFX.ui(); }}); });
+    y+=tcw+20; }
   // --- biome medals ---
   const medals=SKINS.filter(s=>s.medal);
   const loggedCount=BLENDBOOK_KEYS.filter(k=>PROGRESS.blendbook[k]&&PROGRESS.blendbook[k].logged).length;
@@ -2974,7 +3016,7 @@ function drawWardrobe(){ const cx=vpW/2; navList=[];
     ctx.globalAlpha=1; ctx.strokeStyle=done?COL.amber:'#242c44'; ctx.lineWidth=done?1.5:1; rr(x,y,bcw,bcw,5); ctx.stroke();
     if(done) txt(Math.round((e.bestMq||0)*100)+'', x+bcw/2, y+bcw/2, 8.5, '#000','center','800'); }); y+=bcw+18;
   // --- challenges (visible goals; hidden on very short screens — the header counter still shows) ---
-  if(vpH>=520){
+  if(vpH>=560){
     const done=CHALLENGES.filter(c=>PROGRESS.challenges[c.id]).length;
     txt('CHALLENGES · '+done+' / '+CHALLENGES.length, cx, y, 9, COL.amber,'center','700'); y+=13;
     const twoCol=vpW>=620, colW=twoCol?Math.min(300,(vpW-48)/2):Math.min(360,vpW-40);
