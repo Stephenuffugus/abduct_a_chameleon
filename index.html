@@ -2539,7 +2539,9 @@ function stepHunt(dt){
     if((b.C>BEAM_HOLD_C||b.pinged>0) && d2<bd && losClear(player.x,player.y,b.x,b.y)){ bd=d2; best2=b; } }
   if(best2){ player.beamTarget=best2; player.beamCharge+=(1/round.diff.LOCK_TIME)*dt;
     if(player.beamCharge>=1){ best2.caught=true; best2.catchT=0; round.hunterCaught++; player.beamCharge=0; player.beamTarget=null;
-      SFX.abduct(); addTrauma(0.28); hitstopMs(50); punchZoom(0.06,150,400); showToast('Caught '+round.hunterCaught+'/'+round.bots.length);
+      SFX.abduct(); addTrauma(0.28); hitstopMs(50); punchZoom(0.06,150,400);
+      floatText(best2.x, best2.y-20, 'CAUGHT '+round.hunterCaught+'/'+round.bots.length+' 🛸', COL.cyan);
+      showToast('Caught '+round.hunterCaught+'/'+round.bots.length);
       if(round.bots.every(x=>x.caught)) endHunt(true); } }
   else { player.beamCharge=Math.max(0,player.beamCharge-BEAM_DRAIN*dt); player.beamTarget=null; }
   round.timeLeft-=dt; round.metrics.survivalMs+=dt*1000;
