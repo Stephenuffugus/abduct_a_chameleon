@@ -2506,7 +2506,7 @@ function endHunt(win){ if(round.finalized) return;
   if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
   if(document.activeElement===hexInput) hexInput.blur();   // a focused hex field would eat the summary's keyboard
   round.summary={ outcome:win?'WIN':'LOSE', hunt:true, caught, total, score, grade, timeUsed:timeUsed,
-    survSec:timeUsed, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0 };
+    survSec:timeUsed, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0, t0:nowMs() };
   if(round.mode==='HUNT'){ const key=round.entry.display+'|HUNT|'+round.diff.label; const bb=best[key]||{bestScore:0,bestGrade:'F',plays:0};
     round.summary.prevBest=bb.bestScore; round.summary.isBest=score>bb.bestScore; bb.plays++;
     if(score>bb.bestScore){bb.bestScore=score;bb.bestGrade=grade;} bb.updated=Date.now(); best[key]=bb; saveBest(); if(round.summary.isBest) SFX.best(); }
@@ -2567,7 +2567,7 @@ function endTimeAttack(win){ if(round.finalized) return;
   if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
   if(document.activeElement===hexInput) hexInput.blur();
   round.summary={ outcome:win?'WIN':'LOSE', ta:true, banked, total, score, grade, timeUsed:TA_TIME-tl,
-    survSec:TA_TIME-tl, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0 };
+    survSec:TA_TIME-tl, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0, t0:nowMs() };
   const key=round.entry.display+'|TA|'+round.diff.label, bb=best[key]||{bestScore:0,bestGrade:'F',plays:0};
   round.summary.prevBest=bb.bestScore; round.summary.isBest=score>bb.bestScore; bb.plays++;
   if(score>bb.bestScore){bb.bestScore=score;bb.bestGrade=grade;} bb.updated=Date.now(); best[key]=bb; saveBest();
@@ -2821,16 +2821,26 @@ function drawDifficulty(){ const cx=vpW/2; const hunt=pendingMode==='HUNT';
 }
 function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); return; }
   const win=s.outcome==='WIN', hunt=!!s.hunt, ta=!!s.ta;
+  // staged reveal: headline → grade slam → stat rows cascade → score counts up (instant under reduced motion)
+  const age=FX_MOTION>0 ? (nowMs()-(s.t0||0))/1000 : 99;
+  const headA=clamp01(age/0.25);
+  ctx.globalAlpha=headA;
   txt(ta?(win?'ALL BEACONS BANKED':'TIME UP'):hunt?(win?'BOARD CLEARED':'TIME UP'):(win?'ESCAPED':'ABDUCTED'), cx, vpH*0.14, 30, win?COL.cyan:COL.danger,'center','800');
-  // grade stamp
-  ctx.save(); ctx.translate(cx, vpH*0.30); const gc=s.grade==='S'?COL.amber:s.grade==='F'?COL.danger:COL.cyan;
-  ctx.strokeStyle=gc; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(0,0,46,0,Math.PI*2); ctx.stroke();
-  txt(s.grade, 0,2, 48, gc,'center','800'); ctx.restore();
-  // stats
-  const bw=Math.min(360,vpW-48), bx=cx-bw/2; let sy=vpH*0.44;
-  const stat=(k,v)=>{ txt(k,bx,sy,13,COL.muted,'left','500'); txt(v,bx+bw,sy,13,COL.txt,'right','700'); sy+=24; };
-  if(ta){ stat('Beacons banked', s.banked+' / '+s.total); stat('Time', s.timeUsed.toFixed(1)+'s'); stat('Score', String(s.score)); }
-  else if(hunt){ stat('Chameleons caught', s.caught+' / '+s.total); stat('Time used', s.timeUsed.toFixed(1)+'s'); stat('Score', String(s.score)); }
+  ctx.globalAlpha=1;
+  // grade stamp slams in
+  const gk=clamp01((age-0.3)/0.3), gs=1+(1-easeOutCubic(gk))*0.9;
+  if(gk>0){ ctx.save(); ctx.translate(cx, vpH*0.30); ctx.scale(gs,gs); ctx.globalAlpha=gk;
+    const gc=s.grade==='S'?COL.amber:s.grade==='F'?COL.danger:COL.cyan;
+    ctx.strokeStyle=gc; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(0,0,46,0,Math.PI*2); ctx.stroke();
+    txt(s.grade, 0,2, 48, gc,'center','800'); ctx.restore(); ctx.globalAlpha=1; }
+  // stats cascade; the Score row counts up
+  const bw=Math.min(360,vpW-48), bx=cx-bw/2; let sy=vpH*0.44; let rowI=0;
+  const stat=(k,v)=>{ const ra=clamp01((age-0.5-rowI*0.09)/0.22); rowI++;
+    if(ra>0){ ctx.globalAlpha=ra; txt(k,bx,sy,13,COL.muted,'left','500'); txt(v,bx+bw,sy,13,COL.txt,'right','700'); ctx.globalAlpha=1; }
+    sy+=24; };
+  const scoreV=()=> String(Math.round(s.score*easeOutCubic(clamp01((age-0.6)/0.9))));
+  if(ta){ stat('Beacons banked', s.banked+' / '+s.total); stat('Time', s.timeUsed.toFixed(1)+'s'); stat('Score', scoreV()); }
+  else if(hunt){ stat('Chameleons caught', s.caught+' / '+s.total); stat('Time used', s.timeUsed.toFixed(1)+'s'); stat('Score', scoreV()); }
   else {
   stat('Survived', s.survSec.toFixed(1)+'s');
   stat('Avg blend', s.avgBlendPct+'%');
@@ -2838,9 +2848,11 @@ function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); re
   stat('Longest hidden streak', s.streak.toFixed(1)+'s');
   stat('Near misses', String(s.near));
   stat('Times spotted', String(s.spotted));
-  stat('Score', String(s.score));
+  stat('Score', scoreV());
   if(round.mode==='DAILY' && ((PROGRESS.daily&&PROGRESS.daily.streak)||0)>0) stat('Daily streak', '🔥 '+PROGRESS.daily.streak+(PROGRESS.daily.bestStreak>PROGRESS.daily.streak?'  (best '+PROGRESS.daily.bestStreak+')':''));
   }
+  // best banner + XP land after the score finishes counting
+  ctx.globalAlpha=clamp01((age-1.5)/0.3);
   if(!round.diff.practice){ if(s.isBest){ txt('★ NEW BEST!', cx, sy+6, 16, COL.amber,'center','800'); }
     else if(s.prevBest){ txt('Best '+s.prevBest+'  ('+(s.score-s.prevBest>=0?'+':'')+(s.score-s.prevBest)+')', cx, sy+6, 12, COL.muted,'center','500'); } sy+=28; } else sy+=10;
   // P12: XP earned + level progress bar
@@ -2851,6 +2863,7 @@ function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); re
     ctx.fillStyle=COL.cyan; rr(xx,sy,Math.max(6,xw*frac),8,4); ctx.fill();
     txt('Lv '+L, xx-8, sy+4, 11, COL.txt,'right','700'); txt('Lv '+(L+1), xx+xw+8, sy+4, 11, COL.muted,'left','600');
     sy+=20; }
+  ctx.globalAlpha=1;   // buttons below are always fully visible and tappable
   const by=Math.min(sy+10, vpH-64); const bw3=(bw-16)/3;
   const fixedMode = round.mode==='DAILY';   // DAILY has a fixed level+seed — no re-pick
   navBtn('Retry', bx, by, bw3, 46, ()=>startRound(round.entry, round.mode, round.diff), {size:14});
