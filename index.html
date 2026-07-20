@@ -706,6 +706,7 @@ function updateDailyStreak(){ const day=dailySeed(), d=PROGRESS.daily;
   const yd=(y.getFullYear()*10000+(y.getMonth()+1)*100+y.getDate())>>>0;
   d.streak = d.lastDay===yd ? (d.streak||0)+1 : 1;
   d.lastDay=day; d.bestStreak=Math.max(d.bestStreak||0, d.streak); saveProgress();
+  portalEarn('daily_streak', d.streak);                                            // P22
   if(d.streak>1) showToast('🔥 Daily streak: '+d.streak); }
 function checkChallenges(sum){ if(!sum || !round || round.diff.practice) return;
   for(const c of CHALLENGES){ if(PROGRESS.challenges[c.id]) continue;
@@ -731,7 +732,8 @@ function logBlend(key,mq){ if(!PROGRESS.blendbook) PROGRESS.blendbook={};
   let e=PROGRESS.blendbook[key]; const first=!e||!e.logged; const improved=!e||mq>(e.bestMq||0);
   if(!e){ e=PROGRESS.blendbook[key]={ logged:false, bestMq:0, biome:round.biome }; }
   e.bestMq=Math.max(e.bestMq||0, mq); e.logged=true;
-  if(first){ showToast('★ '+(TERRAIN_NAME[key]||key)+' blended!'); if(typeof SFX!=='undefined') SFX.best(); }
+  if(first){ showToast('★ '+(TERRAIN_NAME[key]||key)+' blended!'); if(typeof SFX!=='undefined') SFX.best();
+    portalEarn('first_blend', key); }                                              // P22 (once per terrain, gated by `first`)
   if(first||improved) saveProgress();
   if(first) checkBiomeMedals(); }
 function checkBiomeMedals(){ if(!PROGRESS.biomeMedals) PROGRESS.biomeMedals={};
@@ -2439,6 +2441,16 @@ function crawlPaint(a,dt){ let maxd=0; for(const ch of ['r','g','b']){ const ste
   a.currentPaint[ch]+=clamp(a.targetPaint[ch]-a.currentPaint[ch],-step,step);
   maxd=Math.max(maxd,Math.abs(a.targetPaint[ch]-a.currentPaint[ch])); } a.shifting=maxd>SHIFT_DELTA_EPS; }
 
+/* ============================ P22 PORTAL EMBED (lucidwinds.com/portal) ============================ */
+// The portal loads us in an iframe from github.io. Everything here is inert when standalone.
+const EMBED = (()=>{ try{ return window.parent!==window; }catch(_){ return true; } })();
+const LS_OK = (()=>{ try{ localStorage.setItem('__aac_t','1'); localStorage.removeItem('__aac_t'); return true; }catch(_){ return false; } })();
+// Earn bridge — the portal shell listens for {sws:...} messages (its own protocol namespace).
+// We announce the three agreed feats; the shell decides what (if anything) they pay.
+function portalEarn(event, value){ if(!EMBED) return;
+  try{ window.parent.postMessage({ sws:'earn', game:'abduct', event, value:(value==null?1:value) }, '*'); }catch(_){} }
+function openStandalone(){ try{ window.open(location.origin+location.pathname, '_blank'); }catch(_){} }
+
 /* ============================ P20 ONLINE — 1v1 hider vs hunter ============================ */
 // Host = the HIDER, runs the real authoritative sim (their UFO #1 is driven by the remote human).
 // Guest = the HUNTER, literally plays HUNT mode — except the "bot" is a live human streamed in
@@ -2916,6 +2928,7 @@ function finishRound(outcome){
   if(round.heat) PROGRESS.stats.heatBest=Math.max(PROGRESS.stats.heatBest||0, round.metrics.survivalMs/1000);
   saveProgress(); checkUnlocks();
   if(!round.diff.practice){ summary.xp=Math.round(score/10)+(survived?60:15); }   // P12
+  if(survived && !round.diff.practice && !round.online) portalEarn('round_win', score);   // P22 (offline vs bots only — online verdicts come from netGuestEnd/host)
   if(round.mode==='DAILY') updateDailyStreak();                                    // P13 (before challenges so streak feats fire)
   round.summary=summary;
   if(summary.xp){ awardXP(summary.xp); checkChallenges(summary); }
@@ -3003,7 +3016,11 @@ function drawTitle(){
   navBtn('⚙  Settings', bx+hw+10,by,hw,Math.round(44*k), ()=>{ openSettings('TITLE'); }, {size:14}); by+=Math.round(54*k);
   navBtn('How to Play', bx,by,hw,Math.round(42*k), ()=>{ showHelp=true; SFX.ui(); }, {size:13});
   navBtn(settings.muted?'🔇  Muted':'🔊  Sound', bx+hw+10,by,hw,Math.round(42*k), ()=>{ setMuted(!settings.muted); }, {size:13});
-  if(vpH>=440) txt('v0.2 "Photo Loop" · offline · drag a SCANNER .json onto the window to playtest it', cx, vpH-22, 11, COL.muted,'center','500');
+  if(EMBED){                                                        // P22: inside the portal iframe
+    navBtn('⛶  Open full screen', cx-Math.min(150,vpW*0.3), vpH-58, Math.min(300,vpW*0.6), 34, ()=>openStandalone(), {size:12});
+    if(!LS_OK) txt('⚠ progress may not save inside the portal — open full screen to keep your XP', cx, vpH-70, 10, PAL.warn,'center','600');
+  }
+  else if(vpH>=440) txt('v0.2 "Photo Loop" · offline · drag a SCANNER .json onto the window to playtest it', cx, vpH-22, 11, COL.muted,'center','500');
 }
 function drawModeSelect(){ const cx=vpW/2;
   txt('CHOOSE MODE', cx, vpH*0.16, 24, COL.txt,'center','800');
@@ -3497,6 +3514,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   tour:{active:tut.active, step:tut.step}, levelOrder:levelOrderNames,
   region: round?{ biome:round.biome||null, tuned:round.diff._regionTuned||null, scanR:Math.round(round.diff.SCAN_R||0) }:null,
   net:{ status:NET.status, role:NET.role, code:NET.code, peer:NET.peer, online:round?(round.online||null):null },
+  embed:{ embedded:EMBED, lsOk:LS_OK },
   move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},
   speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
   perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; } }; }catch(_){}

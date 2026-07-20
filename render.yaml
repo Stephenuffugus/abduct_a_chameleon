@@ -1,0 +1,18 @@
+# One-click relay (+ full game mirror) on Render's free tier.
+# Render → New → Blueprint → pick this repo → deploy. You get:
+#   https://<service>.onrender.com/        the game (served by the relay process)
+#   wss://<service>.onrender.com/ws        the multiplayer relay
+# For versus play from the portal/github.io, open the game with:
+#   ?mp=wss://<service>.onrender.com/ws
+# Free-tier note: the service sleeps when idle; the first visitor waits ~30s while it wakes.
+services:
+  - type: web
+    name: abduct-relay
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: GAME_ROOT
+        value: ..

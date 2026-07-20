@@ -52,6 +52,19 @@ Notes:
 - HTTPS pages need a `wss://` relay (Render/Railway/Fly give you TLS automatically).
 - The relay stores nothing and has no accounts — it only pairs two players by room code.
 
+## Portal embed notes (lucidwinds.com/portal — external card, iframed)
+- The earn bridge is live: when embedded, the game posts `{sws:'earn', game:'abduct', event, value}`
+  to the parent for `round_win` (value=score, offline wins only), `daily_streak` (value=streak) and
+  `first_blend` (value=terrain key, once per terrain). Inert when standalone; the shell decides pay.
+- Safari/Firefox partition third-party storage: inside the iframe, XP/progress may not persist
+  there. The title screen shows an "Open full screen" button (and a warning when storage is
+  blocked) so players can escape to first-party github.io where saving always works.
+- The 📷 snapshot download needs the iframe to allow downloads (`sandbox` must include
+  `allow-downloads` if the shell sandboxes); fullscreen needs `allow="fullscreen"`.
+- Versus from the portal: same-origin `/ws` resolves to github.io (no relay there) — link the card
+  or a "play online" page at `?mp=wss://<relay-host>/ws`. `render.yaml` in the repo root deploys
+  the relay (and a full game mirror) on Render's free tier in one Blueprint click.
+
 ## Sanity checklist after deploying
 - Open the URL on a phone: title screen → Practice → the First Flight tour should start.
 - `maps/levels.json` must be reachable next to `index.html` (if levels show only
