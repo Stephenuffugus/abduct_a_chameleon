@@ -467,11 +467,12 @@ async function loadLevels(){
     if(res.ok){
       const list = await res.json();
       list.forEach((lv,i)=> LEVELS.push({ file:lv.file, name:lv.name, display:lv.display||lv.name, data:null, loaded:false, thumb:null,
+        biome: lv.biome || biomeOf(lv.name),   // P17: region grouping in the level select
         unlockLevel: i>=6 ? 2+(i-6) : 0 }));   // P12: the expansion set unlocks along the XP arc (Lv 2..7); first six always free
     }
   }catch(_){ /* file:// or unhosted — baked only */ }
   // always add the baked prototype card at the end
-  LEVELS.push({ file:null, name:'prototype', display:'Prototype Meadow (baked)', data:BAKED_MAP, loaded:true, thumb:null });
+  LEVELS.push({ file:null, name:'prototype', display:'Prototype Meadow — the training field', data:BAKED_MAP, loaded:true, thumb:null, biome:'greenwood' });
 }
 async function fetchLevelData(entry){
   if(entry.loaded && entry.data) return entry.data;
@@ -2154,7 +2155,7 @@ const TOUR=[
   { icon:'🕹', text:'Push the move side gently to sneak around', test:(dt,t)=> input.speed>0 ? t+dt : t, need:0.9 },
   { icon:'👁', text:'Tap 👁 — rise up to the hunters’ view',      test:(dt,t)=> ctrlMode==='INSPECT' ? t+dt : t, need:0.7 },
   { icon:'🤏', text:'Pinch or scroll to zoom in and out',         test:(dt,t)=> Math.abs(vz-VZ_SEEKER)>0.1 ? t+dt : t, need:0.25 },
-  { icon:'🎨', text:'Tap 🎨 to hold the shot, then press MATCH',  test:(dt,t)=> (studio.open && player.mq>=0.85) ? t+dt : t, need:0.15 },
+  { icon:'🎨', text:'Tap 🎨 to hold the shot, then press MATCH',  test:(dt,t)=> (studio.open && paintCoach().mqAim>=0.85) ? t+dt : t, need:0.15 },   // AIM match — instant on MATCH; the crawl mustn't gate a kid
   { icon:'⏱', text:'Now hold still… melt into the ground',       test:(dt,t)=> player.conceal>=0.85 ? t+dt : t, need:0.4 },
 ];
 const tut={ active:false, step:0, t:0, doneT:0 };
@@ -2243,6 +2244,18 @@ function drawDebug(){ panel(12,vpH-150,190,120,8);
   txt('[H] debug', 20, vpH-38, 9, COL.muted,'left','500');
 }
 function drawCountdown(){ const c=Math.ceil(round.countdown); const s=c>0?String(c):'GO';
+  // P17: the fresh-round countdown doubles as the map's title card — you always know WHERE you are
+  if(roundState==='COUNTDOWN' && round.entry){
+    const name=(round.entry.display||'').split('—')[0].trim(), tag=((round.entry.display||'').split('—')[1]||'').trim();
+    const reg=REGION_NAME[round.biome]||'';
+    const mc=(BIOME[round.biome]&&BIOME[round.biome].moon)||COL.amber;
+    const cy0=vpH<520?vpH*0.34:vpH*0.24;   // short screens: sit below the tour banner
+    applyScreenTransform(); panel(vpW/2-190, cy0-34, 380, tag?72:52, 12);
+    if(reg){ ctx.fillStyle=mc; ctx.beginPath(); ctx.arc(vpW/2-reg.length*3.2-14, cy0-16, 3.5, 0, TAU); ctx.fill();
+      txt(reg, vpW/2, cy0-16, 10, COL.muted,'center','800'); }
+    txt(name, vpW/2, cy0+6, 20, COL.txt,'center','800');
+    if(tag) txt(tag, vpW/2, cy0+26, 11, COL.muted,'center','500');
+  }
   ctx.globalAlpha=clamp01(round.countdown - Math.floor(round.countdown))*0.6+0.4;
   txt(s, vpW/2, vpH/2, 72, roundState==='RESUME_COUNTDOWN'?COL.cyan:COL.amber, 'center','800'); ctx.globalAlpha=1; }
 function drawPause(){ ctx.fillStyle='rgba(8,12,25,0.7)'; ctx.fillRect(0,0,vpW,vpH);
@@ -2771,30 +2784,53 @@ function startDaily(){ SFX.confirm(); const seed=dailySeed();
 function levelBadge(entry){ if(entry.usedBaked) return ''; const key=entry.display+'|'+pendingMode+'|'+(pendingMode==='PRACTICE'?'PRACTICE':settings.lastDiff);
   const b=best[key]; return b?('PB '+b.bestScore+' ('+b.bestGrade+')'):''; }
 let levelScroll=0, levelMaxScroll=0, levelNavPending=false;   // follow the selection only on a KEYBOARD move — never fight finger/wheel scroll
+let levelOrderNames=[];                                        // display order (for tests/diagnostics)
+// P17: the world has named regions — levels group by biome so the set reads as PLACES, not a list
+const REGION_ORDER=['greenwood','dunes','tundra','downtown','xeno','bog'];
+const REGION_NAME={ greenwood:'THE GREENWOOD', dunes:'THE BURNING FLATS', tundra:'THE WHITE NORTH',
+  downtown:'THE GREY CITY', xeno:'THE OTHERWORLD', bog:'THE SUNKEN SOUTH' };
+const REGION_TAG={ greenwood:'soft grass, deep leaves — where hiders learn', dunes:'open sand and sun-bleached rock',
+  tundra:'snow, ice, and long sightlines', downtown:'concrete blocks and back alleys',
+  xeno:'moss, crystal, and fire', bog:'mud, mist, and drowned stone' };
 function drawLevelSelect(){ const cx=vpW/2;
   txt('SELECT LEVEL', cx, 40, 22, COL.txt,'center','800');
   const sub = pendingMode==='PRACTICE'?'Practice / Zen' : pendingMode==='HEAT'?'Heat · Endless'
     : pendingMode==='HUNT'?'🛸 Hunt' : pendingMode==='TA'?'Time Attack · Beacon Run' : 'Survive';
   txt(sub, cx, 64, 12, COL.amber,'center','600');
-  // adaptive grid; with a serious map set it SCROLLS when it can't fit (drag or keyboard-follow)
-  const n=LEVELS.length, pad=14, top=84, bottomReserve=62;
+  const pad=14, top=84, bottomReserve=62, headH=26;
   const cols=clamp(Math.floor(vpW/240),1,4);
-  const rows=Math.ceil(n/cols);
   const availW=Math.min(vpW-32, cols*300), availH=Math.max(120, vpH-top-bottomReserve);
   const cw=(availW-(cols-1)*pad)/cols;
-  const chh=clamp((availH-(rows-1)*pad)/rows, 84, 138);
   const gridW=cols*cw+(cols-1)*pad, gx=(vpW-gridW)/2;
-  const gridH=rows*chh+(rows-1)*pad;
+  // group by region (manifest order kept inside each group; unknown biomes trail at the end)
+  const groups=[];
+  for(const b of REGION_ORDER){ const es=LEVELS.filter(e=>(e.biome||'greenwood')===b); if(es.length) groups.push({b,es}); }
+  const stray=LEVELS.filter(e=>REGION_ORDER.indexOf(e.biome||'greenwood')<0); if(stray.length) groups.push({b:null,es:stray});
+  const totalRows=groups.reduce((a,g)=>a+Math.ceil(g.es.length/cols),0);
+  const chh=clamp((availH-groups.length*headH-(totalRows-1)*pad)/Math.max(1,totalRows), 84, 132);
+  // lay out headers + cards into content-space positions
+  const pos=[]; let yy=0;
+  for(const g of groups){ g.hy=yy; yy+=headH;
+    g.es.forEach((e,j)=>{ const col=j%cols, row=(j/cols)|0;
+      pos.push({ e, x:gx+col*(cw+pad), y:yy+row*(chh+pad) }); });
+    yy+=Math.ceil(g.es.length/cols)*(chh+pad)-pad+12; }
+  const gridH=yy-12;
+  levelOrderNames=pos.map(p=>p.e.name);
   levelMaxScroll=Math.max(0, gridH-availH); if(!levelMaxScroll) levelScroll=0; levelScroll=clamp(levelScroll,0,levelMaxScroll);
   // keyboard/gamepad: reveal the selected card, but only when a key actually moved the selection
-  if(levelNavPending && menuIndex>=0 && menuIndex<n && levelMaxScroll){ const ry=((menuIndex/cols)|0)*(chh+pad);
-    if(ry-levelScroll<0) levelScroll=ry; else if(ry+chh-levelScroll>availH) levelScroll=ry+chh-availH; }
+  if(levelNavPending && menuIndex>=0 && menuIndex<pos.length && levelMaxScroll){ const ry=pos[menuIndex].y;
+    if(ry-headH-levelScroll<0) levelScroll=Math.max(0,ry-headH); else if(ry+chh-levelScroll>availH) levelScroll=ry+chh-availH; }
   levelNavPending=false;
   const gy=top+Math.max(0,(availH-gridH)/2)-levelScroll;
   ctx.save(); ctx.beginPath(); ctx.rect(0,top-4,vpW,availH+8); ctx.clip();
   const plv=xpLevel(PROGRESS.xp||0);
-  for(let i=0;i<LEVELS.length;i++){ const e=LEVELS[i]; const col=i%cols, row=(i/cols)|0;
-    const x=gx+col*(cw+pad), y=gy+row*(chh+pad);
+  // region headers: moon-colored dot + name + flavor line
+  for(const g of groups){ const hy=gy+g.hy; if(hy+headH<top-6||hy>top+availH+6) continue;
+    const mc=(g.b&&BIOME[g.b]&&BIOME[g.b].moon)||COL.amber;
+    ctx.fillStyle=mc; ctx.beginPath(); ctx.arc(gx+5,hy+12,4,0,TAU); ctx.fill();
+    txt(g.b?REGION_NAME[g.b]:'ELSEWHERE', gx+16, hy+12, 11, COL.txt,'left','800');
+    if(vpW>=560) txt(g.b?REGION_TAG[g.b]:'', gx+gridW, hy+12, 9, COL.muted,'right','500'); }
+  for(let i=0;i<pos.length;i++){ const {e,x}=pos[i]; const y=gy+pos[i].y;
     const idx=navList.length; const sel=idx===menuIndex;
     const locked=(e.unlockLevel||0)>plv;                                     // P12 map-unlock arc
     if(y+chh>top-6 && y<top+availH+6){
@@ -2957,6 +2993,9 @@ function drawSettings(){
   seg('Text size', [{t:'S',v:'S'},{t:'M',v:'M'},{t:'L',v:'L'}], settings.textSize, v=>settings.textSize=v);
   section('Controls');
   seg('Handedness', [{t:'Left',v:'left'},{t:'Right',v:'right'}], settings.handed, v=>settings.handed=v);
+  toggle('Fullscreen', !!document.fullscreenElement, v=>{   // phones: reclaim the browser chrome (iOS Safari lacks the API — toggle is a no-op there)
+    try{ if(v && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
+         else if(!v && document.exitFullscreen && document.fullscreenElement) document.exitFullscreen(); }catch(_){} });
   section('Help');
   if(rowVisible()){ ctx.fillStyle='rgba(10,14,25,0.8)'; rr(px,y+6,panelW,rowH-12,7); ctx.fill(); ctx.strokeStyle=COL.line; rr(px,y+6,panelW,rowH-12,7); ctx.stroke();
     txt('How to Play', cx, y+rowH/2, 13, COL.cyan,'center','600'); }
@@ -3180,7 +3219,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   camPan:{x:Math.round(camPan.x),y:Math.round(camPan.y)}, zoom:+zoom.toFixed(3),
   inspect:{active:ctrlMode==='INSPECT',zoomT:+inspectZoomT.toFixed(2)},
   hold:{locked:camLock, vz:+vz.toFixed(3), vzTarget:+vzTarget.toFixed(3), pinch:!!pinch, brackets:+holdBracketT.toFixed(2)},
-  tour:{active:tut.active, step:tut.step},
+  tour:{active:tut.active, step:tut.step}, levelOrder:levelOrderNames,
   move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},
   speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
   perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; } }; }catch(_){}

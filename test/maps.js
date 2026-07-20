@@ -43,10 +43,11 @@ let fails=0; const ok=(n,c,x='')=>{ console.log(`${c?'OK  ':'FAIL'}  ${n}${x?'  
    if(S().appState!=='TITLE'){ key('Escape'); pump(4); }   // safety
  }
  // big-map pressure: Survive EASY on a >=4800-cell expansion map fields UFO_COUNT+1 hunters
- { const big=manifest.findIndex(m=>m.name==='frostharbor');
+ { key('Enter'); pump(6);                        // TITLE → MODE_SELECT
+   key('ArrowDown'); pump(2); key('Enter'); pump(6);     // Survive → LEVEL_SELECT
+   pump(2);
+   const big=(S().levelOrder||[]).indexOf('frostharbor');   // display order is region-grouped (P17)
    if(big>=0){
-     key('Enter'); pump(6);                       // TITLE → MODE_SELECT
-     key('ArrowDown'); pump(2); key('Enter'); pump(6);   // Survive → LEVEL_SELECT
      for(let k=0;k<big;k++){ key('ArrowRight'); pump(1); }
      key('Enter'); await wait(80); pump(10);      // → DIFFICULTY_SELECT (menuIndex=1)
      key('ArrowUp'); pump(2); key('Enter'); await wait(60); pump(220);   // EASY → PLAYING

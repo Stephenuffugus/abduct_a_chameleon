@@ -607,7 +607,7 @@ const manifest = [];
 for (const th of THEMES) {
   const map = makeMap(th);
   writeFileSync(`maps/${th.name}.json`, JSON.stringify(map));
-  manifest.push({ file: `maps/${th.name}.json`, name: th.name, display: th.display });
+  manifest.push({ file: `maps/${th.name}.json`, name: th.name, display: th.display, biome: map.biome || 'greenwood' });
   console.log(`wrote maps/${th.name}.json  ${map.grid.cols}x${map.grid.rows}  ${map.objects.length} props  ${map.spawns.length} spawns`);
 }
 writeFileSync('maps/levels.json', JSON.stringify(manifest, null, 2));
