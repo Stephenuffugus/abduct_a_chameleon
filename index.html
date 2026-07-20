@@ -1247,7 +1247,7 @@ function enterInspect(){ if(!round||roundState!=='PLAYING'||round.mode==='HUNT')
   coachOnce('seenLookHint','🤏 pinch or scroll to zoom · drag to look'); }
 function exitInspect(){ ctrlMode='MOVE'; camLock=false; cancelPinch(); SFX.home(); }
 function goHome(){ if(studio.open) closeStudio(); camLock=false; cancelPinch(); ctrlMode='MOVE'; SFX.home(); }  // the pill: ALL the way home
-function coachOnce(flag,msg){ if(settings[flag]) return; settings[flag]=true; saveSettings(); showToast(msg); }
+function coachOnce(flag,msg){ if(tut.active) return; if(settings[flag]) return; settings[flag]=true; saveSettings(); showToast(msg); }  // the tour is the teacher while it runs
 function composeNudge(){ const r=studioRects(), s=worldToScreen(player.x,player.y);   // held paint: keep your body visible above the panel
   if(s.y > r.panel.y-30 && s.x > r.panel.x-20 && s.x < r.panel.x+r.panel.w+20){
     const z=Math.max(ZOOM_MIN*0.55, zoomBase*(1+(vzTarget-1)));                       // the SETTLED hold zoom — never a mid-ease liveZoom
@@ -2067,6 +2067,7 @@ function drawRoundHUD(){
     ctx.globalAlpha=1; }
   // studio
   if(studio.open) drawStudio();
+  drawTour();                                                   // P14 banner stays readable over the studio dim
   // countdown / banners
   if(roundState==='COUNTDOWN'||roundState==='RESUME_COUNTDOWN') drawCountdown();
   if(roundState==='PAUSED') drawPause();
@@ -2108,6 +2109,41 @@ function drawInspectOverlay(lite){
   ctx.globalAlpha=1;
   // hint to exit
   txt('drag to look · pinch/scroll to zoom · 🎨 holds the shot · 👁 done', vpW/2, vpH-70, 10, COL.muted, 'center','600');
+}
+/* ============================ P14 FIRST FLIGHT — guided practice tour ============================ */
+// Doing beats reading: five steps watched live from the sim. Practice-only, skippable, one-time.
+const TOUR=[
+  { icon:'🕹', text:'Push the move side gently to sneak around', test:(dt,t)=> input.speed>0 ? t+dt : t, need:0.9 },
+  { icon:'👁', text:'Tap 👁 — rise up to the hunters’ view',      test:(dt,t)=> ctrlMode==='INSPECT' ? t+dt : t, need:0.7 },
+  { icon:'🤏', text:'Pinch or scroll to zoom in and out',         test:(dt,t)=> Math.abs(vz-VZ_SEEKER)>0.1 ? t+dt : t, need:0.25 },
+  { icon:'🎨', text:'Tap 🎨 to hold the shot, then press MATCH',  test:(dt,t)=> (studio.open && player.mq>=0.85) ? t+dt : t, need:0.15 },
+  { icon:'⏱', text:'Now hold still… melt into the ground',       test:(dt,t)=> player.conceal>=0.85 ? t+dt : t, need:0.4 },
+];
+const tut={ active:false, step:0, t:0, doneT:0 };
+function startTour(){ tut.active=true; tut.step=0; tut.t=0; tut.doneT=0; }
+function endTour(done){ tut.active=false; settings.tourDone=true;
+  settings.seenLookHint=true; settings.seenHoldHint=true; saveSettings();   // the tour teaches what the one-shot hints would
+  if(done){ SFX.best(); showToast('⭐ You know everything now — happy hiding!'); spawnShards(player.x,player.y,COL.amber,14); } }
+function stepTour(dt){ if(!tut.active) return;
+  if(!round||round.mode!=='PRACTICE'){ tut.active=false; return; }
+  if(tut.step>=TOUR.length){ tut.doneT+=dt; if(tut.doneT>2.2) endTour(true); return; }
+  const s=TOUR[tut.step]; tut.t=s.test(dt,tut.t);
+  if(tut.t>=s.need){ tut.step++; tut.t=0; SFX.confirm(); vibe(15); } }
+function drawTour(){ if(!tut.active) return;
+  const done=tut.step>=TOUR.length;
+  const s=done?{icon:'⭐',text:'You vanished! That’s the whole game'}:TOUR[tut.step];
+  const w=Math.min(430,vpW-24), x=(vpW-w)/2, y=86, h=42;
+  applyScreenTransform(); ctx.globalAlpha=0.96; panel(x,y,w,h,10);
+  txt(s.icon, x+22, y+18, 16, COL.txt,'center','700');
+  txt(s.text, x+42, y+16, 12.5, done?COL.amber:COL.txt,'left','700');
+  for(let i=0;i<TOUR.length;i++){ ctx.globalAlpha=i<=tut.step?0.9:0.3;      // step dots
+    ctx.fillStyle=i<tut.step?COL.green:(i===tut.step?COL.amber:COL.muted);
+    ctx.beginPath(); ctx.arc(x+46+i*13, y+h-9, i===tut.step?3.4:2.4, 0, TAU); ctx.fill(); }
+  ctx.globalAlpha=1;
+  // ✕ skip is the ONLY interactive part — taps on the banner text pass through to the world
+  ctx.strokeStyle=COL.muted; ctx.lineWidth=1.5; rr(x+w-32,y+9,24,24,6); ctx.stroke();
+  txt('✕', x+w-20, y+21, 12, COL.muted,'center','700');
+  roundHits.push({x:x+w-32,y:y+9,w:24,h:24,fn:()=>endTour(false)});
 }
 // P9: viewfinder corner brackets — "the shot is held" (non-breathing; photosensitive-safe)
 function drawHoldBrackets(){ const a=holdBracketT; if(a<=0.02) return; applyScreenTransform();
@@ -2391,6 +2427,7 @@ function startRound(entry, mode, diff, fixedSeed){
   appState='ROUND'; roundState='COUNTDOWN'; studio.open=false; studio.reticleOn=false;
   ctrlMode='MOVE'; camFollow.x=cam.x; camFollow.y=cam.y; camPan.x=0; camPan.y=0; inspectZoomT=0; joystick=null;
   camLock=false; pinch=null; vz=vzTarget=VZ_SEEKER; panBoost=1; holdBracketT=0;   // P9: fresh round, fresh camera
+  if(mode==='PRACTICE' && !settings.tourDone) startTour(); else tut.active=false;  // P14: first practice = guided tour
   settings.lastMode=mode; settings.lastLevel=Math.max(0,LEVELS.indexOf(entry)); settings.lastDiff=diff.label||'NORMAL'; saveSettings();
 }
 
@@ -2987,6 +3024,7 @@ function frame(now){
     if(roundState==='CAUGHT'){ player.abductT+=realDt; if(player.abductT>=ABDUCT_CUTSCENE) finishRound('LOSE'); }
     else if(roundState==='TIMEOUT'){ round.summaryT+=realDt; if(round.summaryT>=TIMEOUT_ANIM) finishRound('WIN'); }
     updateParticles(realDt); updateAmbient(realDt); updateChameleonAnim(realDt); updateCamera(realDt);
+    if(roundState==='PLAYING') stepTour(realDt);   // P14: the tour tracks REAL time (practice slow-mo would stall its steps)
     if(appState==='ROUND'){ updateDrone(round.nearUfo||0); updateSuspicionAudio(realDt);
       let beaming=false,ch=0; for(const u of round.ufos){ if(u.state==='BEAM'){ beaming=true; ch=Math.max(ch,u.beamCharge); } }
       updateBeamSound(beaming,ch);
@@ -3054,6 +3092,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   camPan:{x:Math.round(camPan.x),y:Math.round(camPan.y)}, zoom:+zoom.toFixed(3),
   inspect:{active:ctrlMode==='INSPECT',zoomT:+inspectZoomT.toFixed(2)},
   hold:{locked:camLock, vz:+vz.toFixed(3), vzTarget:+vzTarget.toFixed(3), pinch:!!pinch, brackets:+holdBracketT.toFixed(2)},
+  tour:{active:tut.active, step:tut.step},
   move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},
   speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
   perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; } }; }catch(_){}

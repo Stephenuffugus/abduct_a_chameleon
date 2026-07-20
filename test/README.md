@@ -18,6 +18,7 @@ npm run pass8                 # P8 "Living Camo": coach, touch-offset, split tog
 npm run lockandlook           # P9 "Photo Loop": stillness law, implicit camera-hold, wheel+pinch zoom, hop-back/pill exits
 npm run progression           # P12: XP awarded at round end, level derived, persisted; __aac add-only shape
 npm run maps                  # P11: every manifest level boots into PLAYING in the real engine (unlocks pre-seeded)
+npm run tour                  # P14: the guided First Flight advances by doing and persists tourDone
 npm run shots                 # render PNG/JPEG screenshots of each screen to test/shots/
 ```
 
