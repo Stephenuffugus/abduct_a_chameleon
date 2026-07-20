@@ -1,0 +1,3 @@
+{ "name": "aac-relay", "private": true, "type": "module",
+  "scripts": { "start": "node relay.mjs" },
+  "dependencies": { "ws": "^8" } }
