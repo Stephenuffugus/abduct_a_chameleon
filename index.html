@@ -2802,9 +2802,11 @@ function drawLevelSelect(){ const cx=vpW/2;
       else { ctx.fillStyle='#0A0E19'; ctx.fillRect(tx,ty,tw,th); txt('loading…',tx+tw/2,ty+th/2,11,COL.muted,'center','500'); }
       if(locked){ txt('🔒', tx+tw/2, ty+th/2, Math.min(22,th*0.6), COL.txt,'center','700'); }
       ctx.restore();
-      txt(e.display.split('—')[0].trim(), x+12, y+chh-20, 14, locked?COL.muted:(sel?COL.amber:COL.txt),'left','700');
+      const subT=(e.display.split('—')[1]||'').trim();
+      txt(e.display.split('—')[0].trim(), x+12, y+chh-(subT&&chh>=100?26:20), 14, locked?COL.muted:(sel?COL.amber:COL.txt),'left','700');
+      if(subT&&chh>=100) txt(subT, x+12, y+chh-12, 9, COL.muted,'left','500');   // the map's identity line, when the card is tall enough
       if(locked) txt('Reach Lv '+e.unlockLevel, x+cw-12, y+chh-20, 10, COL.muted,'right','600');
-      else { const badge=levelBadge(e); if(badge) txt(badge, x+cw-12, y+chh-20, 10, COL.green,'right','600'); }
+      else { const badge=levelBadge(e); if(badge) txt(badge, x+cw-12, y+chh-(subT&&chh>=100?26:20), 10, COL.green,'right','600'); }
     }
     // hit rect clipped to the viewport band so an off-screen card can never shadow the Back button
     const vy0=Math.max(y,top-4), vy1=Math.min(y+chh,top+availH+4);
@@ -2954,6 +2956,9 @@ function drawSettings(){
   if(rowVisible()){ ctx.fillStyle='rgba(10,14,25,0.8)'; rr(px,y+6,panelW,rowH-12,7); ctx.fill(); ctx.strokeStyle=COL.line; rr(px,y+6,panelW,rowH-12,7); ctx.stroke();
     txt('How to Play', cx, y+rowH/2, 13, COL.cyan,'center','600'); }
   pushHit(px,y+4,panelW,rowH-8,()=>{ showHelp=true; }); y+=rowH;
+  if(rowVisible()){ ctx.fillStyle='rgba(10,14,25,0.8)'; rr(px,y+6,panelW,rowH-12,7); ctx.fill(); ctx.strokeStyle=COL.line; rr(px,y+6,panelW,rowH-12,7); ctx.stroke();
+    txt(settings.tourDone?'Replay the guided tour (next Practice)':'Guided tour plays on your next Practice', cx, y+rowH/2, 13, settings.tourDone?COL.cyan:COL.muted,'center','600'); }
+  pushHit(px,y+4,panelW,rowH-8,()=>{ if(settings.tourDone){ settings.tourDone=false; settings.seenLookHint=false; settings.seenHoldHint=false; saveSettings(); SFX.ui(); showToast('🕹 First Flight will play on your next Practice round'); } }); y+=rowH;
   settingsMaxScroll=Math.max(0, (y+settingsScroll) - bottom + 8);
   ctx.restore();
   // footer buttons (outside the scroll region — ry:null keeps keyboard auto-scroll off them)
