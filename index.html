@@ -1533,7 +1533,7 @@ function vibe(p){ try{ if(settings.haptics!==false && FX_MOTION>0 && navigator.v
 function addStreak(){ if(FX.streaks.length<14){ const a=Math.random()*TAU;
   FX.streaks.push({ x:vpW/2+Math.cos(a)*vpW*0.4, y:vpH/2+Math.sin(a)*vpH*0.4, a, life:0, max:0.35 }); } }
 function nearMiss(){ if(FX_MOTION>0){ FX.slowScale=0.35; FX.slowHold=0.22; FX.desat=1; for(let i=0;i<10;i++) addStreak(); }
-  floatText(player.x, player.y-20, 'NEAR MISS!', PAL.warn);
+  floatText(player.x, player.y-20, 'NEAR MISS! +150', PAL.warn);
   addTrauma(TRAUMA.nearMiss); hitstopMs(60); punchZoom(-0.04,120,380); FX.reliefV=1; vibe([25,45]); }
 // world-space floating event text (FX_MOTION-gated like every flourish)
 function floatText(x,y,text,color){ if(FX_MOTION<=0) return;

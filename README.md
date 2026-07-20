@@ -65,6 +65,7 @@ seamless: *hops between Look and Paint never move the camera; only returning to 
 | Move (analog speed) | `WASD` / arrows · hold `Shift` = sneak | drag move side (light = sneak) |
 | Look around | drag on action side · **scroll-out = Look** | drag the other side · **pinch = Look** |
 | **Zoom** (in Look / held Paint) | scroll wheel · `-` `=` detents | pinch · ＋／－ buttons |
+| **📷 Snapshot** (keep your framed shot) | 📷 in the camera cluster | 📷 |
 | **Paint** (holds the shot from Look) | `E` / `Tab` / 🎨 | 🎨 |
 | **Look** mode | `I` / 👁 | 👁 |
 | **Match** (sample ground) | `Q` | **MATCH** |

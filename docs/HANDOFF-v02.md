@@ -102,6 +102,8 @@ accepted tradeoff). All 13 suites green.
   PLAY no longer opens the text overlay (First Flight teaches instead). Tour test matches via Q —
   KeyM is shadowed by the mute binding (documented quirk), the old path passed only on
   spawn-matched luck.
+- **📷 Snapshot** — the camera cluster's fourth button captures the framed world layer (grabbed
+  post-drawRound, pre-HUD) as a PNG download; near-miss popup shows its +150 value.
 - Suite count: **14** (`npm run all`), plus `npm run shots`.
 
 ## Durable artifacts
