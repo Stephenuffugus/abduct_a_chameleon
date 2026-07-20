@@ -83,6 +83,20 @@ deterministic lockandlook, big-map +1-UFO coverage). Deliberate skips: #29 (insp
 with rings but header pops — cosmetic), #30 (menu fade translates 14px from hit rects for 180ms —
 accepted tradeoff). All 13 suites green.
 
+## Post-review pieces (2026-07-20, all green, all pushed)
+- **P13** — web presence (meta/og/theme-color/SVG-data-URI favicon), daily 🔥 streaks
+  (`PROGRESS.daily`, +2 streak challenges), wardrobe challenge panel with hints, sound identity
+  (lookIn/home whooshes, level-up arpeggio).
+- **P14 "First Flight"** — guided practice tour: 5 steps advanced by watching the live sim on a
+  REAL-time clock (practice slow-mo would stall it), ✕-only interactive banner, persists
+  `settings.tourDone`, suppresses coachOnce while active. Suite: `test/tour.js`.
+- Pause menu gains **How to Play** (help renders over the pause scrim; resume clears it); pause
+  rows space adaptively for short viewports.
+- **P16** — trail cosmetics (`PROGRESS.equipped.trail`): Bubbles Lv2 / Sparks Lv6 / Leaves via
+  Marathon Ghost, emitted through the pooled particle system only while visibly moving
+  (`conceal<0.5` gate = camo-safe by construction); wardrobe TRAILS chip row.
+- Suite count: **14** (`npm run all`), plus `npm run shots`.
+
 ## Durable artifacts
 - `docs/NEXT_SPEC.md` — the Pass 9–12 spec + invariants (merge gates).
 - `docs/notes/codebase-map-v02.json` — six-concern structural map of index.html (functions, line
