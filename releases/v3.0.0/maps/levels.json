@@ -1,0 +1,74 @@
+[
+  {
+    "file": "maps/greenwood.json",
+    "name": "greenwood",
+    "display": "Greenwood — dense forest",
+    "biome": "greenwood"
+  },
+  {
+    "file": "maps/dunes.json",
+    "name": "dunes",
+    "display": "Dunes — desert flats",
+    "biome": "dunes"
+  },
+  {
+    "file": "maps/tundra.json",
+    "name": "tundra",
+    "display": "Tundra — frozen north",
+    "biome": "tundra"
+  },
+  {
+    "file": "maps/downtown.json",
+    "name": "downtown",
+    "display": "Downtown — city blocks",
+    "biome": "downtown"
+  },
+  {
+    "file": "maps/xeno.json",
+    "name": "xeno",
+    "display": "Xeno — alien world",
+    "biome": "xeno"
+  },
+  {
+    "file": "maps/bog.json",
+    "name": "bog",
+    "display": "Bog — sunken swamp",
+    "biome": "bog"
+  },
+  {
+    "file": "maps/riverline.json",
+    "name": "riverline",
+    "display": "Riverline — valley of three bridges",
+    "biome": "greenwood"
+  },
+  {
+    "file": "maps/ruins.json",
+    "name": "ruins",
+    "display": "Sunken Ruins — flooded courtyards",
+    "biome": "bog"
+  },
+  {
+    "file": "maps/cinderfield.json",
+    "name": "cinderfield",
+    "display": "Cinderfield — seams through the fire",
+    "biome": "xeno"
+  },
+  {
+    "file": "maps/frostharbor.json",
+    "name": "frostharbor",
+    "display": "Frostharbor — docks and crate rows",
+    "biome": "tundra"
+  },
+  {
+    "file": "maps/scrapline.json",
+    "name": "scrapline",
+    "display": "Scrapline — junkyard alleys",
+    "biome": "downtown"
+  },
+  {
+    "file": "maps/gardens.json",
+    "name": "gardens",
+    "display": "Twin Gardens — two-tone topiary maze",
+    "biome": "greenwood"
+  }
+]
