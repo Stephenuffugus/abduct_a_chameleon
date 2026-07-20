@@ -604,8 +604,95 @@ const THEMES = [
 
 mkdirSync('maps', { recursive: true });
 const manifest = [];
+// ---------------------------------------------------------------------------
+// ENRICH (P21): a deterministic detail pass applied to EVERY map after build.
+// Goal: more places to hide, more ground worth painting — without touching
+// hazards, walls, spawns, or patrol space. Four rules, all bounded:
+//   R1 dead-zone fill  — any cell far from every hide option gets a sibling
+//                        terrain freckle nearby (kills the >6-distance deserts)
+//   R2 spawn pockets   — every hider spawn gets a 2-tone seam within reach
+//   R3 freckles        — uniform interiors get small sibling patches (paint targets)
+//   R4 cover slits     — sparse pairs 1 gap apart (LoS shadows), capped so
+//                        UFO patrol pools never starve
+// This pass deliberately ends the "legacy six byte-identical" policy — the
+// owner asked for more detail on ALL levels. Regenerate + validate as always.
+const SIBLING = { grass:['dirt','foliage'], dirt:['grass','rock'], sand:['rock','dirt'],
+  snow:['ice','rock'], ice:['snow'], concrete:['metal','dirt'], metal:['concrete'],
+  moss:['crystal','ash'], mud:['foliage','grass'], rock:['dirt'], foliage:['grass'],
+  ash:['rock','crystal'], crystal:['moss'] };
+const PAIR_TYPE = { greenwood:'tree', dunes:'boulder', tundra:'ice_spike',
+  downtown:'crate', xeno:'alien_pod', bog:'dead_tree' };
+function enrich(map, seed){
+  const rnd = rngFactory((Math.imul(seed ^ 0x51ed270b, 2246822519) >>> 0) || 1);
+  const { cols, rows } = map.grid, t = map.terrain;
+  const NOPAINT = new Set(['void','water','lava']);
+  const cov = new Map(); for (const o of map.objects) cov.set(o.x+','+o.y, o.type);
+  const spawnCells = new Set(map.spawns.map(s=>s.x+','+s.y));
+  const seekers = map.spawns.filter(s=>s.role==='seeker');
+  const terr = (x,y)=> (x>=0&&y>=0&&x<cols&&y<rows)? t[y][x] : 'void';
+  const nearSeeker = (x,y,r)=> seekers.some(s=>Math.max(Math.abs(s.x-x),Math.abs(s.y-y))<=r);
+  const seamAt = (x,y)=>{ const a=terr(x,y); if(a==='void') return false;
+    return [[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy])=>{ const b=terr(x+dx,y+dy); return b!=='void'&&b!==a; }); };
+  const within = (x,y,r,pred)=>{ for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++) if(pred(x+dx,y+dy)) return true; return false; };
+  const paintable = (x,y)=> x>=1&&y>=1&&x<cols-1&&y<rows-1 && !NOPAINT.has(terr(x,y)) && !cov.has(x+','+y) && !spawnCells.has(x+','+y);
+  const freckle = (x,y)=>{ const sib=SIBLING[terr(x,y)]; if(!sib||!paintable(x,y)) return false;
+    const k=sib[(rnd()*sib.length)|0]; t[y][x]=k;
+    const [dx,dy]=[[1,0],[0,1],[-1,0],[0,-1]][(rnd()*4)|0];
+    if(rnd()<0.6 && paintable(x+dx,y+dy)) t[y+dy][x+dx]=k;
+    return true; };
+  let nR1=0,nR2=0,nR3=0,nR4=0,nR5=0;
+  // R5: hider spawns parked within 6 tiles of a seeker are spawn-lottery losses — relocate them
+  // to the nearest fair cell (walkable, non-hazard, uncovered, ≥6 from every seeker, ≥3 from other hiders)
+  for(const s of map.spawns){ if(s.role!=='hider') continue;
+    if(!nearSeeker(s.x,s.y,5)) continue;
+    let best=null,bd=1e9;
+    for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++){
+      if(NOPAINT.has(terr(x,y))||cov.has(x+','+y)) continue;
+      if(nearSeeker(x,y,5)) continue;
+      if(map.spawns.some(o=>o!==s&&o.role==='hider'&&Math.max(Math.abs(o.x-x),Math.abs(o.y-y))<3)) continue;
+      const d=(x-s.x)*(x-s.x)+(y-s.y)*(y-s.y); if(d<bd){ bd=d; best=[x,y]; } }
+    if(best){ spawnCells.delete(s.x+','+s.y); s.x=best[0]; s.y=best[1]; spawnCells.add(s.x+','+s.y); nR5++; }
+  }
+  // R1: sweep a lattice; any spot with no seam AND no cover within 4 gets a freckle
+  for(let y=3;y<rows-3;y+=4) for(let x=3;x<cols-3;x+=4){
+    if(NOPAINT.has(terr(x,y))) continue;
+    if(within(x,y,4,(a,b)=>seamAt(a,b)) || within(x,y,4,(a,b)=>cov.has(a+','+b))) continue;
+    if(freckle(x+((rnd()*3)|0)-1, y+((rnd()*3)|0)-1)) nR1++;
+  }
+  // R2: every hider spawn gets a seam within 3 (paint one just outside arm's reach, never under them)
+  for(const s of map.spawns){ if(s.role!=='hider') continue;
+    if(within(s.x,s.y,3,(a,b)=>seamAt(a,b))) continue;
+    for(let tries=0;tries<12;tries++){ const dx=((rnd()*5)|0)-2, dy=((rnd()*5)|0)-2;
+      if(Math.max(Math.abs(dx),Math.abs(dy))<1) continue;
+      if(freckle(s.x+dx,s.y+dy)){ nR2++; break; } }
+  }
+  // R3: pepper uniform interiors with paint targets
+  const nF=(cols*rows/130)|0;
+  for(let i=0;i<nF;i++){ const x=1+((rnd()*(cols-2))|0), y=1+((rnd()*(rows-2))|0);
+    const a=terr(x,y); if(NOPAINT.has(a)||!SIBLING[a]) continue;
+    if(terr(x+1,y)!==a||terr(x-1,y)!==a||terr(x,y+1)!==a||terr(x,y-1)!==a) continue;   // uniform interior only
+    if(nearSeeker(x,y,2)) continue;
+    if(freckle(x,y)) nR3++;
+  }
+  // R4: sparse cover slits (pair with a 1-cell gap), far from spawns and existing cover
+  const pt=PAIR_TYPE[map.biome]||'boulder';
+  const maxPairs=Math.min((cols*rows/300)|0, Math.round(map.objects.length*0.06)+2);
+  for(let i=0;i<maxPairs*6 && nR4<maxPairs;i++){
+    const x=2+((rnd()*(cols-5))|0), y=2+((rnd()*(rows-5))|0);
+    const vert=rnd()<0.5, x2=vert?x:x+2, y2=vert?y+2:y;
+    const okCell=(a,b)=> !NOPAINT.has(terr(a,b)) && !cov.has(a+','+b) && !spawnCells.has(a+','+b);
+    if(!okCell(x,y)||!okCell(x2,y2)) continue;
+    if(within(x,y,2,(a,b)=>cov.has(a+','+b)) || nearSeeker(x,y,3)) continue;
+    if(map.spawns.some(s=>Math.max(Math.abs(s.x-x),Math.abs(s.y-y))<=3)) continue;
+    cov.set(x+','+y,pt); cov.set(x2+','+y2,pt);
+    map.objects.push({x,y,type:pt},{x:x2,y:y2,type:pt}); nR4++;
+  }
+  console.log(`  enrich ${map.name}: respawned ${nR5} · dead-fill ${nR1} · spawn-pockets ${nR2} · freckles ${nR3} · cover-slits ${nR4}×2`);
+  return map;
+}
+
 for (const th of THEMES) {
-  const map = makeMap(th);
+  const map = enrich(makeMap(th), (th.seed||1)*2654435761>>>0);
   writeFileSync(`maps/${th.name}.json`, JSON.stringify(map));
   manifest.push({ file: `maps/${th.name}.json`, name: th.name, display: th.display, biome: map.biome || 'greenwood' });
   console.log(`wrote maps/${th.name}.json  ${map.grid.cols}x${map.grid.rows}  ${map.objects.length} props  ${map.spawns.length} spawns`);
