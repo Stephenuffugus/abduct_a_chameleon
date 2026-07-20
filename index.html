@@ -957,6 +957,7 @@ addEventListener('keydown', e=>{
   if(keys.has(e.code)) return; keys.add(e.code);
   if(appState==='ROUND'){
     if(roundState==='PAUSED'){   // paused overlay behaves like a menu
+      if(showHelp){ if(e.code==='Escape'||e.code==='Enter'||e.code==='Space'||e.code==='Backspace') showHelp=false; return; }
       if(e.code==='Escape'||e.code==='KeyP') resumeRound();
       else if(e.code==='Enter'||e.code==='Space') menuConfirm();
       else if(e.code==='ArrowUp'||e.code==='KeyW') menuNav(0,-1);
@@ -2070,7 +2071,7 @@ function drawRoundHUD(){
   drawTour();                                                   // P14 banner stays readable over the studio dim
   // countdown / banners
   if(roundState==='COUNTDOWN'||roundState==='RESUME_COUNTDOWN') drawCountdown();
-  if(roundState==='PAUSED') drawPause();
+  if(roundState==='PAUSED'){ drawPause(); if(showHelp) drawHelp(); }
   if(round.spottedFlash>0){ ctx.globalAlpha=round.spottedFlash; txt('SPOTTED!', vpW/2, vpH*0.3, 40, COL.danger, 'center','800'); ctx.globalAlpha=1; }
 }
 // INSPECT: "see yourself as the hunter's ship does" — reach rings + a YOU marker + your live blend
@@ -2208,13 +2209,18 @@ function drawCountdown(){ const c=Math.ceil(round.countdown); const s=c>0?String
   ctx.globalAlpha=clamp01(round.countdown - Math.floor(round.countdown))*0.6+0.4;
   txt(s, vpW/2, vpH/2, 72, roundState==='RESUME_COUNTDOWN'?COL.cyan:COL.amber, 'center','800'); ctx.globalAlpha=1; }
 function drawPause(){ ctx.fillStyle='rgba(8,12,25,0.7)'; ctx.fillRect(0,0,vpW,vpH);
-  txt('PAUSED', vpW/2, vpH*0.5-140, 34, COL.txt, 'center','800');
+  // adaptive row spacing so the full menu (now 6 rows in practice) fits short viewports too
+  const rows=5+(round.diff.practice?1:0);
+  const step=Math.min(56,(vpH*0.5+40)/rows), bh=Math.min(46,step-8);
+  const by0=vpH*0.5-70*(step/56);
+  txt('PAUSED', vpW/2, by0-50, Math.min(34,step*0.62+6), COL.txt, 'center','800');
   // built into navList so keyboard/gamepad can navigate it like a menu
-  navList=[]; const bw=Math.min(240,vpW-48),bh=46,bx=vpW/2-bw/2; let by=vpH*0.5-70;
-  navBtn('Resume', bx,by,bw,bh, ()=>resumeRound(), {size:16}); by+=56;
-  navBtn('Restart', bx,by,bw,bh, ()=>startRound(round.entry,round.mode,round.diff), {size:16}); by+=56;
-  if(round.diff.practice){ navBtn(round.debug?'Debug: ON':'Debug: OFF', bx,by,bw,bh, ()=>round.debug=!round.debug, {size:15}); by+=56; }
-  navBtn('Settings', bx,by,bw,bh, ()=>openSettings('PAUSE'), {size:15}); by+=56;
+  navList=[]; const bw=Math.min(240,vpW-48),bx=vpW/2-bw/2; let by=by0;
+  navBtn('Resume', bx,by,bw,bh, ()=>resumeRound(), {size:16}); by+=step;
+  navBtn('Restart', bx,by,bw,bh, ()=>startRound(round.entry,round.mode,round.diff), {size:16}); by+=step;
+  if(round.diff.practice){ navBtn(round.debug?'Debug: ON':'Debug: OFF', bx,by,bw,bh, ()=>round.debug=!round.debug, {size:15}); by+=step; }
+  navBtn('How to Play', bx,by,bw,bh, ()=>{ showHelp=true; SFX.ui(); }, {size:15}); by+=step;
+  navBtn('Settings', bx,by,bw,bh, ()=>openSettings('PAUSE'), {size:15}); by+=step;
   navBtn('Quit to Menu', bx,by,bw,bh, ()=>gotoTitle(), {size:15,stroke:COL.danger,color:COL.danger});
   if(menuIndex>=navList.length) menuIndex=navList.length-1;
 }
@@ -2363,7 +2369,7 @@ function endRound(win){ if(round.finalized||roundState==='TIMEOUT'||roundState==
 function togglePause(){ if(appState!=='ROUND') return;
   if(roundState==='PLAYING'){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null; roundState='PAUSED'; menuIndex=0; SFX.ui(); stopAllLoops(); }
   else if(roundState==='PAUSED') resumeRound(); }
-function resumeRound(){ roundState='RESUME_COUNTDOWN'; round.countdown=RESUME_COUNTDOWN; round.lastCount=null; SFX.ui(); }
+function resumeRound(){ showHelp=false; roundState='RESUME_COUNTDOWN'; round.countdown=RESUME_COUNTDOWN; round.lastCount=null; SFX.ui(); }
 function gotoTitle(){ appState='TITLE'; menuIndex=0; showHelp=false; stopAllLoops(); }
 function startPlay(){ SFX.confirm(); if(!settings.tutorialSeen){ settings.tutorialSeen=true; saveSettings(); showHelp=true; } appState='MODE_SELECT'; menuIndex=0; }
 
