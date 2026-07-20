@@ -391,7 +391,7 @@ async function init(){
   try{
     setupScene();
     renderer.setAnimationLoop(loop);
-    await loadCharacter();                    // P35: rigged body (falls back to the capsule rig)
+    await Promise.all([loadCharacter(), loadProps()]);   // P35/P36: rigged body + real props (primitives as fallback)
     await insertCoin();
     me = myPlayer();
     setupInput();
@@ -511,10 +511,15 @@ function makeRandomMap(seed){
     for(let x=x0;x<=x0+bw;x++){ if(!(door===0&&x===mx)) put(x,y0,'wall'); if(!(door===1&&x===mx)) put(x,y0+bh,'wall'); }
     for(let y=y0;y<=y0+bh;y++){ if(!(door===2&&y===my)) put(x0,y,'wall'); if(!(door===3&&y===my)) put(x0+bw,y,'wall'); }
     put(mx,my,'crate'); if(rnd()<0.7) put(mx+1,my,'barrel');
+    if(rnd()<0.5) put(mx-1,my,'chest'); if(rnd()<0.5) put(mx,my+1,'table');
   }
   for(const [type,on,density] of th.cover)
     for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++)
       if(t[y][x]===on && rnd()<density) put(x,y,type);
+  // scattered unique landmarks — memorable hiding anchors between the buildings
+  const extras=['pillar','chest','table','pillar'];
+  for(let i=0;i<4+Math.floor(rnd()*5);i++)
+    put(2+Math.floor(rnd()*(cols-4)), 2+Math.floor(rnd()*(rows-4)), extras[Math.floor(rnd()*extras.length)]);
   const spawns=[];
   [[3,3],[cols-4,3],[cols-4,rows-4],[3,rows-4]].forEach(([x,y])=> spawns.push({x,y,role:'seeker'}));
   let placed=0, guard=0;
@@ -664,20 +669,28 @@ function addCover(type, gx, gy){
     g.add(tr, lf); losMeshes.push(tr, lf); addTarget(w.x, w.z, lm.color.getHex(), 2.8);
   }else if(type==='boulder'){
     const rm = instMat(COVER_MAT.rock, ROCK_HUES, gx, gy);
-    const b = new THREE.Mesh(new THREE.IcosahedronGeometry(1.4,0), rm); b.position.y=1.0;
-    b.rotation.set((hash2(gx,gy)%100)/32,(hash2(gy,gx)%100)/32,0); g.add(b); losMeshes.push(b);
+    const pr = propMesh('boulder', rm, 1.7);
+    if(pr){ pr.node.rotation.y = (hash2(gx,gy)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
+    else{ const b = new THREE.Mesh(new THREE.IcosahedronGeometry(1.4,0), rm); b.position.y=1.0;
+      b.rotation.set((hash2(gx,gy)%100)/32,(hash2(gy,gx)%100)/32,0); g.add(b); losMeshes.push(b); }
     addTarget(w.x, w.z, rm.color.getHex(), 2.6);
   }else if(type==='crate'){
     const pat = maybePattern(COVER_MAT.crate, CRATE_HUES, gx, gy, 4);
     const cm = pat ? pat.m : instMat(COVER_MAT.crate, CRATE_HUES, gx, gy);
-    const b = new THREE.Mesh(new THREE.BoxGeometry(1.6,1.6,1.6), cm); b.position.y=0.8;
-    b.rotation.y=((hash2(gx,gy)>>4)%31)/100-0.15;
-    g.add(b); losMeshes.push(b); addTarget(w.x, w.z, pat ? pat.avg : cm.color.getHex(), 2.4);
+    const stack = hash2(gx+13,gy+17)%5===0;
+    const pr = propMesh(stack?'crates':'crate', cm, stack?2.3:1.6);
+    if(pr){ pr.node.rotation.y=((hash2(gx,gy)>>4)%31)/100-0.15; g.add(pr.node); losMeshes.push(...pr.meshes); }
+    else{ const b = new THREE.Mesh(new THREE.BoxGeometry(1.6,1.6,1.6), cm); b.position.y=0.8;
+      b.rotation.y=((hash2(gx,gy)>>4)%31)/100-0.15; g.add(b); losMeshes.push(b); }
+    addTarget(w.x, w.z, pat ? pat.avg : cm.color.getHex(), 2.4);
   }else if(type==='barrel'){
     const pat = maybePattern(COVER_MAT.barrel, BARREL_HUES, gx, gy, 3);
     const bm = pat ? pat.m : instMat(COVER_MAT.barrel, BARREL_HUES, gx, gy);
-    const b = new THREE.Mesh(new THREE.CylinderGeometry(0.7,0.7,1.8,12), bm); b.position.y=0.9;
-    g.add(b); losMeshes.push(b); addTarget(w.x, w.z, pat ? pat.avg : bm.color.getHex(), 2.2);
+    const pr = propMesh('barrel', bm, 1.8);
+    if(pr){ g.add(pr.node); losMeshes.push(...pr.meshes); }
+    else{ const b = new THREE.Mesh(new THREE.CylinderGeometry(0.7,0.7,1.8,12), bm); b.position.y=0.9;
+      g.add(b); losMeshes.push(b); }
+    addTarget(w.x, w.z, pat ? pat.avg : bm.color.getHex(), 2.2);
   }else if(type==='wall'){
     const pat = maybePattern(COVER_MAT.wall, WALL_HUES, Math.floor(gx/5), Math.floor(gy/5), 3);
     const wm = pat ? pat.m : instMat(COVER_MAT.wall, WALL_HUES, Math.floor(gx/5), Math.floor(gy/5));   // walls vary per building
@@ -697,6 +710,24 @@ function addCover(type, gx, gy){
   }else if(type==='ice_spike'){
     const s = new THREE.Mesh(new THREE.ConeGeometry(0.8,3.6,6), COVER_MAT.ice); s.position.y=1.8;
     g.add(s); losMeshes.push(s); addTarget(w.x, w.z, 0xbfe0f2, 2.4);
+  }else if(type==='pillar'){
+    const pm2 = instMat(COVER_MAT.wall, WALL_HUES, gx, gy);
+    const pr = propMesh('pillar', pm2, 3.4);
+    if(pr){ g.add(pr.node); losMeshes.push(...pr.meshes); }
+    else{ const b = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.6,3.4,10), pm2); b.position.y=1.7; g.add(b); losMeshes.push(b); }
+    addTarget(w.x, w.z, pm2.color.getHex(), 2.4);
+  }else if(type==='chest'){
+    const ch = instMat(COVER_MAT.crate, CRATE_HUES, gx+7, gy+3);
+    const pr = propMesh('chest', ch, 1.15);
+    if(pr){ pr.node.rotation.y = ((hash2(gx,gy)>>3)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
+    else{ const b = new THREE.Mesh(new THREE.BoxGeometry(1.4,1.0,1.0), ch); b.position.y=0.5; g.add(b); losMeshes.push(b); }
+    addTarget(w.x, w.z, ch.color.getHex(), 2.2);
+  }else if(type==='table'){
+    const tm = instMat(COVER_MAT.crate, WALL_HUES, gx+11, gy+5);
+    const pr = propMesh('table', tm, 1.2);
+    if(pr){ pr.node.rotation.y = ((hash2(gy,gx)>>2)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
+    else{ const b = new THREE.Mesh(new THREE.BoxGeometry(2.0,1.2,1.0), tm); b.position.y=0.6; g.add(b); losMeshes.push(b); }
+    addTarget(w.x, w.z, tm.color.getHex(), 2.4);
   }else if(type==='alien_pod'){
     const st = new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.3,1.4,7), COVER_MAT.dead); st.position.y=0.7;
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.7,14,12), COVER_MAT.pod); bulb.position.y=1.8;
@@ -811,6 +842,46 @@ function setCharAction(p, name){
   next.reset().fadeIn(0.16).play();
   if(prev && prev !== next) prev.fadeOut(0.16);
   p.curAction = name;
+}
+
+/* P36: real prop shapes — KayKit Dungeon Remastered (CC0). Shape comes from the GLB,
+   COLOR still comes from our per-instance palette (that's the whole game), so UVs are
+   re-projected at load and materials swapped per instance. Primitives remain the fallback. */
+const PROP_URLS = { crate:'assets/props/crate.glb', crates:'assets/props/crates.glb',
+  barrel:'assets/props/barrel.glb', boulder:'assets/props/boulder.glb',
+  pillar:'assets/props/pillar.glb', chest:'assets/props/chest.glb', table:'assets/props/table.glb' };
+const propLib = {};
+async function loadProps(){
+  const loader = new GLTFLoader();
+  await Promise.all(Object.entries(PROP_URLS).map(async ([k,url])=>{
+    try{
+      const g = await loader.loadAsync(url);
+      g.scene.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(g.scene);
+      const size = box.getSize(new THREE.Vector3());
+      const v = new THREE.Vector3();
+      g.scene.traverse(o=>{
+        if(!o.isMesh) return;
+        const pos = o.geometry.attributes.position, uv = o.geometry.attributes.uv;
+        if(!uv) return;
+        for(let i=0;i<pos.count;i++){
+          v.fromBufferAttribute(pos,i); o.localToWorld(v);
+          uv.setXY(i, (v.x-box.min.x)/Math.max(1e-6,size.x), (v.y-box.min.y)/Math.max(1e-6,size.y));
+        }
+        uv.needsUpdate = true;
+      });
+      propLib[k] = { scene:g.scene, size, minY:box.min.y };
+    }catch(_){ /* fallback primitives cover any missing prop */ }
+  }));
+}
+function propMesh(kind, mat, targetH){
+  const P = propLib[kind]; if(!P) return null;
+  const n = P.scene.clone(true);
+  const sc = targetH / Math.max(1e-6, P.size.y);
+  n.scale.setScalar(sc); n.position.y = -P.minY * sc;
+  const meshes = [];
+  n.traverse(o=>{ if(o.isMesh){ o.material = mat; meshes.push(o); } });
+  return { node:n, meshes };
 }
 
 const POSES = {
