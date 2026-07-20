@@ -95,6 +95,13 @@ accepted tradeoff). All 13 suites green.
 - **P16** — trail cosmetics (`PROGRESS.equipped.trail`): Bubbles Lv2 / Sparks Lv6 / Leaves via
   Marathon Ghost, emitted through the pooled particle system only while visibly moving
   (`conceal<0.5` gate = camo-safe by construction); wardrobe TRAILS chip row.
+- **Feel pass** — staged summary reveal (headline → grade slam → stat cascade → score count-up →
+  best/XP after the count; all three end funnels carry `t0`; reduced-motion = instant); floating
+  world-space 'ftext' popups at the earned moments (NEAR MISS! / BANKED x/y / vanished ✓ /
+  CAUGHT x/y 🛸); level cards show their identity subtitle; Settings can re-arm the tour; first
+  PLAY no longer opens the text overlay (First Flight teaches instead). Tour test matches via Q —
+  KeyM is shadowed by the mute binding (documented quirk), the old path passed only on
+  spawn-matched luck.
 - Suite count: **14** (`npm run all`), plus `npm run shots`.
 
 ## Durable artifacts
