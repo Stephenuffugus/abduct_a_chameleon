@@ -37,7 +37,7 @@ let fails=0; const ok=(n,c,x='')=>{ console.log(`${c?'OK  ':'FAIL'}  ${n}${x?'  
  ok('T2 looking advances to step 2', S().tour.step===2, 'step='+S().tour.step);
  for(let i=0;i<8;i++) wheel(120); pump(25);                         // zoom well past the detent
  ok('T3 zooming advances to step 3', S().tour.step===3, 'step='+S().tour.step);
- key('KeyE'); pump(4); key('KeyM'); pump(20);                       // hold the shot, MATCH via studio key
+ key('KeyE'); pump(4); key('KeyQ'); pump(20);                       // hold the shot, MATCH via Q (KeyM is the mute key)
  ok('T4 hold+match advances to step 4', S().tour.step===4, 'step='+S().tour.step+' mq='+S().mq);
  key('Escape'); pump(4); key('Escape'); pump(6);                    // back to MOVE, stand still
  pump(400);                                                         // settle → conceal ≥0.85 → done banner → auto-end

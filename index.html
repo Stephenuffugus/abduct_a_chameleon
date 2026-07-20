@@ -1532,7 +1532,11 @@ function vibe(p){ try{ if(settings.haptics!==false && FX_MOTION>0 && navigator.v
 function addStreak(){ if(FX.streaks.length<14){ const a=Math.random()*TAU;
   FX.streaks.push({ x:vpW/2+Math.cos(a)*vpW*0.4, y:vpH/2+Math.sin(a)*vpH*0.4, a, life:0, max:0.35 }); } }
 function nearMiss(){ if(FX_MOTION>0){ FX.slowScale=0.35; FX.slowHold=0.22; FX.desat=1; for(let i=0;i<10;i++) addStreak(); }
+  floatText(player.x, player.y-20, 'NEAR MISS!', PAL.warn);
   addTrauma(TRAUMA.nearMiss); hitstopMs(60); punchZoom(-0.04,120,380); FX.reliefV=1; vibe([25,45]); }
+// world-space floating event text (FX_MOTION-gated like every flourish)
+function floatText(x,y,text,color){ if(FX_MOTION<=0) return;
+  addParticle({ type:'ftext', text, color:color||COL.amber, x, y, vx:0, vy:0, life:0, maxLife:1.05, r:0 }); }
 function screenFlash(a){ if(FX_MOTION>0) FX.flash=Math.max(FX.flash,a); }
 function updateStreaks(dt){ for(let i=FX.streaks.length-1;i>=0;i--){ const s=FX.streaks[i]; s.life+=dt; if(s.life>=s.max) FX.streaks.splice(i,1); } }
 function drawStreaks(){ if(!FX.streaks.length) return; applyScreenTransform();
@@ -1581,6 +1585,7 @@ function updateBlendSnap(dt){
   // gate on spawnGrace so a spawn that starts already-hidden primes prevConceal instead of false-firing
   if(round.spawnGrace<=0 && player.snapArmed && pc<BLEND_SNAP_C && c>=BLEND_SNAP_C && player.m<0.15){
     player.snapArmed=false; player.snapCount++; player.snapT=0.35;
+    floatText(player.x, player.y-22, 'vanished ✓', PAL.hidden);
     spawnBlendSnap(); vibe(8); addTrauma(TRAUMA.repaint*0.5); if(typeof SFX!=='undefined') SFX.blend(); }
   if(c<0.6) player.snapArmed=true;                                // hysteresis re-arm
   player.prevConceal=c;
@@ -1664,6 +1669,10 @@ function drawRound(alpha){
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r*(1+k),0,Math.PI*2); ctx.stroke(); }
     else if(p.type==='shard'){ const k=1-p.life/p.maxLife; ctx.globalAlpha=k; ctx.strokeStyle=p.color; ctx.lineWidth=2;
       ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*0.05,p.y-p.vy*0.05); ctx.stroke(); }
+    else if(p.type==='ftext'){ const k=p.life/p.maxLife; ctx.globalAlpha=(1-k)*0.95;   // floating event text (world-space, drifts up)
+      ctx.font='800 13px system-ui,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle='#05070d'; ctx.fillText(p.text, p.x+1, p.y-k*26+1);
+      ctx.fillStyle=p.color; ctx.fillText(p.text, p.x, p.y-k*26); }
     else if(p.type==='spray'){ const k=1-p.life/p.maxLife; ctx.globalAlpha=k*0.9; ctx.fillStyle=p.color;
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r*k+0.5,0,Math.PI*2); ctx.fill(); }
     else if(p.type==='drip'){ const k=1-p.life/p.maxLife; ctx.globalAlpha=k*0.85; ctx.fillStyle=p.color;
@@ -2550,7 +2559,8 @@ function stepTABeacons(dt){
     const near=Math.hypot(bc.x-player.x,bc.y-player.y)<BEACON_R;
     if(near && player.conceal>=BEACON_CONCEAL && !beaconSeen(bc)){
       bc.hold+=dt;
-      if(bc.hold>=BEACON_HOLD){ bc.banked=true; round.taBanked++; SFX.relief(); addTrauma(0.15); punchZoom(0.03,90,260); spawnShards(bc.x,bc.y,COL.amber,10); showToast('Beacon '+round.taBanked+'/'+round.beacons.length); }
+      if(bc.hold>=BEACON_HOLD){ bc.banked=true; round.taBanked++; SFX.relief(); addTrauma(0.15); punchZoom(0.03,90,260); spawnShards(bc.x,bc.y,COL.amber,10);
+        floatText(bc.x, bc.y-18, 'BANKED '+round.taBanked+'/'+round.beacons.length+' ⛯', COL.amber); showToast('Beacon '+round.taBanked+'/'+round.beacons.length); }
     } else bc.hold=Math.max(0,bc.hold-dt*2);
   }
   round.timeLeft-=dt;
