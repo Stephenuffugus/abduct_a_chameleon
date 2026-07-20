@@ -1,3 +1,7 @@
+> **⚠ STALE (2026-07-20):** this file predates the current 3D build. The living record —
+> what we're building, asset sources, integration invariants, ship flow, resume shortlist —
+> is **`docs/BUILD_NOTES-3D.md`**. Read that first.
+
 # ABDUCTEE — Handoff for Claude Code
 
 You're taking over a working prototype of a browser multiplayer game. This document is everything you need to understand it, run it, and continue it. Read `README.md` too — it's the player/dev-facing overview; this file is the engineering deep-dive.
