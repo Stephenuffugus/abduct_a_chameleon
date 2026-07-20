@@ -99,8 +99,9 @@ the XP arc (Lv 2–7); large maps field an extra hunter so patrol pressure stays
 
 Every scored round pays **XP** (score-based + win bonus) toward levels; the summary shows your gain and
 the bar to the next level. **Challenges** (Untouchable, Ghost Hunter, Quick Banker, Marathon Ghost,
-Field Guide) grant skins or bonus XP. The wardrobe now tracks Level, challenge count, ten head accents,
-biome medals, and the Blend Book.
+Field Guide, Three-Day Ghost, Week of Shadows) grant skins or bonus XP — the wardrobe lists them all
+with hints. Playing the **Daily** on consecutive days builds a 🔥 streak (shown on the mode card and
+the summary). The wardrobe tracks Level, challenges, ten head accents, biome medals, and the Blend Book.
 
 ### Comfort & unlocks
 - **Settings** (title or pause): master/SFX volume, **motion** (full/reduced/minimal), **screen shake**,

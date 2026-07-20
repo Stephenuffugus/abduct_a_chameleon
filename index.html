@@ -3,7 +3,18 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>Abduct a Chameleon</title>
+<title>Abduct a Chameleon — paint yourself to vanish</title>
+<meta name="description" content="A moonlit hide-and-seek game: paint your body to match the ground, hold still until only your eyes remain, and outlast the alien hunters. Plays offline in your browser — no install, no login." />
+<meta name="theme-color" content="#0E1220" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta property="og:title" content="Abduct a Chameleon" />
+<meta property="og:description" content="Paint yourself to vanish. Outlast the hunters. Offline, in your browser." />
+<meta property="og:type" content="website" />
+<!-- favicon: the game's signature — you've melted into the ground and only the eyes remain -->
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="%230E1220"/><circle cx="32" cy="34" r="21" fill="%233a5f38"/><circle cx="25" cy="30" r="4.6" fill="%23EDEFF4"/><circle cx="39" cy="30" r="4.6" fill="%23EDEFF4"/><circle cx="25.9" cy="30.8" r="2.1" fill="%230a0a12"/><circle cx="39.9" cy="30.8" r="2.1" fill="%230a0a12"/></svg>' />
+<link rel="apple-touch-icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="%230E1220"/><circle cx="32" cy="34" r="21" fill="%233a5f38"/><circle cx="25" cy="30" r="4.6" fill="%23EDEFF4"/><circle cx="39" cy="30" r="4.6" fill="%23EDEFF4"/><circle cx="25.9" cy="30.8" r="2.1" fill="%230a0a12"/><circle cx="39.9" cy="30.8" r="2.1" fill="%230a0a12"/></svg>' />
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{height:100%;overflow:hidden;background:#0E1220;
@@ -580,7 +591,7 @@ let PAL=CB_PAL.off, glyphsOn=false;
 // ===== P7 cosmetics / progression =====
 const LS_PROGRESS='aac.progress.v1';
 let PROGRESS={ unlocks:['default','stand','wave','crouch'], equipped:{skin:'default'}, stats:{plays:0,catches:0,bestSurvive:0,hardWin:0,heatBest:0},
-  blendbook:{}, biomeMedals:{}, xp:0, challenges:{} };   // P8-6 camo mastery log · P12 XP + challenges
+  blendbook:{}, biomeMedals:{}, xp:0, challenges:{}, daily:{lastDay:0,streak:0,bestStreak:0} };   // P8-6 camo log · P12 XP/challenges · P13 daily streak
 // head-accent cosmetics (drawn on the humanoid head; fade with concealment so they never break camo)
 const SKINS=[
   { id:'default', name:'None', unlock:null, hint:'' },
@@ -636,7 +647,8 @@ function loadProgress(){ try{ const p=JSON.parse(localStorage.getItem(LS_PROGRES
   if(!PROGRESS.blendbook) PROGRESS.blendbook={}; if(!PROGRESS.biomeMedals) PROGRESS.biomeMedals={};   // P8-6 back-compat
   if(typeof PROGRESS.xp!=='number'||!isFinite(PROGRESS.xp)||PROGRESS.xp<0) PROGRESS.xp=0;   // P12 back-compat + corrupt-storage armor
   PROGRESS.xp=Math.min(PROGRESS.xp, 75*200*201);                                            // level-200 cap keeps xpLevel() bounded
-  if(typeof PROGRESS.challenges!=='object'||PROGRESS.challenges===null||Array.isArray(PROGRESS.challenges)) PROGRESS.challenges={}; }
+  if(typeof PROGRESS.challenges!=='object'||PROGRESS.challenges===null||Array.isArray(PROGRESS.challenges)) PROGRESS.challenges={};
+  if(typeof PROGRESS.daily!=='object'||PROGRESS.daily===null) PROGRESS.daily={lastDay:0,streak:0,bestStreak:0}; }
 function saveProgress(){ try{ localStorage.setItem(LS_PROGRESS, JSON.stringify(PROGRESS)); }catch(_){} }
 // ===== P12: XP + levels (triangular curve — reaching level L costs 75·(L−1)·L total XP) =====
 function xpLevel(xp){ let L=1; while(xp>=75*L*(L+1) && L<999) L++; return L; }
@@ -645,22 +657,34 @@ function xpCeil(L){ return 75*L*(L+1); }
 function awardXP(amount){ if(!amount) return; const before=xpLevel(PROGRESS.xp||0);
   PROGRESS.xp=(PROGRESS.xp||0)+Math.round(amount);
   const after=xpLevel(PROGRESS.xp);
-  if(after>before){ showToast('⬆ Level '+after+'!'); if(typeof SFX!=='undefined') SFX.best(); checkLevelUnlocks(after); }
+  if(after>before){ showToast('⬆ Level '+after+'!'); if(typeof SFX!=='undefined') SFX.levelup(); checkLevelUnlocks(after); }
   saveProgress(); }
 function checkLevelUnlocks(L){ if(L>=3) grantUnlock('beret'); if(L>=5) grantUnlock('sprout'); if(L>=8) grantUnlock('headset'); }
 // ===== P12: challenges — one-shot feats checked at round end (each grants a skin or bonus XP) =====
 const CHALLENGES=[
-  { id:'ch_untouchable', name:'Untouchable', grant:'bolt',
+  { id:'ch_untouchable', name:'Untouchable', hint:'Win Survive (Normal+) without being spotted', grant:'bolt',
     test:(s,r)=> r.mode==='SURVIVE' && s.outcome==='WIN' && (r.diff.diffIndex||0)>=1 && s.spotted===0 },
-  { id:'ch_ghost_hunter', name:'Ghost Hunter', grant:'star',
+  { id:'ch_ghost_hunter', name:'Ghost Hunter', hint:'Catch 15 chameleons in Hunt (total)', grant:'star',
     test:()=> (PROGRESS.stats.catches||0)>=15 },
-  { id:'ch_quick_banker', name:'Quick Banker', xp:500,
+  { id:'ch_quick_banker', name:'Quick Banker', hint:'Bank every beacon with 30s+ to spare', xp:500,
     test:(s,r)=> r.mode==='TA' && s.outcome==='WIN' && (TA_TIME-s.timeUsed)>=30 },
-  { id:'ch_marathon', name:'Marathon Ghost', xp:750,
+  { id:'ch_marathon', name:'Marathon Ghost', hint:'Last 5 minutes in Heat', xp:750,
     test:(s,r)=> !!r.heat && s.survSec>=300 },
-  { id:'ch_full_book', name:'Field Guide', xp:1000,
+  { id:'ch_full_book', name:'Field Guide', hint:'Blend on all 14 terrains', xp:1000,
     test:()=> BLENDBOOK_KEYS.every(k=>PROGRESS.blendbook[k]&&PROGRESS.blendbook[k].logged) },
+  { id:'ch_streak3', name:'Three-Day Ghost', hint:'Play the Daily 3 days running', xp:300,
+    test:()=> ((PROGRESS.daily&&PROGRESS.daily.streak)||0)>=3 },
+  { id:'ch_streak7', name:'Week of Shadows', hint:'Play the Daily 7 days running', xp:750,
+    test:()=> ((PROGRESS.daily&&PROGRESS.daily.streak)||0)>=7 },
 ];
+// P13: a completed Daily (any outcome) extends the streak; missing a day resets it
+function updateDailyStreak(){ const day=dailySeed(), d=PROGRESS.daily;
+  if(d.lastDay===day) return;
+  const y=new Date(); y.setDate(y.getDate()-1);
+  const yd=(y.getFullYear()*10000+(y.getMonth()+1)*100+y.getDate())>>>0;
+  d.streak = d.lastDay===yd ? (d.streak||0)+1 : 1;
+  d.lastDay=day; d.bestStreak=Math.max(d.bestStreak||0, d.streak); saveProgress();
+  if(d.streak>1) showToast('🔥 Daily streak: '+d.streak); }
 function checkChallenges(sum){ if(!sum || !round || round.diff.practice) return;
   for(const c of CHALLENGES){ if(PROGRESS.challenges[c.id]) continue;
     let done=false; try{ done=!!c.test(sum,round); }catch(_){}
@@ -761,6 +785,9 @@ const SFX={
   repaint(){ tone(300,0.06,'square',0.14); },
   ui(){ tone(560,0.04,'square',0.12); },
   shutter(){ noise(0.05,0.16,3200); tone(1150,0.04,'square',0.10); setTimeout(()=>tone(760,0.03,'square',0.08),45); },
+  lookIn(){ tone(560,0.04,'square',0.10); noise(0.20,0.05,1600); },                 // airlift up to the hunters' view
+  home(){ tone(360,0.07,'sine',0.13,240); noise(0.16,0.045,700); },                 // settle back down to your body
+  levelup(){ [392,494,587,784].forEach((f,i)=>setTimeout(()=>tone(f,0.12,'triangle',0.2),i*70)); },
   confirm(){ tone(500,0.08,'triangle',0.2); setTimeout(()=>tone(720,0.1,'triangle',0.2),70); },
   back(){ tone(360,0.07,'sine',0.16,240); },
   spotted(){ tone(300,0.14,'sawtooth',0.22,180); },
@@ -1216,9 +1243,10 @@ function enterInspect(){ if(!round||roundState!=='PLAYING'||round.mode==='HUNT')
   const fromHold = ctrlMode==='PAINT' && camLock;
   if(studio.open) closeStudio(); camLock=false; ctrlMode='INSPECT'; joystick=null;
   if(!fromHold){ vz=vzTarget=VZ_SEEKER; }                        // fresh look always eases out to seeker altitude
-  SFX.ui(); coachOnce('seenLookHint','🤏 pinch or scroll to zoom · drag to look'); }
-function exitInspect(){ ctrlMode='MOVE'; camLock=false; cancelPinch(); SFX.back(); }
-function goHome(){ if(studio.open) closeStudio(); camLock=false; cancelPinch(); ctrlMode='MOVE'; SFX.back(); }  // the pill: ALL the way home
+  if(fromHold) SFX.ui(); else SFX.lookIn();                      // the airlift gets its own whoosh; hops stay subtle
+  coachOnce('seenLookHint','🤏 pinch or scroll to zoom · drag to look'); }
+function exitInspect(){ ctrlMode='MOVE'; camLock=false; cancelPinch(); SFX.home(); }
+function goHome(){ if(studio.open) closeStudio(); camLock=false; cancelPinch(); ctrlMode='MOVE'; SFX.home(); }  // the pill: ALL the way home
 function coachOnce(flag,msg){ if(settings[flag]) return; settings[flag]=true; saveSettings(); showToast(msg); }
 function composeNudge(){ const r=studioRects(), s=worldToScreen(player.x,player.y);   // held paint: keep your body visible above the panel
   if(s.y > r.panel.y-30 && s.x > r.panel.x-20 && s.x < r.panel.x+r.panel.w+20){
@@ -2551,6 +2579,7 @@ function finishRound(outcome){
   if(round.heat) PROGRESS.stats.heatBest=Math.max(PROGRESS.stats.heatBest||0, round.metrics.survivalMs/1000);
   saveProgress(); checkUnlocks();
   if(!round.diff.practice){ summary.xp=Math.round(score/10)+(survived?60:15); }   // P12
+  if(round.mode==='DAILY') updateDailyStreak();                                    // P13 (before challenges so streak feats fire)
   round.summary=summary;
   if(summary.xp){ awardXP(summary.xp); checkChallenges(summary); }
   appState='SUMMARY'; menuIndex=0;
@@ -2636,7 +2665,7 @@ function drawModeSelect(){ const cx=vpW/2;
     {n:'Practice / Zen', s:'No fail · learn to blend', go:()=>route('PRACTICE')},
     {n:'Survive', s:'Outlast the hunters', go:()=>route('SURVIVE')},
     {n:'Heat · Endless', s:'Escalates forever', go:()=>route('HEAT')},
-    {n:'Daily Challenge', s:'One seeded run/day', go:()=>startDaily()},
+    {n:'Daily Challenge', s:'One seeded run/day'+(((PROGRESS.daily&&PROGRESS.daily.streak)||0)>1?' · 🔥 '+PROGRESS.daily.streak:''), go:()=>startDaily()},
     {n:'🛸 Hunt', s:'BE the alien — catch chameleons', go:()=>route('HUNT'), color:COL.cyan},
     {n:'Time Attack', s:'Bank hidden beacons vs the clock', go:()=>route('TA')},
   ];
@@ -2742,6 +2771,7 @@ function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); re
   stat('Near misses', String(s.near));
   stat('Times spotted', String(s.spotted));
   stat('Score', String(s.score));
+  if(round.mode==='DAILY' && ((PROGRESS.daily&&PROGRESS.daily.streak)||0)>0) stat('Daily streak', '🔥 '+PROGRESS.daily.streak+(PROGRESS.daily.bestStreak>PROGRESS.daily.streak?'  (best '+PROGRESS.daily.bestStreak+')':''));
   }
   if(!round.diff.practice){ if(s.isBest){ txt('★ NEW BEST!', cx, sy+6, 16, COL.amber,'center','800'); }
     else if(s.prevBest){ txt('Best '+s.prevBest+'  ('+(s.score-s.prevBest>=0?'+':'')+(s.score-s.prevBest)+')', cx, sy+6, 12, COL.muted,'center','500'); } sy+=28; } else sy+=10;
@@ -2900,6 +2930,19 @@ function drawWardrobe(){ const cx=vpW/2; navList=[];
     ctx.globalAlpha=done?1:0.32; ctx.fillStyle=TERRAIN_HEX[k]||'#444'; rr(x,y,bcw,bcw,5); ctx.fill();
     ctx.globalAlpha=1; ctx.strokeStyle=done?COL.amber:'#242c44'; ctx.lineWidth=done?1.5:1; rr(x,y,bcw,bcw,5); ctx.stroke();
     if(done) txt(Math.round((e.bestMq||0)*100)+'', x+bcw/2, y+bcw/2, 8.5, '#000','center','800'); }); y+=bcw+18;
+  // --- challenges (visible goals; hidden on very short screens — the header counter still shows) ---
+  if(vpH>=520){
+    const done=CHALLENGES.filter(c=>PROGRESS.challenges[c.id]).length;
+    txt('CHALLENGES · '+done+' / '+CHALLENGES.length, cx, y, 9, COL.amber,'center','700'); y+=13;
+    const twoCol=vpW>=620, colW=twoCol?Math.min(300,(vpW-48)/2):Math.min(360,vpW-40);
+    const x0=twoCol?cx-colW-8:cx-colW/2;
+    CHALLENGES.forEach((c,i)=>{ const col=twoCol?(i%2):0, row=twoCol?(i/2|0):i;
+      const x=twoCol?(x0+col*(colW+16)):x0, yy=y+row*15;
+      const got=!!PROGRESS.challenges[c.id];
+      txt((got?'🏆 ':'○ ')+c.name, x, yy, 9.5, got?COL.amber:COL.txt,'left','700');
+      txt(got?'done!':c.hint, x+colW, yy, 8, got?COL.amber:COL.muted,'right','500'); });
+    y+=(twoCol?Math.ceil(CHALLENGES.length/2):CHALLENGES.length)*15+8;
+  }
   // --- poses (compact) + back ---
   txt('Poses (cycle in-game with [ / ] or 🕺):  '+POSE_KEYS.map(k=>(UNLOCKABLE_POSES.indexOf(k)<0||hasUnlock(k)?'':'🔒')+POSE_NAMES[k]).join(' · '),
     cx, y+4, 8.5, COL.muted,'center','500');
@@ -3005,7 +3048,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   snapCount: player.snapCount||0, ghostMs: Math.round(round?(round.metrics.ghostMs||0):0),
   particles: particles.length, dripEmitted: dripEmitted,
   progress:{ blendbook:PROGRESS.blendbook||{}, biomeMedals:PROGRESS.biomeMedals||{}, unlocks:PROGRESS.unlocks,
-             xp:PROGRESS.xp||0, level:xpLevel(PROGRESS.xp||0), challenges:PROGRESS.challenges||{} },
+             xp:PROGRESS.xp||0, level:xpLevel(PROGRESS.xp||0), challenges:PROGRESS.challenges||{}, daily:PROGRESS.daily||{} },
   // ---- mode-based controls ----
   mode:ctrlMode, cam:{x:Math.round(cam.x),y:Math.round(cam.y)}, camFollow:{x:Math.round(camFollow.x),y:Math.round(camFollow.y)},
   camPan:{x:Math.round(camPan.x),y:Math.round(camPan.y)}, zoom:+zoom.toFixed(3),

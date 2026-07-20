@@ -72,12 +72,16 @@ harness gained WheelEvent + two-pointer helpers), **progression** (P12: XP award
 **maps** (all 13 levels boot into PLAYING in the real engine, unlocks pre-seeded). Real-pixel
 screenshots: `npm run shots` → `test/shots/`.
 
-## In flight at handoff time
-A final adversarial review workflow over the session's `index.html`/`test/` diff (6 dimension
-finders → 3-refuter votes per finding) was still running. ~24+ raw findings entered verification.
-**If this session died before applying them**: re-run the review (or read its journal at the
-workflow transcript dir if the environment survived) and fix confirmed findings. Everything
-committed up to `2c4caeb` is stable and green regardless.
+## Review — COMPLETE (2026-07-20)
+The adversarial review ran 6 dimension finders (36 raw findings, saved to
+`docs/notes/review-findings-raw-v02.json`) + partial verification (29/30 captured votes upheld).
+All findings triaged by hand and fixed in three batches ("Review fixes batch 1/2/3" commits):
+state-machine integrity (TA/Hunt end-funnel leak, pinch lifecycle, gamepad drift, pointercancel),
+camera math (pan-clamp glide, zoom-under-drag re-anchoring, nudge token/settled-zoom, ambient gate,
+threat-arrow anchor), and UI/progression/test hardening (level-select scroll fight, storage armor,
+deterministic lockandlook, big-map +1-UFO coverage). Deliberate skips: #29 (inspect chrome fades
+with rings but header pops — cosmetic), #30 (menu fade translates 14px from hit rects for 180ms —
+accepted tradeoff). All 13 suites green.
 
 ## Durable artifacts
 - `docs/NEXT_SPEC.md` — the Pass 9–12 spec + invariants (merge gates).
