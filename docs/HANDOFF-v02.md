@@ -113,6 +113,11 @@ accepted tradeoff). All 13 suites green.
   crates sit slightly askew; walls stay axis-aligned; visual-only) and baked seam shading so
   different-terrain boundaries — the 2-tone hiding spots — read as real edges (~1% mean shift,
   calibration oracles green).
+- **P19 region hunting styles** — per-region hunter multipliers on a per-round diff clone
+  (`_regionTuned` guard vs Retry compounding; practice/heat/hunt baseline), stated on the round
+  title card ('hunters here: …'), asserted by the maps suite (tundra EASY SCAN_R 144→135).
+- **Coherence trim** — mastered regions show ✦ in the level select (biome medals = regions);
+  title/mode-select voice lines.
 - Suite count: **14** (`npm run all`), plus `npm run shots`.
 
 ## Durable artifacts
