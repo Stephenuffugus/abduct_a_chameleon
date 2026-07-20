@@ -118,7 +118,15 @@ accepted tradeoff). All 13 suites green.
   title card ('hunters here: …'), asserted by the maps suite (tundra EASY SCAN_R 144→135).
 - **Coherence trim** — mastered regions show ✦ in the level select (biome medals = regions);
   title/mode-select voice lines.
-- Suite count: **14** (`npm run all`), plus `npm run shots`.
+- **P20 ONLINE (1v1 hider vs hunter)** — `server/relay.mjs` (dumb-pipe ws relay + static game
+  host, one Node process, 4-letter codes); host=hider runs the authoritative sim with UFO #1
+  remote-driven (sensing/beam rules unchanged), guest=hunter plays HUNT mode against a snapshot-
+  streamed human (12Hz, prediction + soft correction), no scanner online. Lobby/join screens,
+  LIVE/LEAVE chrome, rematch via host re-pick, disconnect handling. Fixed a real immediate-mode
+  input race (navListApp staleness guard — async appState flips can never deliver a press to the
+  previous screen's buttons). `test/online.js` = full e2e: real relay + two jsdom game instances
+  play a round to the catch. Deploy: `cd server && npm start` (or static game + `?mp=wss://relay`).
+- Suite count: **15** (`npm run all`, including the online e2e), plus `npm run shots`.
 
 ## Durable artifacts
 - `docs/NEXT_SPEC.md` — the Pass 9–12 spec + invariants (merge gates).
