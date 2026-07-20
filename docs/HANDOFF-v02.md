@@ -104,6 +104,15 @@ accepted tradeoff). All 13 suites green.
   spawn-matched luck.
 - **📷 Snapshot** — the camera cluster's fourth button captures the framed world layer (grabbed
   post-drawRound, pre-HUD) as a PNG download; near-miss popup shows its +150 value.
+- **P17 coherence** — level select groups into named REGIONS (biome carried in the manifest;
+  REGION_NAME/TAG tables; moon-colored markers); fresh-round countdown doubles as a map title card
+  (region · name · identity, biome-tinted); Fullscreen settings toggle; baked map renamed
+  'Prototype Meadow — the training field' (pre-launch; PB keys are display-based); __aac exposes
+  levelOrder for tests; tour step 4 watches mqAim (instant) not the crawled mq.
+- **P18 world detail** — per-instance cover variety (deterministic hash: size 0.88–1.16, rotation;
+  crates sit slightly askew; walls stay axis-aligned; visual-only) and baked seam shading so
+  different-terrain boundaries — the 2-tone hiding spots — read as real edges (~1% mean shift,
+  calibration oracles green).
 - Suite count: **14** (`npm run all`), plus `npm run shots`.
 
 ## Durable artifacts

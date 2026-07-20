@@ -318,6 +318,16 @@ function buildTerrainCache(){
     g.fillRect(x0,y0,TILE,TILE);
     if(key!=='void') terrainMotif(g,key,x0,y0,base,hh,col,row);
   }
+  // P18: soft seam shading — different-terrain boundaries read as real edges, so the
+  // 2-tone hiding spots are VISIBLE on the ground (≈1% tile-mean shift: calibration-safe)
+  g.strokeStyle='rgba(6,10,20,0.16)'; g.lineWidth=2; g.beginPath();
+  for(let row=0; row<mapRows; row++) for(let col=0; col<mapCols; col++){
+    const k=terrainAt(col,row); if(k==='void') continue;
+    const kr=terrainAt(col+1,row), kd=terrainAt(col,row+1);
+    if(col+1<mapCols && kr!==k && kr!=='void'){ g.moveTo((col+1)*TILE, row*TILE); g.lineTo((col+1)*TILE, (row+1)*TILE); }
+    if(row+1<mapRows && kd!==k && kd!=='void'){ g.moveTo(col*TILE, (row+1)*TILE); g.lineTo((col+1)*TILE, (row+1)*TILE); }
+  }
+  g.stroke();
   // subtle baked grid (skip on hard-surface biomes)
   g.strokeStyle='rgba(150,175,210,0.028)'; g.lineWidth=1; g.beginPath();
   for(let col=0; col<=mapCols; col++){ g.moveTo(col*TILE+0.5,0); g.lineTo(col*TILE+0.5,h); }
@@ -1717,6 +1727,12 @@ function drawRound(alpha){
 function drawCover(o){
   const x=o.wx, y=o.wy, t=o.type, col=COVER_COLOR[t]||'#666';
   ctx.save();
+  // P18: deterministic per-instance variety — no two props identical (visual only; LoS/conceal use the cell)
+  if(t!=='wall'){ const hv=hashInt(o.col*7+3,o.row*11+5);
+    const sk=0.88+((hv%100)/100)*0.28;
+    const full=(t==='tree'||t==='boulder'||t==='dead_tree'||t==='cactus'||t==='ice_spike'||t==='alien_pod');
+    const rot=full ? (((hv>>>4)%628)/100-3.14) : ((((hv>>>4)%24)/100)-0.12);   // crates/barrels just sit slightly askew
+    ctx.translate(x,y); ctx.rotate(rot); ctx.scale(sk,sk); ctx.translate(-x,-y); }
   // shadow
   ctx.globalAlpha=0.28; ctx.fillStyle='#000'; ctx.beginPath(); ctx.ellipse(x+2,y+3,TILE*0.42,TILE*0.30,0,0,Math.PI*2); ctx.fill();
   ctx.globalAlpha=1; ctx.fillStyle=col; ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=1.5;
