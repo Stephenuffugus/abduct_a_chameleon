@@ -172,10 +172,10 @@
   <div id="reticle"><div class="ring"></div></div>
 
   <div id="controls">
-    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>V</kbd> sky view · <kbd>E</kbd> paint (wet paint DRIPS if you run) · <kbd>T</kbd> taunt — EARN while they look and see nothing</div>
+    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>V</kbd> sky view · <kbd>E</kbd> paint (wet paint DRIPS if you run) · <kbd>T</kbd> taunt · <kbd>F</kbd> decoy — EARN while they look and see nothing</div>
     <div id="ctrlSeeker" class="hidden"><b>Seeker (UFO)</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd>/<kbd>Shift</kbd> altitude · hold <kbd>Mouse</kbd> beam (drains) · <kbd>G</kbd> echo scan (pings anything that moves) · <kbd>V</kbd> view</div>
     <div id="ctrlSpec" class="hidden"><b>Spectating</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · mouse look · back next round</div>
-    <div id="ctrlPad" style="margin-top:5px;opacity:.72"><b>Controller</b> — sticks move/look · RT beam · A camo · X pose · Y view · RB/LB altitude</div>
+    <div id="ctrlPad" style="margin-top:5px;opacity:.72"><b>Controller</b> — sticks move/look · RT beam · A camo · B decoy · X pose · Y view · RB/LB altitude</div>
   </div>
 
   <div id="poseBar" class="hidden"><span class="pl">Pose</span><div id="poseBtns"></div></div>
@@ -250,6 +250,8 @@
         border:1.5px solid var(--line);color:var(--txt);font-size:20px">🕺</button>
       <button id="tTaunt" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:rgba(224,101,94,.14);
         border:1.5px solid var(--danger);color:var(--danger);font-size:20px">📣</button>
+      <button id="tDecoy" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:rgba(142,127,214,.16);
+        border:1.5px solid #8E7FD6;color:#B9A9F0;font-size:20px">👥</button>
       <button id="tBeam" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(63,208,224,.16);
         border:1.5px solid var(--cyan);color:var(--cyan);font-size:13px;font-weight:800">BEAM</button>
       <button id="tScan" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(242,179,61,.14);
@@ -291,6 +293,7 @@ const ROUND_SECONDS = 150;
 const INTERMISSION = 7;
 const CAMO_RAMP = 1.4;          // sec to full camouflage while still
 const CAMO_MIN_OPACITY = 0.16;  // how faint a fully-camo'd hider gets
+const DECOY_CD = 18;            // P37: seconds between decoy drops
 const PLAYER_RADIUS = 0.6;
 const ABDUCT_POINTS = 100, SURVIVE_POINTS = 60;
 
@@ -517,7 +520,7 @@ function makeRandomMap(seed){
     for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++)
       if(t[y][x]===on && rnd()<density) put(x,y,type);
   // scattered unique landmarks — memorable hiding anchors between the buildings
-  const extras=['pillar','chest','table','pillar'];
+  const extras=['pillar','chest','table','statue','statue','pillar'];
   for(let i=0;i<4+Math.floor(rnd()*5);i++)
     put(2+Math.floor(rnd()*(cols-4)), 2+Math.floor(rnd()*(rows-4)), extras[Math.floor(rnd()*extras.length)]);
   const spawns=[];
@@ -613,6 +616,23 @@ function buildWorld(map){
   worldGroup.add(grid);
 
   for(const o of (map.objects||[])) addCover(o.type, o.x, o.y);
+
+  // P37: decorative grass tufts on soft ground — dressing only, never paint targets or LOS
+  const DECO_ON = { grass:0.10, moss:0.10, foliage:0.14, dirt:0.03, sand:0.02, mud:0.04 };
+  let deco = 0;
+  for(let y=0;y<mapRows && deco<220;y++) for(let x=0;x<mapCols && deco<220;x++){
+    const ch = DECO_ON[map.terrain[y][x]]; if(!ch) continue;
+    const h = hash2(x*7+3, y*11+5);
+    if((h%1000)/1000 >= ch) continue;
+    const P = propLib[(h>>6)%2 ? 'grass' : 'grass_small']; if(!P) break;
+    const n = P.scene.clone(true);
+    const sc = (0.7 + ((h>>3)%40)/100) / Math.max(1e-6, P.size.y);
+    n.scale.setScalar(sc);
+    n.position.set((x+0.5-mapCols/2)*TILE + (((h>>8)%100)/100-0.5)*TILE*0.6, -P.minY*sc,
+                   (y+0.5-mapRows/2)*TILE + (((h>>12)%100)/100-0.5)*TILE*0.6);
+    n.rotation.y = (h%628)/100;
+    worldGroup.add(n); deco++;
+  }
 }
 
 // shared cover materials (cheap; cover isn't recoloured at runtime)
@@ -728,6 +748,12 @@ function addCover(type, gx, gy){
     if(pr){ pr.node.rotation.y = ((hash2(gy,gx)>>2)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
     else{ const b = new THREE.Mesh(new THREE.BoxGeometry(2.0,1.2,1.0), tm); b.position.y=0.6; g.add(b); losMeshes.push(b); }
     addTarget(w.x, w.z, tm.color.getHex(), 2.4);
+  }else if(type==='statue'){
+    const sm = instMat(COVER_MAT.rock, WALL_HUES, gx+5, gy+9);
+    const pr = propMesh('statue', sm, 3.0);
+    if(pr){ pr.node.rotation.y = (hash2(gx+2,gy+4)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
+    else{ const b = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.7,3.0,10), sm); b.position.y=1.5; g.add(b); losMeshes.push(b); }
+    addTarget(w.x, w.z, sm.color.getHex(), 2.6);
   }else if(type==='alien_pod'){
     const st = new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.3,1.4,7), COVER_MAT.dead); st.position.y=0.7;
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.7,14,12), COVER_MAT.pod); bulb.position.y=1.8;
@@ -849,7 +875,9 @@ function setCharAction(p, name){
    re-projected at load and materials swapped per instance. Primitives remain the fallback. */
 const PROP_URLS = { crate:'assets/props/crate.glb', crates:'assets/props/crates.glb',
   barrel:'assets/props/barrel.glb', boulder:'assets/props/boulder.glb',
-  pillar:'assets/props/pillar.glb', chest:'assets/props/chest.glb', table:'assets/props/table.glb' };
+  pillar:'assets/props/pillar.glb', chest:'assets/props/chest.glb', table:'assets/props/table.glb',
+  statue:'assets/props/statue.glb', grass:'assets/props/grass.glb', grass_small:'assets/props/grass_small.glb' };
+const DECO_KEEP_UV = new Set(['grass','grass_small']);   // deco keeps its baked colormap look
 const propLib = {};
 async function loadProps(){
   const loader = new GLTFLoader();
@@ -861,7 +889,7 @@ async function loadProps(){
       const size = box.getSize(new THREE.Vector3());
       const v = new THREE.Vector3();
       g.scene.traverse(o=>{
-        if(!o.isMesh) return;
+        if(!o.isMesh || DECO_KEEP_UV.has(k)) return;
         const pos = o.geometry.attributes.position, uv = o.geometry.attributes.uv;
         if(!uv) return;
         for(let i=0;i<pos.count;i++){
@@ -939,6 +967,7 @@ function gatherGamepad(role, abd){
   if(edge(3) && !abd){ if(role==='seeker') seekerView = seekerView==='topdown'?'follow':'topdown';
     else hiderView = hiderView==='topdown'?'third':'topdown'; }                        // Y = view (both roles)
   if(edge(2) && role==='hider' && !abd) cyclePose(1);                                  // X = pose
+  if(edge(1) && role==='hider' && !abd) dropDecoy();                                   // B = decoy
   const o = document.getElementById('clickToPlay'); if(o) o.classList.add('hidden');
 }
 function applyGamepadLook(dt, role, abd){
@@ -990,7 +1019,8 @@ function handleJoin(state){
   players.push(p);
   if(state === myPlayer()) myBody = p;   // P30: my own rig — the studio paints this canvas
 
-  state.onQuit(()=>{ scene.remove(group); scene.remove(groundRing); players = players.filter(x=>x!==p); });
+  state.onQuit(()=>{ scene.remove(group); scene.remove(groundRing);
+    if(p.decoyObj) scene.remove(p.decoyObj.root); players = players.filter(x=>x!==p); });
 }
 
 /* ============================ Input ============================ */
@@ -1005,6 +1035,7 @@ function setupInput(){
     if(e.code==='KeyE'){ setPaintOpen(!paintOpen); }                                   // P30: E = the paint studio
     if(e.code==='Escape' && paintOpen) setPaintOpen(false);
     if(e.code==='KeyT') tauntWhistle();                          // P33: bait them closer
+    if(e.code==='KeyF') dropDecoy();                             // P37: leave a lie behind
     if(e.code==='KeyG') fireEchoScan();                          // P34: interrogate a zone for movers
     if(e.code==='KeyQ' || e.code==='BracketRight') cyclePose(1);
     if(e.code==='BracketLeft') cyclePose(-1);
@@ -1224,6 +1255,31 @@ function tauntWhistle(){
   tone(1180, 0.22, 'sine', 0.30, 1560); setTimeout(()=>tone(1560,0.3,'sine',0.26,980), 200);
   if(bot){ bot.state='chase'; }                                   // solo: the whistle really does bait it
 }
+
+/* P37: DECOY — leave a painted copy of yourself, exactly as camouflaged as you are right now.
+   It never moves, so echo scan stays silent on it; a seeker who beam-locks it gets baited
+   (instant overheat). The best lie is a still one. */
+let decoyCdUntil = 0;
+function dropDecoy(){
+  if(myRole()!=='hider' || amAbducted() || paintOpen || !me) return;
+  const t = performance.now();
+  if(t < decoyCdUntil){ SFX.lose(); return; }
+  decoyCdUntil = t + DECOY_CD*1000;
+  me.setState('decoy', { x:localPos.x, z:localPos.z, yaw:localYaw, pose:myPose,
+    avg:{ r:Math.round(myAvg.r), g:Math.round(myAvg.g), b:Math.round(myAvg.b) }, t:Date.now() }, true);
+  tone(700, 0.1, 'triangle', 0.2, 460); SFX.blip();
+}
+function makeDecoyRig(p, d){
+  const dg = charBase ? buildRealGuy(p.base) : buildDoorGuy(p.base);
+  dg.paint.ctx.drawImage(p.paint.cv, 0, 0);                 // freeze the owner's current paint
+  dg.paint.tex.needsUpdate = true;
+  const root = new THREE.Group();
+  root.add(dg.root); root.position.set(d.x, 0, d.z); root.rotation.y = d.yaw;
+  scene.add(root);
+  if(dg.mixer){ const a = dg.actions[POSE_CLIP[d.pose]] || dg.actions.Idle; if(a){ a.play(); dg.mixer.update(0.1); } }
+  else if(dg.joints) applyPose(dg.joints, d.pose);
+  return { root, skin:dg.skin, avg:d.avg, x:d.x, z:d.z, lockT:0 };
+}
 function earnTick(dt){
   if(myRole()!=='hider' || amAbducted()) { earnRate = 0; return; }
   const phase = getState('phase');
@@ -1421,6 +1477,7 @@ function setupTouch(){
     else { hiderView = hiderView==='topdown'?'third':'topdown'; SFX.blip(); } };
   document.getElementById('tPose').onclick = ()=> cyclePose(1);
   document.getElementById('tTaunt').onclick = ()=> tauntWhistle();
+  document.getElementById('tDecoy').onclick = ()=> dropDecoy();
   document.getElementById('tScan').onclick = ()=> fireEchoScan();
   const tb = document.getElementById('tBeam');
   tb.addEventListener('pointerdown', e=>{ e.preventDefault(); setBeam(true); });
@@ -1610,6 +1667,43 @@ function clientTick(dt){
       if(p.state !== me){ const d = p.group.position.distanceTo(camera.position);
         const vol = clamp(0.34 - d/220, 0.05, 0.34);
         tone(1180, 0.22, 'sine', vol, 1560); setTimeout(()=>tone(1560,0.3,'sine',vol*0.9,980), 200); } }
+    // P37: decoys — placed lies, rendered for everyone; roles rotating clears them
+    if(r!=='hider' && p.decoyObj){ scene.remove(p.decoyObj.root); p.decoyObj = null; p.decoyT = null;
+      if(p.state===me) me.setState('decoy', null, true); }
+    if(r==='hider'){
+      const dc = p.state.getState('decoy');
+      const dct = (dc && dc.t) || null;
+      if((p.decoyT||null) !== dct){
+        if(p.decoyObj){ scene.remove(p.decoyObj.root); p.decoyObj = null; }
+        if(dc) p.decoyObj = makeDecoyRig(p, dc);
+        p.decoyT = dct;
+      }
+      if(p.decoyObj){
+        const dm = matchFor(p.decoyObj.avg, p.decoyObj.x, p.decoyObj.z);
+        const dop = 1 - dm*(1-CAMO_MIN_OPACITY);
+        for(const mm of p.decoyObj.skin) mm.opacity = dop;
+        if(myRole()==='seeker' && !amAbducted() && p.state!==me){    // am I being baited right now?
+          const ddx = p.decoyObj.x-localPos.x, ddz = p.decoyObj.z-localPos.z;
+          if(beamOn && ddx*ddx+ddz*ddz < BEAM_RADIUS*BEAM_RADIUS){
+            p.decoyObj.lockT += dt;
+            if(p.decoyObj.lockT >= LOCK_TIME){
+              me.setState('pop', { owner:p.state.id, t:Date.now() }, true);
+              overheat = 3; beamEnergy = Math.min(beamEnergy, 0.15); setBeam(false); SFX.lose();
+            }
+          } else p.decoyObj.lockT = Math.max(0, p.decoyObj.lockT - dt*2);
+        }
+      }
+    }
+    const pop = p.state.getState('pop');                    // any seeker announcing a popped decoy
+    if(pop && pop.t !== p.lastPop){ p.lastPop = pop.t;
+      const owner = players.find(x=>x.state.id===pop.owner);
+      if(owner && owner.decoyObj){
+        spawnDrip(owner.decoyObj.x, owner.decoyObj.z, '#F2B33D');
+        tone(220, 0.35, 'sawtooth', 0.3, 120);
+        scene.remove(owner.decoyObj.root); owner.decoyObj = null; owner.decoyT = null;
+        if(owner.state===me){ me.setState('decoy', null, true); SFX.win(); }   // your trap WORKED
+      }
+    }
     // abduction trigger — sound + beam-up animation
     if(gone && !p.prevAbducted){ p.abductT = 0; SFX.abduct();
       if(myRole()==='seeker' && beamOn){ const dx=p.group.position.x-localPos.x, dz=p.group.position.z-localPos.z;
@@ -1792,6 +1886,7 @@ function updateHUD(role, abd){
     $('tPaint').classList.toggle('hidden', abd || role==='seeker');
     $('tPose').classList.toggle('hidden', abd || role==='seeker');
     $('tTaunt').classList.toggle('hidden', abd || role==='seeker');
+    $('tDecoy').classList.toggle('hidden', abd || role==='seeker');
     $('tBeam').classList.toggle('hidden', abd || role!=='seeker');
     $('tScan').classList.toggle('hidden', abd || role!=='seeker');
     $('altUI').classList.toggle('hidden', abd || role!=='seeker');
