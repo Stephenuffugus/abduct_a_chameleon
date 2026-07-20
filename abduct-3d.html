@@ -523,7 +523,8 @@ function makeRandomMap(seed){
 
 function ensureMapPublished(){                 // host seeds the default map into shared state
   if(getState('mapV') === undefined){
-    setState('map', makeSampleMap(), true);
+    let m; try{ m = makeRandomMap((Math.random()*0x7fffffff)|0); }catch(_){ m = makeSampleMap(); }
+    setState('map', m, true);                   // a themed random world beats the barren proving grounds
     setState('mapV', 1, true);
   }
 }
@@ -1438,7 +1439,8 @@ function clientTick(dt){
     else if(overheat>0){ overheat -= dt; if(overheat<=0) beamEnergy = Math.max(beamEnergy, 0.4); }
     else beamEnergy = Math.min(1, beamEnergy + dt/7);
   }
-  const active = (getState('phase')==='playing' || getState('phase')==='waiting') && !abd;
+  const phNow = getState('phase') || 'waiting';                  // solo rooms never write a phase — undefined IS waiting
+  const active = (phNow==='playing' || phNow==='waiting') && !abd;
   const canControl = document.pointerLockElement === renderer.domElement || gp.present || touch.on;
   if(canControl){
     applyGamepadLook(dt, role, abd);
