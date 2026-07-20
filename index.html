@@ -2265,12 +2265,14 @@ function drawCountdown(){ const c=Math.ceil(round.countdown); const s=c>0?String
     const name=(round.entry.display||'').split('—')[0].trim(), tag=((round.entry.display||'').split('—')[1]||'').trim();
     const reg=REGION_NAME[round.biome]||'';
     const mc=(BIOME[round.biome]&&BIOME[round.biome].moon)||COL.amber;
+    const hstyle=(!round.diff.practice && round.mode!=='HUNT' && REGION_HUNT[round.biome]) ? REGION_HUNT[round.biome].label : '';
     const cy0=vpH<520?vpH*0.34:vpH*0.24;   // short screens: sit below the tour banner
-    applyScreenTransform(); panel(vpW/2-190, cy0-34, 380, tag?72:52, 12);
+    applyScreenTransform(); panel(vpW/2-190, cy0-34, 380, (tag?72:52)+(hstyle?16:0), 12);
     if(reg){ ctx.fillStyle=mc; ctx.beginPath(); ctx.arc(vpW/2-reg.length*3.2-14, cy0-16, 3.5, 0, TAU); ctx.fill();
       txt(reg, vpW/2, cy0-16, 10, COL.muted,'center','800'); }
     txt(name, vpW/2, cy0+6, 20, COL.txt,'center','800');
     if(tag) txt(tag, vpW/2, cy0+26, 11, COL.muted,'center','500');
+    if(hstyle) txt('hunters here: '+hstyle, vpW/2, cy0+(tag?44:26), 10, PAL.warn,'center','600');
   }
   ctx.globalAlpha=clamp01(round.countdown - Math.floor(round.countdown))*0.6+0.4;
   txt(s, vpW/2, vpH/2, 72, roundState==='RESUME_COUNTDOWN'?COL.cyan:COL.amber, 'center','800'); ctx.globalAlpha=1; }
@@ -2462,6 +2464,15 @@ function startRound(entry, mode, diff, fixedSeed){
   setActiveMap(entry.data); buildOpenness();
   biomeKey=(MAP.biome && BIOME[MAP.biome]) ? MAP.biome : biomeOf(MAP.name);   // P11: maps may declare their mood explicitly
   biome=BIOME[biomeKey]||BIOME.greenwood; round.biome=biomeKey;
+  // P19: region hunting style on a per-round CLONE (shared DIFF tables never mutate; the _regionTuned
+  // mark stops summary-Retry from compounding; practice/heat/hunt stay baseline)
+  if(!diff.practice && !diff.heat && mode!=='HUNT' && REGION_HUNT[biomeKey] && diff._regionTuned!==biomeKey){
+    diff=Object.assign({},diff); diff._regionTuned=biomeKey;
+    const rh=REGION_HUNT[biomeKey];
+    for(const k of ['SCAN_R','PATROL_SPD','SCAN_SPD','INVEST_SPD','SUSPECT_GAIN','SUSPECT_DECAY','GIVEUP_TIME'])
+      if(rh[k]) diff[k]=diff[k]*rh[k];
+    round.diff=diff;
+  }
   buildSky();
   const hiders=MAP.spawns.filter(s=>s.role==='hider'), seekers=MAP.spawns.filter(s=>s.role==='seeker');
   const hs=hiders.length?hiders[(rng()*hiders.length)|0]:{x:(mapCols/2)|0,y:(mapRows/2)|0};
@@ -2808,6 +2819,15 @@ const REGION_NAME={ greenwood:'THE GREENWOOD', dunes:'THE BURNING FLATS', tundra
 const REGION_TAG={ greenwood:'soft grass, deep leaves — where hiders learn', dunes:'open sand and sun-bleached rock',
   tundra:'snow, ice, and long sightlines', downtown:'concrete blocks and back alleys',
   xeno:'moss, crystal, and fire', bog:'mud, mist, and drowned stone' };
+// P19: each region HUNTS differently — small, openly-stated multipliers (greenwood is the baseline)
+const REGION_HUNT={
+  greenwood:{ label:'balanced patrols' },
+  dunes:{ label:'wide scanners, lazy sweeps', SCAN_R:1.10, PATROL_SPD:0.94 },
+  tundra:{ label:'fast sweeps, snow-blind edges', PATROL_SPD:1.10, SCAN_R:0.94 },
+  downtown:{ label:'aggressive alley hunters', INVEST_SPD:1.15, SCAN_R:0.92 },
+  xeno:{ label:'jumpy but forgetful hunters', SUSPECT_GAIN:1.10, SUSPECT_DECAY:1.12 },
+  bog:{ label:'slow, patient stalkers', PATROL_SPD:0.90, GIVEUP_TIME:1.20 },
+};
 function drawLevelSelect(){ const cx=vpW/2;
   txt('SELECT LEVEL', cx, 40, 22, COL.txt,'center','800');
   const sub = pendingMode==='PRACTICE'?'Practice / Zen' : pendingMode==='HEAT'?'Heat · Endless'
@@ -3236,6 +3256,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   inspect:{active:ctrlMode==='INSPECT',zoomT:+inspectZoomT.toFixed(2)},
   hold:{locked:camLock, vz:+vz.toFixed(3), vzTarget:+vzTarget.toFixed(3), pinch:!!pinch, brackets:+holdBracketT.toFixed(2)},
   tour:{active:tut.active, step:tut.step}, levelOrder:levelOrderNames,
+  region: round?{ biome:round.biome||null, tuned:round.diff._regionTuned||null, scanR:Math.round(round.diff.SCAN_R||0) }:null,
   move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},
   speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
   perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; } }; }catch(_){}

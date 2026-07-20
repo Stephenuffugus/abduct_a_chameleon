@@ -52,6 +52,9 @@ let fails=0; const ok=(n,c,x='')=>{ console.log(`${c?'OK  ':'FAIL'}  ${n}${x?'  
      key('Enter'); await wait(80); pump(10);      // → DIFFICULTY_SELECT (menuIndex=1)
      key('ArrowUp'); pump(2); key('Enter'); await wait(60); pump(220);   // EASY → PLAYING
      ok('big-map Survive fields an extra hunter (EASY 1→2)', S().roundState==='PLAYING' && S().ufos===2, 'ufos='+S().ufos+' rs='+S().roundState);
+     // P19: frostharbor is tundra — hunters sweep faster with slightly shorter vision (EASY SCAN_R 144→135)
+     ok('region hunting style applied (tundra tuning)', S().region && S().region.tuned==='tundra' && S().region.scanR===135,
+        JSON.stringify(S().region));
    } else ok('big-map pressure check (frostharbor present)', false, 'frostharbor missing from manifest'); }
  if(errors.length){ console.log('ERRORS:'); [...new Set(errors)].slice(0,8).forEach(e=>console.log('  • '+e.split('\n').slice(0,2).join(' '))); fails+=errors.length; }
  console.log(fails? `\nMAPS: FAIL (${fails})` : `\nMAPS: PASS — all ${total} levels boot into PLAYING with hunters (+1 on big ground); 0 errors`);

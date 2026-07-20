@@ -94,7 +94,11 @@ Six original biome maps plus a **serious expansion set** (bigger, denser, each w
 **Riverline** (valley of three bridges), **Sunken Ruins** (flooded walled courtyards), **Cinderfield**
 (seam causeways through lava), **Frostharbor** (docks, crate rows, ice floes — the big one), **Scrapline**
 (junkyard alleys), **Twin Gardens** (a deliberate 2-tone mosaic playground). Expansion maps unlock along
-the XP arc (Lv 2–7); large maps field an extra hunter so patrol pressure stays honest.
+the XP arc (Lv 2–7); large maps field an extra hunter so patrol pressure stays honest. The level
+select groups everything into **named regions** (The Greenwood, The Burning Flats, The White North,
+The Grey City, The Otherworld, The Sunken South), each round opens with its map's **title card** —
+and each region **hunts differently** (stated right on the card: wide scanners in the dunes, patient
+stalkers in the bog, aggressive alley hunters in the city…).
 
 ### Progression — XP · challenges · cosmetics
 
