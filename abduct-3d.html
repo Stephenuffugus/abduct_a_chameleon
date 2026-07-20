@@ -1018,6 +1018,69 @@ function setupPaintUI(){
   });
 }
 
+/* ============================ P32 Solo practice bot ============================ */
+// Alone in the room? A training UFO hunts YOU. It sees you by how badly your paint
+// matches (visibility = 1 - camoLevel), beams you like a real seeker, and catching
+// you respawns you with a sting — the full loop, no second player required.
+let bot = null, botLock = 0, botCatches = 0;
+function makeBotUfo(){
+  const g = new THREE.Group();
+  const saucer = new THREE.Mesh(new THREE.CylinderGeometry(1.9,1.9,0.5,24),
+    new THREE.MeshStandardMaterial({ color:0x1b2337, metalness:.4, roughness:.4 }));
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(1.9,0.22,10,28),
+    new THREE.MeshStandardMaterial({ color:0xE0655E, emissive:0xE0655E, emissiveIntensity:.5 }));
+  rim.rotation.x = Math.PI/2;
+  const beam = new THREE.Mesh(new THREE.ConeGeometry(BEAM_RADIUS,10,22,1,true),
+    new THREE.MeshBasicMaterial({ color:0x3FD0E0, transparent:true, opacity:.14, side:THREE.DoubleSide, depthWrite:false }));
+  beam.position.y = -5; beam.visible = false;
+  g.add(saucer, rim, beam);
+  scene.add(g);
+  return { g, beam, state:'patrol', wp:new THREE.Vector3(), wpT:0, alt:14 };
+}
+function killBotUfo(){ if(bot){ scene.remove(bot.g); bot=null; botLock=0; } }
+function botTick(dt){
+  const solo = players.length === 1 && myRole() !== 'seeker' && !amAbducted();
+  if(!solo){ killBotUfo(); return; }
+  if(!bot) bot = makeBotUfo();
+  const b = bot, pos = b.g.position;
+  if(!pos.lengthSq()) pos.set(localPos.x + 30, b.alt, localPos.z + 30);
+  const dx = localPos.x - pos.x, dz = localPos.z - pos.z;
+  const dist = Math.hypot(dx, dz);
+  const visibility = 1 - camoLevel;                                   // your paint IS your stealth
+  const seeR = 16 * (0.30 + 0.70 * visibility);                       // well-hidden shrinks its eyes
+  const seen = dist < seeR && hasLOS({x:pos.x,y:b.alt,z:pos.z}, {x:localPos.x,y:0,z:localPos.z});
+  if(b.state==='patrol'){
+    b.wpT -= dt;
+    if(b.wpT <= 0 || pos.distanceTo(b.wp) < 4){
+      b.wpT = 6 + Math.random()*5;
+      b.wp.set(localPos.x + (Math.random()*70-35), b.alt, localPos.z + (Math.random()*70-35));
+      b.wp.x = clamp(b.wp.x, -halfW+4, halfW-4); b.wp.z = clamp(b.wp.z, -halfH+4, halfH-4);
+    }
+    _a.copy(b.wp).sub(pos); _a.y = 0;
+    if(_a.lengthSq() > 0.1){ _a.normalize(); pos.addScaledVector(_a, UFO_SPEED*0.55*dt); }
+    if(seen && visibility > 0.25) b.state = 'chase';
+  } else {
+    _a.set(dx, 0, dz);
+    if(dist > 0.5){ _a.normalize(); pos.addScaledVector(_a, UFO_SPEED*0.8*dt); }
+    if(!seen && dist > 6) { b.state = 'patrol'; b.wpT = 0; }
+  }
+  pos.y = b.alt;
+  b.g.rotation.y += dt * (b.state==='chase' ? 2.2 : 0.7);
+  // the beam: close + visible enough = lock builds; melt in or run to break it
+  const beaming = b.state==='chase' && dist < BEAM_RADIUS*0.9 && visibility > 0.3;
+  b.beam.visible = beaming;
+  if(beaming){ if(botLock===0) SFX.beam(); botLock = Math.min(LOCK_TIME, botLock + dt); }
+  else botLock = Math.max(0, botLock - dt*1.6);
+  if(botLock >= LOCK_TIME){
+    botLock = 0; botCatches++; SFX.abduct(); setPaintOpen(false);
+    const hSp = (MAP && MAP.spawns || []).filter(x=>x.role==='hider');
+    const sp = hSp.length ? hSp[Math.floor(Math.random()*hSp.length)] : null;
+    const w = sp ? cellToWorld(sp.x, sp.y) : {x:0,z:0};
+    localPos.set(w.x, 0, w.z); stillness = 0;
+    b.state = 'patrol'; b.wpT = 0;
+  }
+}
+
 /* ============================ P30 Touch (phones) ============================ */
 function setupTouch(){
   const coarse = !matchMedia('(pointer:fine)').matches;
@@ -1183,6 +1246,7 @@ function clientTick(dt){
   if(!localPos.lengthSq()) localPos.set(0,1.1,0);
 
   gatherGamepad(role, abd);
+  botTick(dt);                                                   // P32 training UFO when you're alone
   if(role==='seeker' && !abd){                                   // P31 beam battery
     if(beamOn){ beamEnergy = Math.max(0, beamEnergy - dt/4);
       if(beamEnergy<=0){ setBeam(false); overheat = 3; SFX.lose(); } }
@@ -1401,10 +1465,11 @@ function updateHUD(role, abd){
 
   // meter (hider camo / seeker lock)
   const mEl = $('meter'), fill = $('meterFill');
-  if(!abd && phase==='playing' && role==='hider'){
+  if(!abd && (phase==='playing' || (bot && phase==='waiting')) && role==='hider'){
     mEl.classList.remove('hidden');
     const myLock = me.getState('lock')||0;
-    if(myLock>0.02){ $('meterLabel').textContent='⚠ BEING ABDUCTED — RUN'; fill.style.width=(myLock*100)+'%'; fill.style.background='var(--danger)';
+    const liveLock = Math.max(myLock, bot ? botLock/LOCK_TIME : 0);
+    if(liveLock>0.02){ $('meterLabel').textContent='⚠ BEING ABDUCTED — RUN'; fill.style.width=(liveLock*100)+'%'; fill.style.background='var(--danger)';
       if(paintOpen && myLock>0.15) setPaintOpen(false); }
     else{ const mp=Math.round(myMatch*100), hp=Math.round(camoLevel*100);
       $('meterLabel').textContent = 'paint match '+mp+'% · hidden '+hp+'%' + (myMatch<0.5?' — 🎨 paint to match!':'');
@@ -1428,7 +1493,12 @@ function updateHUD(role, abd){
 
   // banner
   const bEl=$('banner');
-  if(phase==='waiting'){ showBanner('','Waiting for players','Roam around to try the controls. Open this URL in another tab (or use Add a Player) to start a round.'); }
+  if(phase==='waiting'){
+    if(bot) showBanner('','Training grounds', botCatches>0
+      ? ('Caught '+botCatches+'× — paint to match and HOLD STILL to shrink its vision. Another player joining starts real rounds.')
+      : 'A training UFO is hunting you. E to paint yourself · V to see yourself from its sky. A second player (any device, same URL) starts real rounds.');
+    else showBanner('','Waiting for players','Roam around to try the controls. Open this URL in another tab (or use Add a Player) to start a round.');
+  }
   else if(phase==='intermission'){
     const w=getState('winner'), left=((getState('interEnds')||0)-Date.now())/1000;
     if(w==='seekers') showBanner('win','Seekers win',`Everyone was abducted. Next round in ${fmt(left)}. Roles rotate.`);
