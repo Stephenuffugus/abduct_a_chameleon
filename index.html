@@ -863,6 +863,7 @@ let panMaxRelax = MOVE_PEEK_MAX;             // pan ceiling grows instantly, shr
 let _lastZoomFrame = 0;                      // re-anchor live pan drags whenever zoom moves under them
 let _nudgeSeq = 0;                           // compose-nudge tween token — a re-hold must never resurrect a stale tween
 let holdBracketT = 0;                        // viewfinder corner brackets ease 0..1
+let pendingShot = false;                     // 📷 capture the world layer on the next frame
 const gpCam = { x:0, y:0 };                  // gamepad right-stick camera pan
 let _prevMoveTag = 'idle';
 const _hud = { modeButtons:[], pill:null, recenter:null, zoom:null };
@@ -2052,7 +2053,9 @@ function drawRoundHUD(){
     _hud.recenter={x:rc,y:ry,w:56,h:56};
     ry+=66;
     uiBtn('－', rc, ry, 56, 56, ()=>stepDetent(-1), {rad:14, size:22}); const zout={x:rc,y:ry,w:56,h:56};
-    _hud.zoom={ zin, zout };
+    ry+=66;
+    uiBtn('📷', rc, ry, 56, 56, ()=>{ pendingShot=true; SFX.shutter(); vibe(8); }, {rad:14, size:20});   // keep the shot you framed
+    _hud.zoom={ zin, zout, shot:{x:rc,y:ry,w:56,h:56} };
     // detent dots — which named altitude you're nearest (FAR · SEEKER · NORMAL · CLOSE); always on the INNER side
     { const dx0=rc+(right?56+10:-12), dyc=Math.round(vpH*0.5-3);
       let ni=0, bd=1e9; VZ_DETENTS.forEach((d,j)=>{ const e=Math.abs(vz-d); if(e<bd){ bd=e; ni=j; } });
@@ -3108,7 +3111,12 @@ function frame(now){
     if(appState==='ROUND'){ updateDrone(round.nearUfo||0); updateSuspicionAudio(realDt);
       let beaming=false,ch=0; for(const u of round.ufos){ if(u.state==='BEAM'){ beaming=true; ch=Math.max(ch,u.beamCharge); } }
       updateBeamSound(beaming,ch);
-      drawRound(); drawRoundHUD(); drawStreaks();
+      drawRound();
+      if(pendingShot){ pendingShot=false;   // capture the framed WORLD, before any HUD lands on it
+        try{ const a=document.createElement('a'); a.href=cv.toDataURL('image/png');
+          a.download='abduct-a-chameleon-shot.png'; a.click(); showToast('📷 shot saved'); }
+        catch(_){ showToast('📷 could not save'); } }
+      drawRoundHUD(); drawStreaks();
       if(FX.flash>0.01){ applyScreenTransform(); ctx.globalAlpha=Math.min(1,FX.flash); ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,vpW,vpH); ctx.globalAlpha=1; }
     } else { drawMenu(); }
   } else { hueAnim+=realDt; stopAllLoops(); drawMenu(); }
