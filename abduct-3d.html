@@ -388,8 +388,6 @@ const SFX = {
   click(){ tone(820, 0.03, 'square', 0.11); }
 };
 
-init();
-
 async function init(){
   try{
     setupScene();
@@ -1951,6 +1949,11 @@ function showBanner(cls, title, sub){
   if(key!==_bannerKey){ _bannerKey=key; $('bannerTitle').textContent=title; $('bannerTitle').className=cls; $('bannerSub').textContent=sub; }
   else { $('bannerSub').textContent=sub; }   // keep countdown fresh
 }
+
+/* Boot LAST: init() synchronously reaches CHAR_URL/PROP_URLS, which are
+   consts declared mid-file — calling it before they execute threw
+   "Cannot access 'PROP_URLS' before initialization" and killed every boot. */
+init();
 </script>
 </body>
 </html>
