@@ -1830,7 +1830,11 @@ function clientTick(dt){
 
 function moveLocal(dt, role){
   const y = role==='seeker' ? seekerYaw : yaw;
-  fwd.set(Math.sin(y),0,Math.cos(y)); right.crossVectors(UP,fwd).normalize(); localYaw = y;
+  // right must be the vector the PLAYER sees on their right. The camera looks along
+  // fwd, so screen-right is fwd x UP. This was UP x fwd — the exact opposite — which
+  // mirrored strafing for touch, keyboard A/D and the gamepad alike ("my left and
+  // right are inverted"). flyLocal() below always had it the right way round.
+  fwd.set(Math.sin(y),0,Math.cos(y)); right.crossVectors(fwd,UP).normalize(); localYaw = y;
   const mv = _a.set(0,0,0);
   if(keys['KeyW']) mv.add(fwd); if(keys['KeyS']) mv.sub(fwd);
   if(keys['KeyD']) mv.add(right); if(keys['KeyA']) mv.sub(right);
