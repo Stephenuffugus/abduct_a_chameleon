@@ -135,9 +135,14 @@
   body.touch #mapsToggle{ top:8px; width:34px; height:34px }
   #levelBar{ top:60px }
   #rotate{ position:fixed; inset:0; z-index:70; display:none; flex-direction:column; gap:14px;
-    align-items:center; justify-content:center; background:var(--bg); text-align:center }
+    align-items:center; justify-content:center; background:var(--bg); text-align:center;
+    cursor:pointer; -webkit-tap-highlight-color:transparent }
   #rotate .ph{ font-size:44px; animation:rot 1.6s ease-in-out infinite }
   @keyframes rot{ 0%,20%{ transform:rotate(0) } 60%,100%{ transform:rotate(90deg) } }
+  /* the way out — a phone that cannot rotate must never be a dead end */
+  #rotate .anyway{ margin-top:10px; border:1px solid var(--line); border-radius:999px;
+    padding:11px 20px; min-height:48px; display:flex; align-items:center;
+    color:var(--txt); font-size:13px; font-weight:700 }
   body.touch.portrait #rotate{ display:flex }
   #tapStart{ position:fixed; inset:0; z-index:65; display:none; flex-direction:column; gap:12px;
     align-items:center; justify-content:center; background:rgba(8,12,25,.92); text-align:center }
@@ -196,7 +201,8 @@
 
   <button id="mapsToggle" class="hidden">🗺</button>
   <div id="rotate"><div class="ph">📱</div><div style="font-weight:700">Turn your phone sideways</div>
-    <div style="color:var(--muted);font-size:12px">this game is played in landscape</div></div>
+    <div style="color:var(--muted);font-size:12px">this game is played in landscape</div>
+    <div class="anyway">Already sideways? Tap to play &rsaquo;</div></div>
   <div id="tapStart"><div class="big">▶ TAP TO PLAY</div><div class="sm">goes fullscreen · sound on</div></div>
 
   <div id="dropzone">Release to load map</div>
@@ -401,7 +407,10 @@ async function init(){
     onPlayerJoin(handleJoin);
     loadLevelList();
     started = true;
-    document.getElementById('clickToPlay').classList.remove('hidden');
+    // setupTouch() hid this two lines ago — re-showing it unconditionally put a
+    // desktop pointer-lock prompt ("Click to capture mouse") over the game on
+    // every phone, right after the player got past the rotate gate.
+    if(!touch.on) document.getElementById('clickToPlay').classList.remove('hidden');
   }catch(err){
     console.error(err);
     document.getElementById('errorMsg').textContent = String(err && err.message || err);
@@ -1453,8 +1462,52 @@ function setupTouch(){
     try{ document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); }catch(_){}
     try{ screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(()=>{}); }catch(_){}
   });
-  const orient = ()=> document.body.classList.toggle('portrait', innerHeight > innerWidth);
-  addEventListener('resize', orient); orient();
+  // ---- Orientation gate --------------------------------------------------
+  // The prompt must never become a wall. A phone with rotation lock on, an
+  // installed PWA whose manifest pins portrait, or an iframe in a portrait
+  // container all leave the viewport permanently portrait — and the old gate
+  // listened only to 'resize' and offered no way out, so the player sat behind
+  // an opaque full-screen overlay forever ("I turn it sideways and nothing
+  // happens"). Now: more signals, late re-checks, and a tap-to-play escape.
+  const rotEl = document.getElementById('rotate');
+  let rotateDismissed = false;
+
+  const isPortrait = ()=>{
+    let mq = null;
+    try{ mq = matchMedia('(orientation:portrait)').matches; }catch(_){}
+    const dims = innerHeight > innerWidth;
+    // Bias toward letting them play: only hold the gate when BOTH signals agree
+    // it is portrait. Mobile browsers report stale dimensions mid-rotation.
+    return mq === null ? dims : (mq && dims);
+  };
+  const orient = ()=> document.body.classList.toggle('portrait', !rotateDismissed && isPortrait());
+
+  // iOS/Android fire these at different times and some report the old size on
+  // the first tick, so re-check on a couple of short delays too.
+  const recheck = ()=>{ orient(); setTimeout(orient, 250); setTimeout(orient, 700); };
+  addEventListener('resize', recheck);
+  addEventListener('orientationchange', recheck);
+  addEventListener('pageshow', recheck);
+  try{
+    const mql = matchMedia('(orientation:portrait)');
+    mql.addEventListener ? mql.addEventListener('change', recheck) : mql.addListener(recheck);
+  }catch(_){}
+
+  // Tapping the prompt tries to rotate the screen for them (works on Android in
+  // fullscreen, no-ops on iOS) and then gets out of the way regardless, so the
+  // gate can never trap anyone. Also clears tapStart — it sits UNDER this
+  // overlay at z-65, so without this they would face a second identical-looking
+  // full-screen panel and one more tap.
+  rotEl.addEventListener('click', ()=>{
+    ensureAudio();
+    try{ document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); }catch(_){}
+    try{ screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(()=>{}); }catch(_){}
+    rotateDismissed = true;
+    ts.style.display = 'none';
+    orient();
+  });
+
+  orient();
   const L = document.getElementById('stickL'), R = document.getElementById('stickR');
   let lId=null, lx0=0, ly0=0, rId=null, rx0=0, ry0=0;
   L.addEventListener('pointerdown', e=>{ ensureAudio(); lId=e.pointerId; lx0=e.clientX; ly0=e.clientY; L.setPointerCapture(lId); });
