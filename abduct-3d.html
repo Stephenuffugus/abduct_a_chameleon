@@ -322,11 +322,17 @@ const DECOY_CD = 18;            // P37: seconds between decoy drops
 const PLAYER_RADIUS = 0.6;
 const ABDUCT_POINTS = 100, SURVIVE_POINTS = 60;
 
+/* Stephen 7/28: "flavored with lots more color". This is a CAMOUFLAGE game and the
+   old palette was sixteen shades of the same dark slate — you could not tell one
+   surface from another, so choosing a colour to hide in was guesswork. Same keys,
+   same mechanic (camo matching reads straight off this table), but each ground now
+   has its own identity and the night reads as a colourful night rather than a grey
+   one. */
 const TERRAIN = {
-  void:'#12182B', grass:'#4E8C4A', dirt:'#C9A96B', water:'#3A6EA5',
-  rock:'#7B7F88', concrete:'#AAB0BC', foliage:'#2F5E37', metal:'#6E7A8A',
-  sand:'#E0CB94', snow:'#E9EEF3', ice:'#ABCFE6', mud:'#4E4A31',
-  moss:'#5FA663', lava:'#D2452A', ash:'#383944', crystal:'#8E7FD6'
+  void:'#151B34', grass:'#4FA83F', dirt:'#D9A85C', water:'#2E7FD4',
+  rock:'#8A8FA3', concrete:'#B9C0D0', foliage:'#1F7A44', metal:'#6E86A8',
+  sand:'#F0D68A', snow:'#F2F7FF', ice:'#8FD7F2', mud:'#6B5330',
+  moss:'#63C46A', lava:'#FF5A2B', ash:'#42465C', crystal:'#A98BFF'
 };
 
 /* ============================ Globals ============================ */
@@ -440,8 +446,27 @@ async function init(){
 /* ============================ Scene ============================ */
 function setupScene(){
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0E1220);
-  scene.fog = new THREE.Fog(0x0E1220, 80, 230);
+  /* the sky was one flat near-black colour, which is most of why the whole game
+     read as grey. A gradient dome costs one texture and changes everything: deep
+     indigo overhead falling to a warm violet horizon the fog then melts into. */
+  scene.background = new THREE.Color(0x1A1740);
+  scene.fog = new THREE.Fog(0x3B2A63, 90, 260);
+  (function(){
+    const c=document.createElement('canvas'); c.width=8; c.height=256;
+    const g=c.getContext('2d').createLinearGradient(0,0,0,256);
+    g.addColorStop(0.00,'#0B0F2B');   // zenith
+    g.addColorStop(0.42,'#241C55');
+    g.addColorStop(0.72,'#4A2A6B');
+    g.addColorStop(0.88,'#8A3F63');   // the warm band the moon sits in
+    g.addColorStop(1.00,'#C46A4E');   // horizon glow
+    const x=c.getContext('2d'); x.fillStyle=g; x.fillRect(0,0,8,256);
+    const tex=new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const dome=new THREE.Mesh(new THREE.SphereGeometry(600,24,16),
+      new THREE.MeshBasicMaterial({ map:tex, side:THREE.BackSide, fog:false, depthWrite:false }));
+    dome.renderOrder=-1;
+    scene.add(dome);
+  })();
   scene.add(worldGroup);
 
   camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 1200);
@@ -452,8 +477,13 @@ function setupScene(){
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.body.appendChild(renderer.domElement);
 
-  scene.add(new THREE.HemisphereLight(0x8496c8, 0x0d1018, 1.0));
-  const moon = new THREE.DirectionalLight(0xc4d6ff, 0.7);
+  /* warm sky bounce over a violet ground bounce, so surfaces separate by hue and
+     not only by brightness — the thing a camouflage game actually needs */
+  scene.add(new THREE.HemisphereLight(0xBFD4FF, 0x3A2352, 1.15));
+  const warm = new THREE.DirectionalLight(0xFFB77A, 0.45);   // horizon glow, low and warm
+  warm.position.set(-60, 18, -40);
+  scene.add(warm);
+  const moon = new THREE.DirectionalLight(0xDCE8FF, 0.85);
   moon.position.set(40, 80, 25);
   scene.add(moon);
 
