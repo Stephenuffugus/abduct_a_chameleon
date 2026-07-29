@@ -8,7 +8,7 @@
 import { readFileSync } from 'fs';
 
 const TERRAIN = new Set(['void','grass','dirt','water','rock','concrete','foliage','metal','sand','snow','ice','mud','moss','lava','ash','crystal']);
-const COVER   = new Set(['tree','boulder','crate','barrel','wall','cactus','dead_tree','ice_spike','alien_pod']);
+const COVER   = new Set(['tree','boulder','crate','barrel','wall','cactus','dead_tree','ice_spike','alien_pod','bridge']);
 const MOVE_BLOCK = new Set(['wall']);            // matches index.html MOVE_BLOCK + void terrain
 const HAZARD = new Set(['water','lava','void']); // hiders should not spawn here
 const BIOMES = new Set(['greenwood','dunes','tundra','downtown','xeno','bog']); // optional mood tag

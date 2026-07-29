@@ -62,7 +62,7 @@ const PAINT_SHIFT_SPEED = 300, SHIFT_DELTA_EPS = 4;
 const MOVE_STILL_MAX = 20, MOVE_FULL = 150;
 const STILL_ATTACK = 0.08, STILL_RECOVER = 1.20;
 const COVER_RADIUS = 44;
-const COVER_MAX = { wall:0.85, boulder:0.75, alien_pod:0.72, dead_tree:0.68,
+const COVER_MAX = { wall:0.85, bridge:0.70, boulder:0.75, alien_pod:0.72, dead_tree:0.68,
   tree:0.66, crate:0.62, barrel:0.60, ice_spike:0.55, cactus:0.50 };
 const GAMMA_M = 1.3, GAMMA_S = 1.6;
 const MAX_CONCEAL_OPEN = 0.95, CONCEAL_HARDCAP = 0.99;
@@ -82,20 +82,24 @@ const STUDIO_SLOWMO = 0.35;
 const ENTER_SUSPECT = 0.35, EXIT_SUSPECT = 0.15, ENTER_INVEST = 0.60;
 const ENTER_CHASE = 0.85, DROP_CHASE = 0.45;
 const BEAM_R = 26, BEAM_BREAK_R = 64, BEAM_HOLD_C = 0.05, REACQUIRE_TIME = 0.9, BEAM_DRAIN = 0.6;
+// The beam GRIPS: player speed × (1 − BEAM_SLOW·charge) while held. Before this, BEAM_TRACK_SPD
+// was below walk speed on every difficulty, so holding the stick outran the beam forever and
+// abduction could never complete against a moving player. Escape early, or with tools — not by strolling.
+const BEAM_SLOW = 0.6;
 const TURN_RATE = 3.2, ARRIVE_DT = 0.25, BELIEF_TRACK = 6.0;
 const SPAWN_GRACE = 1.5, COORD_RANGE = 480;
 // per-difficulty
 const DIFF = {
-  EASY:   { UFO_COUNT:1, SCAN_R:144, PATROL_SPD:90,  SCAN_SPD:36, INVEST_SPD:100,
-            CHASE_SPD:135, BEAM_TRACK_SPD:78,  SUSPECT_GAIN:1.3, SUSPECT_DECAY:0.85,
+  EASY:   { UFO_COUNT:2, SCAN_R:144, PATROL_SPD:90,  SCAN_SPD:36, INVEST_SPD:100,
+            CHASE_SPD:155, BEAM_TRACK_SPD:118, SUSPECT_GAIN:1.3, SUSPECT_DECAY:0.85,
             LOCK_TIME:2.4, NOISE_FLOOR:0.09, GIVEUP_TIME:4.5, COOLDOWN_TIME:3.5,
             PATROL_REROLL:30, COORDINATE:false, SURVIVE_TIME:90,  diffIndex:0, label:'EASY' },
-  NORMAL: { UFO_COUNT:2, SCAN_R:176, PATROL_SPD:118, SCAN_SPD:48, INVEST_SPD:135,
-            CHASE_SPD:165, BEAM_TRACK_SPD:100, SUSPECT_GAIN:1.8, SUSPECT_DECAY:0.65,
+  NORMAL: { UFO_COUNT:4, SCAN_R:176, PATROL_SPD:118, SCAN_SPD:48, INVEST_SPD:135,
+            CHASE_SPD:192, BEAM_TRACK_SPD:155, SUSPECT_GAIN:1.8, SUSPECT_DECAY:0.65,
             LOCK_TIME:1.7, NOISE_FLOOR:0.06, GIVEUP_TIME:6.0, COOLDOWN_TIME:2.5,
             PATROL_REROLL:22, COORDINATE:false, SURVIVE_TIME:120, diffIndex:1, label:'NORMAL' },
-  HARD:   { UFO_COUNT:3, SCAN_R:208, PATROL_SPD:150, SCAN_SPD:60, INVEST_SPD:170,
-            CHASE_SPD:195, BEAM_TRACK_SPD:122, SUSPECT_GAIN:2.6, SUSPECT_DECAY:0.45,
+  HARD:   { UFO_COUNT:6, SCAN_R:208, PATROL_SPD:150, SCAN_SPD:60, INVEST_SPD:170,
+            CHASE_SPD:228, BEAM_TRACK_SPD:180, SUSPECT_GAIN:2.6, SUSPECT_DECAY:0.45,
             LOCK_TIME:1.1, NOISE_FLOOR:0.04, GIVEUP_TIME:8.0, COOLDOWN_TIME:1.5,
             PATROL_REROLL:16, COORDINATE:true,  SURVIVE_TIME:180, diffIndex:2, label:'HARD' },
 };
@@ -110,7 +114,7 @@ const COL = { bg:'#0E1220', panel:'#151B2C', line:'#2A3350', txt:'#E8EBF5', mute
   amber:'#F2B33D', cyan:'#3FD0E0', danger:'#E0655E', green:'#3AC0A0' };
 const COVER_COLOR = { tree:'#2c5223', dead_tree:'#4a3d2e', boulder:'#5b606b',
   ice_spike:'#bfe0f2', crate:'#8a5a2b', barrel:'#9a7b3a', cactus:'#3f7a45',
-  wall:'#39415A', alien_pod:'#8e7fd6' };
+  wall:'#39415A', alien_pod:'#8e7fd6', bridge:'#8a7458' };
 const COVER_TRUNK = { tree:'#5b3f28', dead_tree:'#3a3123' };
 // which cover blocks movement (in addition to void terrain):
 const MOVE_BLOCK = { wall:true };
@@ -122,7 +126,12 @@ const LS_BEST = 'aac.best.v1', LS_SETTINGS = 'aac.settings.v1';
 const FREEZE_CAP_MAX=0.985, FREEZE_SETTLE_MULT=0.45;
 const DASH_SPEED=470, DASH_TIME=0.16, DASH_CD=2.4, DASH_FLARE=0.5, DASH_FLARE_TIME=0.5;
 const DECOY_LIFE=6.0, DECOY_CD=12.0, INK_R=95, INK_LIFE=3.6, INK_CD=10.0, INK_MAX=2;
-const HEAT_RAMP=20, HEAT_UFO_EVERY=45, HEAT_UFO_CAP=6;
+// P23 abilities II — Tongue (zip to an anchor: THE beam counterplay now that the beam grips)
+// and Burrow (sink into soft ground; a panic hide that works even in the wrong paint)
+const TONGUE_R=176, TONGUE_SPEED=560, TONGUE_CD=8.0, TONGUE_MAXT=0.6;
+const BURROW_MAX=2.5, BURROW_CD=14.0, BURROW_C=0.03;
+const BURROW_SOFT={grass:1,dirt:1,sand:1,mud:1,moss:1,snow:1,foliage:1};
+const HEAT_RAMP=20, HEAT_UFO_EVERY=45, HEAT_UFO_CAP=8;
 // P5+ Time Attack "Beacon Run"
 const TA_BEACONS=5, BEACON_R=34, BEACON_HOLD=1.3, BEACON_CONCEAL=0.5, TA_PENALTY=12, TA_TIME=150;
 // P6 Hunter mode
@@ -133,6 +142,8 @@ const ABILITIES=[
   { key:'dash',   name:'Dash',   glyph:'⚡', kb:'ControlLeft', pad:2 },
   { key:'decoy',  name:'Decoy',  glyph:'👥', kb:'KeyC', pad:1 },
   { key:'ink',    name:'Ink',    glyph:'💨', kb:'KeyV', pad:4 },
+  { key:'tongue', name:'Tongue', glyph:'🪝', kb:'KeyB', pad:3 },
+  { key:'burrow', name:'Burrow', glyph:'🕳', kb:'KeyX', pad:5 },
 ];
 // terrain
 const TERRAIN_HEX = { void:'#12182B', grass:'#4E8C4A', dirt:'#C9A96B', water:'#3A6EA5',
@@ -276,6 +287,10 @@ function segPointDist2(ax,ay,bx,by,px,py){ const dx=bx-ax, dy=by-ay, l2=dx*dx+dy
   return (px-cx)*(px-cx)+(py-cy)*(py-cy); }
 function losClear(ax,ay,bx,by){
   const dx=bx-ax, dy=by-ay, dist=Math.hypot(dx,dy);
+  // under a bridge deck you are roofed: the endpoint cell itself hides you (Jessie's river rule —
+  // swim the water line and the deck shelters the crossing). Intermediate cells can't carry this
+  // because the endpoint is deliberately excluded from the sample walk below.
+  if(coverTypeAt(Math.floor(bx/TILE),Math.floor(by/TILE))==='bridge') return false;
   // ink clouds block sight (P5)
   if(round&&round.inks&&round.inks.length){ for(const ik of round.inks){ if(segPointDist2(ax,ay,bx,by,ik.x,ik.y) < ik.r*ik.r) return false; } }
   const steps=Math.max(1, Math.ceil(dist/(TILE*0.5)));
@@ -773,7 +788,8 @@ const player = { x:0,y:0, vx:0,vy:0, facing:0, prevx:0,prevy:0,
   pose:'stand', poseBlend:{},
   // P5 abilities
   freeze:false, freezeCap:MAX_CONCEAL_OPEN, dashT:0, dashDx:0, dashDy:0, dashFlare:0,
-  cd:{ dash:0, decoy:0, ink:0 } };
+  tongueT:0, tongueTx:0, tongueTy:0, burrowT:0,
+  cd:{ dash:0, decoy:0, ink:0, tongue:0, burrow:0 } };
 
 /* ============================ §11 AUDIO ============================ */
 let AC=null, masterGain=null, droneOsc=null, droneGain=null, beamOsc=null, beamGain=null;
@@ -920,6 +936,8 @@ function gatherInput(){
   let speed=speedFromMag(moveMag); if(creep) speed=Math.min(speed,PLAYER_CREEP);   // Shift/L2 still forces sneak
   let tag = speed<=0?'idle':(speed<=PLAYER_CREEP+1?'sneak':'walk');
   if(player.freeze){ mx=0; my=0; moveMag=0; speed=0; tag='idle'; }
+  // burrowed: rooted underground — a real push on the stick digs you back out
+  if(player.burrowT>0){ if(moveMag>0.35){ player.burrowT=0; } else { mx=0; my=0; moveMag=0; speed=0; tag='idle'; } }
   if(ctrlMode==='PAINT'){ mx=0; my=0; moveMag=0; speed=0; tag='idle'; }   // rooted while painting
   if(tag!==_prevMoveTag){ if((tag==='walk'&&_prevMoveTag==='sneak')||(tag==='sneak'&&_prevMoveTag==='walk')) vibe(12); _prevMoveTag=tag; }
   input.mx=mx; input.my=my; input.creep=creep; input.moveMag=moveMag; input.speed=speed; input.moveTag=tag;
@@ -935,6 +953,30 @@ function useAbility(k){ if(!round||roundState!=='PLAYING'||!player.alive) return
   else if(k==='ink'){ if(player.cd.ink>0) return; player.cd.ink=INK_CD;
     round.inks.push({ x:player.x, y:player.y, r:INK_R, life:INK_LIFE }); if(round.inks.length>INK_MAX) round.inks.shift();
     SFX.ui(); spawnShards(player.x,player.y,'#2a2a3a',10); showToast('Ink cloud'); vibe(20); }
+  else if(k==='tongue'){ if(player.cd.tongue>0 || player.tongueT>0) return;
+    // pick an anchor: nearest cover in range, weighted toward where the stick points
+    const am=Math.hypot(input.mx,input.my), aim=am>0.1?{x:input.mx/am,y:input.my/am}:null;
+    let best=null,bs=-1e9;
+    for(const o of coverObjects){ if(o.type==='wall') continue;
+      const dx=o.wx-player.x, dy=o.wy-player.y, d=Math.hypot(dx,dy);
+      if(d<TILE*0.8 || d>TONGUE_R) continue;
+      let s=1-d/TONGUE_R;
+      if(aim){ const dot=(dx*aim.x+dy*aim.y)/(d||1); if(dot<-0.2) continue; s+=dot; }
+      if(s>bs){ bs=s; best=o; } }
+    if(!best){ showToast('No anchor in tongue reach'); SFX.ui(); return; }
+    const dx=best.wx-player.x, dy=best.wy-player.y, d=Math.hypot(dx,dy)||1;
+    player.tongueTx=best.wx-(dx/d)*TILE*0.55; player.tongueTy=best.wy-(dy/d)*TILE*0.55;
+    player.tongueT=TONGUE_MAXT; player.burrowT=0; player.cd.tongue=TONGUE_CD;
+    player.facing=Math.atan2(dy,dx);
+    SFX.ui(); addTrauma(0.10); vibe(25); }
+  else if(k==='burrow'){ if(player.burrowT>0){ player.burrowT=0; SFX.ui(); return; }   // resurface early
+    if(player.cd.burrow>0) return;
+    let gripped=false; for(const u of round.ufos){ if(u.state==='BEAM' && u.beamCharge>0.15) gripped=true; }
+    if(gripped){ showToast('The beam has you! Break it first'); SFX.ui(); return; }
+    const gk=player.ref?player.ref.dominantKey:'grass';
+    if(!BURROW_SOFT[gk]){ showToast('Ground too hard to burrow'); SFX.ui(); return; }
+    player.burrowT=BURROW_MAX; player.cd.burrow=BURROW_CD;
+    SFX.ui(); spawnShards(player.x,player.y,'#6a5636',9); vibe(30); }
 }
 
 /* gamepad (polled; edges handled in updateGamepadEdges) */
@@ -1004,6 +1046,8 @@ addEventListener('keydown', e=>{
     else if((e.code==='ControlLeft'||e.code==='ControlRight') && ctrlMode==='MOVE') useAbility('dash');   // P10: no dashing out of a rooted pose
     else if(e.code==='KeyC' && ctrlMode==='MOVE') useAbility('decoy');
     else if(e.code==='KeyV' && ctrlMode==='MOVE') useAbility('ink');
+    else if(e.code==='KeyB' && ctrlMode==='MOVE') useAbility('tongue');
+    else if(e.code==='KeyX' && ctrlMode==='MOVE') useAbility('burrow');
     else if(e.code==='Escape'){ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); else togglePause(); }
     else if(e.code==='KeyH' && round && round.diff.practice) round.debug=!round.debug;
     else if(e.code==='KeyM') setMuted(!settings.muted);
@@ -1210,9 +1254,22 @@ function circleBlocked(px,py){
   }
   return false;
 }
+// strongest active beam grip on the player (0..1) — practice beams never charge, so no grip there
+function beamGrip(){ if(!round||!round.ufos||!round.ufos.length) return 0;
+  let g=0; for(const u of round.ufos){ if(u.state==='BEAM' && u.beamCharge>g) g=u.beamCharge; } return g; }
 function movePlayer(dt){
   const dominant = player.ref ? player.ref.dominantKey : 'grass';
-  const mult = MOVE_MULT[dominant] != null ? MOVE_MULT[dominant] : MOVE_MULT._default;
+  let mult = MOVE_MULT[dominant] != null ? MOVE_MULT[dominant] : MOVE_MULT._default;
+  mult *= 1 - BEAM_SLOW*beamGrip();   // the beam grips — dash/tongue ignore it, walking does not
+  // TONGUE zip: a committed yank toward the chosen anchor — ignores terrain mult AND the beam grip
+  if(player.tongueT>0){ player.tongueT-=dt;
+    const dx=player.tongueTx-player.x, dy=player.tongueTy-player.y, d=Math.hypot(dx,dy);
+    if(d<6 || player.tongueT<=0){ player.tongueT=0; player.vx=0; player.vy=0; player.squash=0.35; }
+    else { const step=Math.min(d, TONGUE_SPEED*dt);
+      player.vx=dx/d*TONGUE_SPEED; player.vy=dy/d*TONGUE_SPEED;
+      const nx=player.x+dx/d*step; if(!circleBlocked(nx,player.y)) player.x=nx; else player.tongueT=0;
+      const ny=player.y+dy/d*step; if(!circleBlocked(player.x,ny)) player.y=ny; else player.tongueT=0; }
+    player.x=clamp(player.x,PLAYER_RADIUS,worldW-PLAYER_RADIUS); player.y=clamp(player.y,PLAYER_RADIUS,worldH-PLAYER_RADIUS); return; }
   // DASH burst overrides normal movement, ignores terrain mult
   if(player.dashT>0){ player.dashT-=dt; player.vx=player.dashDx*DASH_SPEED; player.vy=player.dashDy*DASH_SPEED;
     let dx=player.x+player.vx*dt; if(!circleBlocked(dx,player.y)) player.x=dx; else player.dashT=0;
@@ -1411,9 +1468,11 @@ const BotSeeker = { think(){ /* intent computed inline in updateUfo for the offl
 
 function turnToward(cur,target,maxStep){ let d=target-cur; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI;
   if(d>maxStep)d=maxStep; else if(d<-maxStep)d=-maxStep; return cur+d; }
-function steer(u,tx,ty,maxSpd,dt){ const dx=tx-u.x, dy=ty-u.y, dist=Math.hypot(dx,dy);
-  if(dist<0.001) return; u.heading=turnToward(u.heading, Math.atan2(dy,dx), TURN_RATE*dt);
-  const spd=Math.min(maxSpd, dist/ARRIVE_DT); u.vx=Math.cos(u.heading)*spd; u.vy=Math.sin(u.heading)*spd;
+function steer(u,tx,ty,maxSpd,dt,pursuit){ const dx=tx-u.x, dy=ty-u.y, dist=Math.hypot(dx,dy);
+  if(dist<0.001) return; u.heading=turnToward(u.heading, Math.atan2(dy,dx), TURN_RATE*(pursuit?2:1)*dt);
+  // pursuit: no arrival damping — the arrive-slowdown made a chasing ship SLOWER than a walking
+  // player inside ~48px, so it could hover forever at 40px and never reach beam range (26)
+  const spd=pursuit?maxSpd:Math.min(maxSpd, dist/ARRIVE_DT); u.vx=Math.cos(u.heading)*spd; u.vy=Math.sin(u.heading)*spd;
   u.x+=u.vx*dt; u.y+=u.vy*dt; u.x=clamp(u.x,0,worldW); u.y=clamp(u.y,0,worldH); }
 
 function updateBots(dt){
@@ -1431,8 +1490,9 @@ function updateBots(dt){
     const d=Math.hypot(u.x-player.x,u.y-player.y); const prox=clamp01(1-d/(D.SCAN_R*2)); if(prox>nearest)nearest=prox; }
   round.nearUfo=nearest;
   let maxS=0; for(const u of ufos) if(u.suspicion>maxS) maxS=u.suspicion; round.maxSusp=maxS;
-  // §6.7 separation
-  if(D.COORDINATE){ const sep=D.SCAN_R*1.4;
+  // §6.7 separation — always on: a fleet that clumps isn't searching. (Was HARD-only when
+  // NORMAL flew 2 ufos; with real patrol fleets every difficulty needs the spread.)
+  { const sep=D.SCAN_R*1.4;
     for(let i=0;i<ufos.length;i++)for(let j=i+1;j<ufos.length;j++){ const a=ufos[i],b=ufos[j];
       if(a.state==='CHASE'||a.state==='BEAM'||b.state==='CHASE'||b.state==='BEAM')continue;
       const dx=a.x-b.x,dy=a.y-b.y,d=Math.hypot(dx,dy)||1; if(d<sep){ const f=(1-d/sep)*40*dt;
@@ -1443,25 +1503,34 @@ function updateUfo(u,dt,D){
   u.scanPhase += 2.2*dt;
   const dx=player.x-u.x, dy=player.y-u.y, d=Math.hypot(dx,dy);
   // ---- sensing (unless COOLDOWN) ----
+  // a hunter that is actively chasing tracks on a longer leash — before this, a runner crossing
+  // the SCAN_R line mid-chase zeroed the signal and the whole pursuit collapsed, which made
+  // "just keep walking" a guaranteed escape at ANY difficulty (the July capture complaint)
+  const senseR = (u.state==='CHASE'||u.state==='BEAM') ? D.SCAN_R*1.75 : D.SCAN_R;
   let signal=0, sx=player.x, sy=player.y;
   if(u.state!=='COOLDOWN'){
-    if(d<=D.SCAN_R){ const clear=losClear(u.x,u.y,player.x,player.y);
-      if(clear){ const prox=smoothstep(0,1, clamp01(1-d/D.SCAN_R)); signal=player.C*prox; } }
+    if(d<=senseR){ const clear=losClear(u.x,u.y,player.x,player.y);
+      if(clear){ const prox=smoothstep(0,1, clamp01(1-d/senseR)); signal=player.C*prox; } }
     // DECOYS: a painted twin can out-signal you and steal belief (max signal wins)
     if(round.decoys.length){ for(const dc of round.decoys){ const dd=Math.hypot(dc.x-u.x,dc.y-u.y);
       if(dd<=D.SCAN_R && losClear(u.x,u.y,dc.x,dc.y)){ const ds=dc.C*smoothstep(0,1,clamp01(1-dd/D.SCAN_R));
         if(ds>signal){ signal=ds; sx=dc.x; sy=dc.y; } } } }
     if(signal>D.NOISE_FLOOR){
       const grace = round.spawnGrace>0 ? 0.5 : 1;
-      u.suspicion += D.SUSPECT_GAIN*signal*dt*grace;
+      // a blatant signal escalates at double speed: passing right over an unmatched runner is not
+      // a maybe. A well-matched hider (C≤~0.3) can never trip this even at point blank.
+      const blatant = signal>=0.55 ? 2 : 1;
+      u.suspicion += D.SUSPECT_GAIN*signal*blatant*dt*grace;
       const k=clamp(signal,0.1,1)*BELIEF_TRACK;
       u.lastSuspect.x += (sx-u.lastSuspect.x)*Math.min(1,k*dt);
       u.lastSuspect.y += (sy-u.lastSuspect.y)*Math.min(1,k*dt);
       u.lastSuspectConf=Math.max(u.lastSuspectConf,signal);
-    } else { u.suspicion -= D.SUSPECT_DECAY*dt; u.lastSuspectConf -= 0.5*dt; }
+    } else { // committed pursuit fades slower: crossing one tree cell should not erase the chase —
+      // a real juke (direction change behind cover while it flies to your LAST seen spot) still does
+      u.suspicion -= D.SUSPECT_DECAY*(u.state==='CHASE'?0.35:1)*dt; u.lastSuspectConf -= 0.5*dt; }
   } else { u.suspicion -= D.SUSPECT_DECAY*2*dt; }
-  // lock-inertia in CHASE/BEAM
-  if((u.state==='CHASE'||u.state==='BEAM') && d<D.SCAN_R && signal>0.001 && losClear(u.x,u.y,player.x,player.y))
+  // lock-inertia in CHASE/BEAM (the leash range, so a fleeing runner stays locked while visible)
+  if((u.state==='CHASE'||u.state==='BEAM') && d<senseR && signal>0.001 && losClear(u.x,u.y,player.x,player.y))
     u.suspicion=Math.max(u.suspicion,0.9);
   u.suspicion=clamp01(u.suspicion); u.signal=signal;
   const prev=u.state;
@@ -1490,19 +1559,22 @@ function updateUfo(u,dt,D){
       break; }
     case 'CHASE': {
       if(u.suspicion<DROP_CHASE){ u.state='INVESTIGATE'; u.giveupTimer=0; break; }
-      const tx = (d<D.SCAN_R && losClear(u.x,u.y,player.x,player.y))?player.x:u.lastSuspect.x;
-      const ty = (d<D.SCAN_R && losClear(u.x,u.y,player.x,player.y))?player.y:u.lastSuspect.y;
-      steer(u,tx,ty,D.CHASE_SPD,dt);
+      const tx = (d<senseR && losClear(u.x,u.y,player.x,player.y))?player.x:u.lastSuspect.x;
+      const ty = (d<senseR && losClear(u.x,u.y,player.x,player.y))?player.y:u.lastSuspect.y;
+      steer(u,tx,ty,D.CHASE_SPD,dt,true);
       if(d<BEAM_R){ u.state='BEAM'; u.reacquireTimer=0; u.beamHold=0; addTrauma(TRAUMA.beamLock); hitstopMs(40); punchZoom(0.05,120,300); vibe(40); }
       break; }
     case 'BEAM': {
-      // §6.5 break checks BEFORE charge
-      if(d>BEAM_BREAK_R){ u.state='CHASE'; break; }
+      // §6.5 break checks BEFORE charge — both thresholds scale with charge: a fresh lock slips
+      // like before, but a half-charged beam holds farther and shrugs off one tree crossing.
+      // Late escapes need real tools: ink (outlasts any grace), tongue (out-ranges any ring),
+      // a bridge deck, or the C<BEAM_HOLD_C re-hide.
+      if(d>BEAM_BREAK_R*(1+u.beamCharge)){ u.state='CHASE'; break; }
       const clear=losClear(u.x,u.y,player.x,player.y);
-      if(!clear){ u.reacquireTimer+=dt; if(u.reacquireTimer>REACQUIRE_TIME){ u.state='CHASE'; break; } }
+      if(!clear){ u.reacquireTimer+=dt; if(u.reacquireTimer>REACQUIRE_TIME*(1+u.beamCharge)){ u.state='CHASE'; break; } }
       else u.reacquireTimer=0;
       // spring-track over the player
-      steer(u,player.x,player.y,D.BEAM_TRACK_SPD,dt);
+      steer(u,player.x,player.y,D.BEAM_TRACK_SPD,dt,true);
       if(round.diff.practice){ // never completes; flash SPOTTED then lose interest
         u.beamHold+=dt; round.spottedFlash=0.3;
         if(u.beamHold>2){ u.state='INVESTIGATE'; u.suspicion*=0.5; u.giveupTimer=0; }
@@ -1510,9 +1582,14 @@ function updateUfo(u,dt,D){
       }
       if(player.C<BEAM_HOLD_C){ u.state='CHASE'; break; }             // re-hide escape
       else if(d<BEAM_R && clear && player.C>=BEAM_HOLD_C){
-        u.beamCharge += (1/D.LOCK_TIME)*dt;
+        // a fading target charges slower — freezing and matching UNDER the beam is a real race
+        // you can win if you react; a blatant runner charges at full rate
+        u.beamCharge += (1/D.LOCK_TIME)*(0.35+0.65*clamp01(player.C/0.5))*dt;
         if(u.beamCharge>=1){ triggerAbduction(u); }
-      } else u.beamCharge -= BEAM_DRAIN*dt;
+      } else if(d<BEAM_BREAK_R && clear){ /* still locked: the charge HOLDS — it only drains once
+        the lock is truly broken. Without this, a runner drained the ratchet every 26–64px cycle
+        and the lock could never complete against anyone who kept moving. */ }
+      else u.beamCharge -= BEAM_DRAIN*dt;
       break; }
     case 'COOLDOWN': {
       u.cooldownTimer+=dt; u.vx*=0.9; u.vy*=0.9;
@@ -1682,7 +1759,7 @@ function drawRound(alpha){
       ctx.arc(p.x,p.y, p.r+p.life*TILE*2.2, 0, Math.PI*2); ctx.stroke(); } }
   ctx.globalAlpha=1;
   // 5. cover (culled)
-  for(const o of coverObjects){ if(o.wx<vx0-TILE||o.wx>vx1+TILE||o.wy<vy0-TILE||o.wy>vy1+TILE) continue; drawCover(o); }
+  for(const o of coverObjects){ if(o.type==='bridge') continue; if(o.wx<vx0-TILE||o.wx>vx1+TILE||o.wy<vy0-TILE||o.wy>vy1+TILE) continue; drawCover(o); }
   // 6. repaint puffs/rings/shards
   for(const p of particles){ if(p.type==='puff'){ const k=1-p.life/p.maxLife; ctx.globalAlpha=k;
       ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.r*k+1,0,Math.PI*2); ctx.fill(); }
@@ -1714,8 +1791,18 @@ function drawRound(alpha){
   // 7. decoys (painted twins) + player + 8. ufos
   for(const dc of round.decoys){ const a=Math.min(1,dc.life/1.0);
     ctx.globalAlpha=a; drawHumanoid(dc.x,dc.y,0,rgb2hex(dc.paint),0.3,{pose:dc.pose,outline:0.5}); ctx.globalAlpha=1; }
-  if(player.alive) drawChameleon();
+  if(player.alive){ if(player.burrowT>0) drawBurrowed(); else drawChameleon(); }
   else drawAbduction();
+  // bridge decks roof the water: drawn OVER swimmers, under the ships
+  { const v2=visRect(); let underDeck=false;
+    for(const o of coverObjects){ if(o.type!=='bridge') continue;
+      if(o.wx<v2.x0-TILE||o.wx>v2.x1+TILE||o.wy<v2.y0-TILE||o.wy>v2.y1+TILE) continue;
+      drawBridgeDeck(o); }
+    if(player.alive && coverTypeAt(Math.floor(player.x/TILE),Math.floor(player.y/TILE))==='bridge'){
+      // you can always find yourself: two eyes glinting in the dark under the planks
+      const eo=4.6; ctx.globalAlpha=0.55; ctx.fillStyle='#EDEFF4';
+      ctx.beginPath(); ctx.arc(player.x-eo,player.y-2,2.0,0,TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(player.x+eo,player.y-2,2.0,0,TAU); ctx.fill(); ctx.globalAlpha=1; } }
   for(const u of round.ufos) drawUfo(u);
   // ink clouds (obscuring, over entities)
   for(const ik of round.inks){ const a=clamp01(ik.life/INK_LIFE); const rad=ik.r*(0.7+0.3*a);
@@ -1732,6 +1819,21 @@ function drawRound(alpha){
   ctx.globalCompositeOperation='multiply'; ctx.globalAlpha=GRADE_ALPHA; ctx.fillStyle=biome.grade; ctx.fillRect(0,0,vpW,vpH);
   ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
   drawVignette();
+}
+// a plank deck cell — neighbor-aware so any bridge footprint reads as one span with rails
+function drawBridgeDeck(o){
+  const x0=o.col*TILE, y0=o.row*TILE, hh=hashInt(o.col*5+1,o.row*3+7), base=COVER_COLOR.bridge;
+  // drop shadow on the water, visible past the exposed edges
+  ctx.globalAlpha=0.28; ctx.fillStyle='#000'; ctx.fillRect(x0+3,y0+4,TILE,TILE); ctx.globalAlpha=1;
+  ctx.fillStyle=shadeHex(base,((hh%9)-4)*3); ctx.fillRect(x0,y0,TILE,TILE);
+  ctx.strokeStyle='rgba(40,28,16,0.45)'; ctx.lineWidth=1.4; ctx.beginPath();
+  for(let sx=x0+3+((hh>>3)%4); sx<x0+TILE; sx+=7){ ctx.moveTo(sx,y0); ctx.lineTo(sx,y0+TILE); }
+  ctx.stroke();
+  ctx.strokeStyle=shadeHex(base,26); ctx.lineWidth=3;
+  if(coverTypeAt(o.col,o.row-1)!=='bridge'){ ctx.beginPath(); ctx.moveTo(x0,y0+1.5); ctx.lineTo(x0+TILE,y0+1.5); ctx.stroke(); }
+  if(coverTypeAt(o.col,o.row+1)!=='bridge'){ ctx.beginPath(); ctx.moveTo(x0,y0+TILE-1.5); ctx.lineTo(x0+TILE,y0+TILE-1.5); ctx.stroke(); }
+  if(coverTypeAt(o.col-1,o.row)!=='bridge'){ ctx.beginPath(); ctx.moveTo(x0+1.5,y0); ctx.lineTo(x0+1.5,y0+TILE); ctx.stroke(); }
+  if(coverTypeAt(o.col+1,o.row)!=='bridge'){ ctx.beginPath(); ctx.moveTo(x0+TILE-1.5,y0); ctx.lineTo(x0+TILE-1.5,y0+TILE); ctx.stroke(); }
 }
 function drawCover(o){
   const x=o.wx, y=o.wy, t=o.type, col=COVER_COLOR[t]||'#666';
@@ -1867,6 +1969,25 @@ function drawChameleon(){
   // repaint shimmer ring
   if(p.repaintT>0){ const k=1-p.repaintT/0.4; ctx.globalAlpha=(1-k)*0.6; ctx.strokeStyle=rgb2hex(p.currentPaint); ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(p.x,p.y,PLAYER_DRAW_R*(1+k*1.5),0,TAU); ctx.stroke(); ctx.globalAlpha=1; }
+}
+// P23: burrowed — the game's favicon made playable: a low mound of the local ground, only the eyes showing
+function drawBurrowed(){
+  const p=player; const ref=p.ref, gc=ref?rgb2hex(ref.rgb):'#4E8C4A';
+  const sink=clamp01((BURROW_MAX-p.burrowT)/0.25);            // quick sink-in on entry
+  const R=PLAYER_DRAW_R*(1.15-0.25*sink);
+  ctx.fillStyle=shadeHex(gc,-18); ctx.beginPath(); ctx.ellipse(p.x,p.y+2,R*1.1,R*0.62,0,0,TAU); ctx.fill();
+  ctx.fillStyle=shadeHex(gc,6);   ctx.beginPath(); ctx.ellipse(p.x,p.y,R,R*0.55,0,0,TAU); ctx.fill();
+  // two watchful eyes, blinking with the usual clock
+  const eo=4.6, er=2.4*(1-0.85*(p.blinkE||0));
+  ctx.fillStyle='#EDEFF4';
+  ctx.beginPath(); ctx.ellipse(p.x-eo,p.y-2,2.4,er,0,0,TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(p.x+eo,p.y-2,2.4,er,0,0,TAU); ctx.fill();
+  if(er>0.8){ ctx.fillStyle='#0a0a12';
+    ctx.beginPath(); ctx.arc(p.x-eo+0.6,p.y-1.6,1.1,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x+eo+0.6,p.y-1.6,1.1,0,TAU); ctx.fill(); }
+  // running-out warning: mound trembles in the last half second
+  if(p.burrowT<0.5){ const j=Math.sin(gfx.t*40)*0.6; ctx.globalAlpha=0.35; ctx.strokeStyle=COL.amber;
+    ctx.beginPath(); ctx.ellipse(p.x+j,p.y,R+3,R*0.55+2,0,0,TAU); ctx.stroke(); ctx.globalAlpha=1; }
 }
 function drawUfo(u){
   const D=round.diff; const beaming=(u.state==='BEAM');
@@ -2098,7 +2219,7 @@ function drawRoundHUD(){
   else _hud.recenter=null;
   // ---- ability bar (vertical column, action-hand side) — hidden under a held shot; ❄ stays live while looking ----
   if(!studio.open){
-  const abx = right ? vpW-edge-44 : edge; const cdMax={dash:DASH_CD,decoy:DECOY_CD,ink:INK_CD};
+  const abx = right ? vpW-edge-44 : edge; const cdMax={dash:DASH_CD,decoy:DECOY_CD,ink:INK_CD,tongue:TONGUE_CD,burrow:BURROW_CD};
   const aby = ay-14-44*ABILITIES.length-10*(ABILITIES.length-1);
   ABILITIES.forEach((ab,i)=>{ const y=aby+i*54;
     const gated = ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');   // P9: hard-anchor while scouting
@@ -2433,6 +2554,7 @@ function computeCamoFor(a, dt, speed){
   const conceal=concealment(mqEff, a.S, cb, terrainConcealCap(ref.dominantKey), a.freezeCap);
   let C=conspicuity(conceal,m,a.shifting);
   if(a.dashFlare>0){ C=clamp01(C+DASH_FLARE*(a.dashFlare/DASH_FLARE_TIME)); a.dashFlare=Math.max(0,a.dashFlare-dt); }
+  if(a.burrowT>0) C=Math.min(C,BURROW_C);   // underground: only a dirt mound and two eyes remain
   a.mq=mqEff; a.m=m; a.conceal=conceal; a.C=C;
 }
 function computeCamo(dt, speed){ updatePaint(dt); computeCamoFor(player, dt, speed); }
@@ -2677,7 +2799,8 @@ function startRound(entry, mode, diff, fixedSeed){
     caught:false, caughtBy:null, finalized:false, spawnGrace:SPAWN_GRACE, nearUfo:0, debug:false,
     spottedReason:'', reasonUntil:0, spottedFlash:0, summaryT:0, seed, summary:null,
     decoys:[], inks:[], beacons:[], taBanked:0, heat:!!diff.heat, heatT:0, heatUfoT:0 };
-  player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.cd={dash:0,decoy:0,ink:0};
+  player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.cd={dash:0,decoy:0,ink:0,tongue:0,burrow:0};
+  player.tongueT=0; player.burrowT=0;
   player.splitPaint=false; studio.activeTone=0; player.mq2=0;
   player.currentPaint2={...player.currentPaint}; player.targetPaint2={...player.targetPaint}; player.paintHSV2=rgb2hsv(player.currentPaint);
   player.prevConceal=0; player.snapT=0; player.snapArmed=true;   // snapCount persists across a session (monotonic)
@@ -2876,6 +2999,8 @@ function stepSim(dt){
   if(round.spawnGrace>0) round.spawnGrace-=dt;
   // abilities: tick cooldowns + decoy/ink lifetimes
   for(const k in player.cd) if(player.cd[k]>0) player.cd[k]=Math.max(0,player.cd[k]-dt);
+  if(player.burrowT>0){ player.burrowT=Math.max(0,player.burrowT-dt);
+    if(player.burrowT===0) spawnShards(player.x,player.y,'#6a5636',6); }   // time's up — dirt pops as you surface
   for(let i=round.decoys.length-1;i>=0;i--){ round.decoys[i].life-=dt; if(round.decoys[i].life<=0) round.decoys.splice(i,1); }
   for(let i=round.inks.length-1;i>=0;i--){ round.inks[i].life-=dt; if(round.inks[i].life<=0) round.inks.splice(i,1); }
   updateBots(dt);
@@ -3415,10 +3540,12 @@ function drawHelp(){ ctx.fillStyle='rgba(8,12,25,0.88)'; ctx.fillRect(0,0,vpW,vp
     '      MATCH samples the ground; nudge the color until you read “HIDDEN”.',
     '      Tap empty space to look again — your framing stays put.',
     '⏱  HOLD STILL to settle. 🌳 Hug cover. The MODE pill takes you home.',
+    '🪝  TONGUE zips you to the nearest cover, your way out of a beam lock.',
+    '🕳  BURROW sinks you into soft ground: only your eyes show, until it wears off.',
     '',
-    'Desktop: WASD move · Shift sneak · E paint · I look · scroll zoom · Q match · Esc back',
+    'Desktop: WASD move · Shift sneak · E paint · I look · Q match · B tongue · X burrow · Esc back',
   ];
-  for(const l of lines){ txt(l, cx, y, 13.5, /^(🕹|🎨|👁|⏱)/.test(l)?COL.txt:COL.muted, 'center', '500'); y+=Math.min(26,(vpH*0.62)/lines.length); }
+  for(const l of lines){ txt(l, cx, y, 13.5, /^(🕹|🎨|👁|⏱|🪝|🕳)/.test(l)?COL.txt:COL.muted, 'center', '500'); y+=Math.min(26,(vpH*0.62)/lines.length); }
   y+=14; const bw=Math.min(220,vpW-48); navList=[]; menuIndex=0;
   navBtn('Got it', cx-bw/2, y, bw, 46, ()=>{ showHelp=false; }, {size:15, weight:'700'});
   navListApp=appState;
@@ -3492,7 +3619,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   playerPos:{x:Math.round(player.x),y:Math.round(player.y)},
   ufoPos: round?round.ufos.map(u=>({x:Math.round(u.x),y:Math.round(u.y),s:u.state,susp:+u.suspicion.toFixed(2),beam:+u.beamCharge.toFixed(2)})):[],
   summary: round&&round.summary?round.summary:null,
-  ability: round?{freeze:player.freeze,dashCd:+player.cd.dash.toFixed(2),decoyCd:+player.cd.decoy.toFixed(2),inkCd:+player.cd.ink.toFixed(2),freezeCap:+player.freezeCap.toFixed(3)}:null,
+  ability: round?{freeze:player.freeze,dashCd:+player.cd.dash.toFixed(2),decoyCd:+player.cd.decoy.toFixed(2),inkCd:+player.cd.ink.toFixed(2),freezeCap:+player.freezeCap.toFixed(3),tongueCd:+(player.cd.tongue||0).toFixed(2),burrowCd:+(player.cd.burrow||0).toFixed(2),tongueT:+(player.tongueT||0).toFixed(2),burrowT:+(player.burrowT||0).toFixed(2)}:null,
   decoys: round?round.decoys.length:0, inks: round?round.inks.length:0, pose: player.pose,
   ta: round&&round.mode==='TA'?{ beacons:round.beacons.length, banked:round.taBanked, timeLeft:Math.round(round.timeLeft), beaconPos:round.beacons.map(b=>({x:Math.round(b.x),y:Math.round(b.y),banked:b.banked})) }:null,
   hunt: round&&round.mode==='HUNT'?{ bots: round.bots.length, caught: round.hunterCaught||0, pinged: round.bots.filter(b=>b.pinged>0).length, botStates: round.bots.map(b=>b.state), botC: round.bots.map(b=>+b.C.toFixed(2)), pulseCd:+player.pulseCd.toFixed(2), botPos: round.bots.map(b=>({x:Math.round(b.x),y:Math.round(b.y),caught:b.caught,C:+b.C.toFixed(2),pinged:+(b.pinged>0)})) }:null,
@@ -3518,7 +3645,11 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   embed:{ embedded:EMBED, lsOk:LS_OK },
   move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},
   speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
-  perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; } }; }catch(_){}
+  perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; },
+  // test rig (headless suite + console): position actors, read cover — same spirit as round.debug
+  t:{ teleport(x,y){ if(round&&player.alive){ player.x=x; player.y=y; player.vx=0; player.vy=0; } },
+      moveUfo(i,x,y){ const u=round&&round.ufos[i]; if(u){ u.x=x; u.y=y; } },
+      covers(){ return coverObjects.map(o=>({type:o.type,wx:o.wx,wy:o.wy})); } } }; }catch(_){}
 boot();
 
 </script>
