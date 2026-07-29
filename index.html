@@ -137,6 +137,23 @@ const TA_BEACONS=5, BEACON_R=34, BEACON_HOLD=1.3, BEACON_CONCEAL=0.5, TA_PENALTY
 // P6 Hunter mode
 const HUNTER_SPD=175, HUNTER_TAU=0.16, PULSE_CD=3.0, PULSE_REVEAL=0.15, PING_HOLD=2.6;
 const HUNT_TIME=120, HIDER_COUNT={EASY:3,NORMAL:4,HARD:5}, BOT_HIDE_SPD=92, HUNT_SCAN_R=175;
+/* HUNT capture tuning (Stephen 2026-07-29: "almost impossible to catch the
+   bots... really really hard even on easy"). Three compounding causes, fixed:
+   1. stepHunt reused DIFF.LOCK_TIME — the table tuned for the AI hunting the
+      PLAYER, where EASY means slow AI locks (2.4s). For the hunter that made
+      EASY demand 2.4s of continuous contact and HARD only 1.1s: the whole
+      difficulty was INVERTED. Hunt now has its own lock times, right way up.
+   2. steerBot set bot velocity instantly — literal turn-on-a-dime. Bots now
+      steer through velocity inertia (tau), loosest on EASY, so the saucer can
+      cut corners on them.
+   3. One flat flee speed (92*1.6=147) at every difficulty, chased by a 175
+      saucer through a 26px circle. Flee speed now scales by difficulty and
+      the CATCH circle is hunt-specific and wider, with a hold ring: a bot
+      slipping just outside the circle holds your charge instead of draining
+      it (the mirror of the hide-mode 26-64 grip ring). */
+const HUNT_TUNE={ EASY:{lock:1.0,flee:1.15,tau:0.38}, NORMAL:{lock:1.35,flee:1.35,tau:0.28}, HARD:{lock:1.7,flee:1.5,tau:0.20} };
+const HUNT_BEAM_R=34, HUNT_HOLD_R=HUNT_BEAM_R*1.7;
+function huntTune(){ return (round&&round.diff&&HUNT_TUNE[round.diff.label])||HUNT_TUNE.NORMAL; }
 const ABILITIES=[
   { key:'freeze', name:'Freeze', glyph:'❄', kb:'Space', pad:0 },
   { key:'dash',   name:'Dash',   glyph:'⚡', kb:'ControlLeft', pad:2 },
@@ -2046,9 +2063,9 @@ function drawHunterUfo(){ const x=player.x,y=player.y;
     const bd=Math.hypot(t.x-x,t.y-y);
     if(bd>2){ ctx.globalAlpha=0.35; const bg=ctx.createLinearGradient(x,y,t.x,t.y);   // guard degenerate zero-length gradient
       bg.addColorStop(0,'rgba(63,208,224,0.5)'); bg.addColorStop(1,'rgba(63,208,224,0.1)');
-      ctx.fillStyle=bg; ctx.beginPath(); ctx.moveTo(x-12,y); ctx.lineTo(x+12,y); ctx.lineTo(t.x+BEAM_R,t.y); ctx.lineTo(t.x-BEAM_R,t.y); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1; }
-    ctx.fillStyle='rgba(63,208,224,'+pulse+')'; ctx.beginPath(); ctx.arc(t.x,t.y,BEAM_R,0,TAU); ctx.fill();
-    ctx.strokeStyle=COL.danger; ctx.lineWidth=2; const rr2=BEAM_R*2.2-BEAM_R*1.2*clamp01(player.beamCharge); ctx.beginPath(); ctx.arc(t.x,t.y,rr2,0,TAU); ctx.stroke(); }
+      ctx.fillStyle=bg; ctx.beginPath(); ctx.moveTo(x-12,y); ctx.lineTo(x+12,y); ctx.lineTo(t.x+HUNT_BEAM_R,t.y); ctx.lineTo(t.x-HUNT_BEAM_R,t.y); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1; }
+    ctx.fillStyle='rgba(63,208,224,'+pulse+')'; ctx.beginPath(); ctx.arc(t.x,t.y,HUNT_BEAM_R,0,TAU); ctx.fill();
+    ctx.strokeStyle=COL.danger; ctx.lineWidth=2; const rr2=HUNT_BEAM_R*2.2-HUNT_BEAM_R*1.2*clamp01(player.beamCharge); ctx.beginPath(); ctx.arc(t.x,t.y,rr2,0,TAU); ctx.stroke(); }
   ctx.globalAlpha=0.25; ctx.fillStyle='#000'; ctx.beginPath(); ctx.ellipse(x+5,y+8,27,15,0,0,TAU); ctx.fill(); ctx.globalAlpha=1;
   ctx.fillStyle='#1b2337'; ctx.strokeStyle=COL.cyan; ctx.lineWidth=2.5; ctx.beginPath(); ctx.ellipse(x,y,27,15,0,0,TAU); ctx.fill(); ctx.stroke();
   ctx.fillStyle=COL.cyan; ctx.globalAlpha=0.45; ctx.beginPath(); ctx.arc(x,y-4,10,Math.PI,0); ctx.fill(); ctx.globalAlpha=1;
@@ -2869,7 +2886,11 @@ function makeBotHider(x,y){ return { x,y, prevx:x, prevy:y, vx:0,vy:0, facing:0,
 function pickWanderTarget(b){ const c=openCells.length?openCells[(rng()*openCells.length)|0]:null;
   if(c){ b.tx=(c.col+0.5)*TILE; b.ty=(c.row+0.5)*TILE; } else { b.tx=clamp(b.x+(rng()-0.5)*8*TILE,TILE,worldW-TILE); b.ty=clamp(b.y+(rng()-0.5)*8*TILE,TILE,worldH-TILE); } }
 function steerBot(b,tx,ty,spd,dt){ const dx=tx-b.x,dy=ty-b.y,d=Math.hypot(dx,dy)||1; const s=Math.min(spd,d/Math.max(dt,1e-3));
-  b.vx=dx/d*s; b.vy=dy/d*s; let nx=b.x+b.vx*dt; if(!circleBlocked(nx,b.y)) b.x=nx; else { b.vx=0; pickWanderTarget(b); }
+  /* velocity inertia: the desired vector is reached through a per-difficulty
+     tau, so direction changes cost the bot real ground (no more dime turns) */
+  const kT=Math.min(1,dt/huntTune().tau);
+  b.vx+=(dx/d*s-b.vx)*kT; b.vy+=(dy/d*s-b.vy)*kT;
+  let nx=b.x+b.vx*dt; if(!circleBlocked(nx,b.y)) b.x=nx; else { b.vx=0; pickWanderTarget(b); }
   let ny=b.y+b.vy*dt; if(!circleBlocked(b.x,ny)) b.y=ny; else { b.vy=0; pickWanderTarget(b); }
   if(s>4) b.facing=Math.atan2(b.vy,b.vx); }
 function botHiderThink(b,dt){ b.stateT+=dt; b.animT+=dt;
@@ -2884,7 +2905,7 @@ function botHiderThink(b,dt){ b.stateT+=dt; b.animT+=dt;
     b.targetPaint={r:Math.round(ref.rgb.r),g:Math.round(ref.rgb.g),b:Math.round(ref.rgb.b)};
     b.freeze=true; b.vx=0; b.vy=0;
     if(b.stateT>5+rng()*5){ b.state='WANDER'; b.stateT=0; pickWanderTarget(b); } }
-  else if(b.state==='FLEE'){ b.freeze=false; steerBot(b,b.tx,b.ty,BOT_HIDE_SPD*1.6,dt);
+  else if(b.state==='FLEE'){ b.freeze=false; steerBot(b,b.tx,b.ty,BOT_HIDE_SPD*huntTune().flee,dt);
     if(dh>HUNT_SCAN_R*1.3 && b.pinged<=0){ b.state='HIDE'; b.stateT=0; }
     else if(Math.hypot(b.tx-b.x,b.ty-b.y)<TILE){ const ang=Math.atan2(b.y-player.y,b.x-player.x)+(rng()-0.5); b.tx=clamp(b.x+Math.cos(ang)*TILE*9,TILE,worldW-TILE); b.ty=clamp(b.y+Math.sin(ang)*TILE*9,TILE,worldH-TILE); } }
   const sp=Math.hypot(b.vx,b.vy); b.walkPhase+=dt*(sp>8?7:0); b.breathP+=dt*(sp>8?0.5:1.6);
@@ -2923,17 +2944,24 @@ function stepHunt(dt){
   for(const b of round.bots){ if(b.caught){ b.catchT+=dt; continue; } botHiderThink(b,dt); crawlPaint(b,dt);
     const bsp=Math.hypot(b.x-b.prevx,b.y-b.prevy)/Math.max(dt,1e-6); computeCamoFor(b,dt,bsp); b.prevx=b.x; b.prevy=b.y;
     if(b.pinged>0) b.pinged-=dt; }
-  // beam: nearest catchable bot under the saucer
-  let best2=null,bd=BEAM_R*BEAM_R;
+  // beam: nearest catchable bot under the saucer (hunt-specific circle + lock)
+  let best2=null,bd=HUNT_BEAM_R*HUNT_BEAM_R;
   for(const b of round.bots){ if(b.caught)continue; const dx=b.x-player.x,dy=b.y-player.y,d2=dx*dx+dy*dy;
     if((b.C>BEAM_HOLD_C||b.pinged>0) && d2<bd && losClear(player.x,player.y,b.x,b.y)){ bd=d2; best2=b; } }
-  if(best2){ player.beamTarget=best2; player.beamCharge+=(1/round.diff.LOCK_TIME)*dt;
+  if(best2){ player.beamTarget=best2; player.beamCharge+=(1/huntTune().lock)*dt;
     if(player.beamCharge>=1){ best2.caught=true; best2.catchT=0; round.hunterCaught++; player.beamCharge=0; player.beamTarget=null;
       SFX.abduct(); addTrauma(0.28); hitstopMs(50); punchZoom(0.06,150,400);
       floatText(best2.x, best2.y-20, 'CAUGHT '+round.hunterCaught+'/'+round.bots.length+' 🛸', COL.cyan);
       showToast('Caught '+round.hunterCaught+'/'+round.bots.length);
       if(round.bots.every(x=>x.caught)) endHunt(true); } }
-  else { player.beamCharge=Math.max(0,player.beamCharge-BEAM_DRAIN*dt); player.beamTarget=null; }
+  else {
+    /* hold ring: the last target slipping JUST outside the circle pauses the
+       charge instead of draining it — losing three near-catches in a row to
+       one sidestep each was the "impossible" feel */
+    const lt=player.beamTarget;
+    const held = lt && !lt.caught && Math.hypot(lt.x-player.x,lt.y-player.y)<HUNT_HOLD_R && losClear(player.x,player.y,lt.x,lt.y);
+    if(!held){ player.beamCharge=Math.max(0,player.beamCharge-BEAM_DRAIN*dt); player.beamTarget=null; }
+  }
   round.timeLeft-=dt; round.metrics.survivalMs+=dt*1000;
   if(round.timeLeft<=0){ round.timeLeft=0; endHunt(round.hunterCaught>=round.bots.length); }
 }
