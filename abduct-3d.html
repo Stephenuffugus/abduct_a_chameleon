@@ -144,6 +144,16 @@
     padding:11px 20px; min-height:48px; display:flex; align-items:center;
     color:var(--txt); font-size:13px; font-weight:700 }
   body.touch.portrait #rotate{ display:flex }
+  /* The seeker's blindfold during the hider head start. Opaque on purpose: the
+     brief is that the seeker "is not allowed to see anything" until the timer is
+     up, so a dim overlay would not do — you must not be able to read the map. */
+  #hidewait{ position:fixed; inset:0; z-index:64; display:none; flex-direction:column; gap:10px;
+    align-items:center; justify-content:center; background:#04070f; text-align:center; padding:20px }
+  #hidewait.on{ display:flex }
+  #hidewait .eye{ font-size:40px; opacity:.85 }
+  #hidewait .lead{ font-size:19px; font-weight:800; letter-spacing:.06em; color:var(--amber) }
+  #hidewait .sub{ color:var(--muted); font-size:13px; max-width:280px; line-height:1.5 }
+  #hidewait .num{ font-size:44px; font-weight:900; color:var(--txt); font-variant-numeric:tabular-nums }
   #tapStart{ position:fixed; inset:0; z-index:65; display:none; flex-direction:column; gap:12px;
     align-items:center; justify-content:center; background:rgba(8,12,25,.92); text-align:center }
   #tapStart .big{ font-size:22px; font-weight:800; letter-spacing:.1em; color:var(--amber) }
@@ -203,6 +213,10 @@
   <div id="rotate"><div class="ph">📱</div><div style="font-weight:700">Turn your phone sideways</div>
     <div style="color:var(--muted);font-size:12px">this game is played in landscape</div>
     <div class="anyway">Already sideways? Tap to play &rsaquo;</div></div>
+  <div id="hidewait"><div class="eye">🛸</div>
+    <div class="lead">HOLD POSITION</div>
+    <div class="num" id="hidewaitNum">20</div>
+    <div class="sub">The chameleons are picking their spots. Your scanners come online when the countdown ends.</div></div>
   <div id="tapStart"><div class="big">▶ TAP TO PLAY</div><div class="sm">goes fullscreen · sound on</div></div>
 
   <div id="dropzone">Release to load map</div>
@@ -295,6 +309,11 @@ const UFO_MIN_ALT = 9, UFO_MAX_ALT = 42;
 const SENS = 0.0022;
 const BEAM_RADIUS = 4.2;        // horizontal catch radius under the UFO
 const LOCK_TIME = 2.2;          // sec of sustained beam to abduct
+/* Stephen 7/28: "in a normal game the hider has a certain amount of time to hide
+   before the seeker is allowed to see anything until the time limit for the
+   hider is up." HIDE_SECONDS is that head start: hiders move from the first
+   frame, the UFO is blind and grounded until it expires. */
+const HIDE_SECONDS = 20;
 const ROUND_SECONDS = 150;
 const INTERMISSION = 7;
 const CAMO_RAMP = 1.4;          // sec to full camouflage while still
@@ -1609,7 +1628,8 @@ function startRound(){
   }
   for(const k in locks) delete locks[k];
   setState('winner', null, true);
-  setState('roundEnds', Date.now()+ROUND_SECONDS*1000, true);
+  setState('hideEnds', Date.now()+HIDE_SECONDS*1000, true);
+  setState('roundEnds', Date.now()+(HIDE_SECONDS+ROUND_SECONDS)*1000, true);
   setState('roundId', rid, true);
   setState('phase', 'playing', true);
 }
@@ -1622,7 +1642,11 @@ function endRound(winner){
   setState('interEnds', Date.now()+INTERMISSION*1000, true);
   setState('phase', 'intermission', true);
 }
+/* seconds of hider head start left, 0 once the seekers are loose */
+function hideLeft(){ const e=getState('hideEnds')||0; return Math.max(0,(e-Date.now())/1000); }
+function seekerBlind(){ return myRole()==='seeker' && hideLeft()>0; }
 function detectAbductions(dt){
+  if(hideLeft()>0) return;              // nobody gets caught during the head start
   const seekers = players.filter(p=> p.state.getState('role')==='seeker' && p.state.getState('beam'));
   const hiders  = players.filter(p=> p.state.getState('role')==='hider' && !p.state.getState('abducted'));
   for(const h of hiders){
@@ -1682,7 +1706,7 @@ function clientTick(dt){
     else beamEnergy = Math.min(1, beamEnergy + dt/7);
   }
   const phNow = getState('phase') || 'waiting';                  // solo rooms never write a phase — undefined IS waiting
-  const active = (phNow==='playing' || phNow==='waiting') && !abd;
+  const active = (phNow==='playing' || phNow==='waiting') && !abd && !seekerBlind();
   const canControl = document.pointerLockElement === renderer.domElement || gp.present || touch.on;
   if(canControl){
     applyGamepadLook(dt, role, abd);
@@ -1914,6 +1938,15 @@ const $ = id => document.getElementById(id);
 function fmt(sec){ sec=Math.max(0,Math.ceil(sec)); return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0'); }
 
 function updateHUD(role, abd){
+  /* seeker blindfold + the hider's own countdown */
+  (function(){
+    const hw=$('hidewait'); if(!hw) return;
+    const left=hideLeft(), on=(role==='seeker' && left>0 && !abd);
+    hw.classList.toggle('on', on);
+    // keep the number fresh whenever a head start is running, not only while the
+    // blindfold happens to be up, so it can never be caught showing a stale value
+    if(left>0){ const n=$('hidewaitNum'); if(n) n.textContent=String(Math.ceil(left)); }
+  })();
   const phase = getState('phase') || 'waiting';
   const hiders = players.filter(p=> p.state.getState('role')==='hider');
   const alive  = hiders.filter(p=> !p.state.getState('abducted')).length;
@@ -1949,7 +1982,12 @@ function updateHUD(role, abd){
 
   // timer
   const tEl = $('timer');
-  if(phase==='playing'){ const left=((getState('roundEnds')||0)-Date.now())/1000;
+  const hl=hideLeft();
+  if(phase==='playing' && hl>0){
+    if(role==='hider') showBanner('','Hide! '+Math.ceil(hl),'The seekers are blind until this hits zero. Match the ground and hold still.');
+    else showBanner('','Scanners offline','The chameleons are choosing their spots.');
+  }
+  else if(phase==='playing'){ const left=((getState('roundEnds')||0)-Date.now())/1000;
     tEl.classList.remove('hidden'); $('timerText').textContent=fmt(left); tEl.classList.toggle('low', left<=20); }
   else tEl.classList.add('hidden');
 
