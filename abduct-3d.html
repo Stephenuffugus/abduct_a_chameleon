@@ -1223,8 +1223,23 @@ function paintStroke(px, py){
   myBody.paint.tex.needsUpdate = true; paintDirty = true;
   refreshBodyPreview();
 }
+/* Publish throttle (skip/teleport hunt, 7/30): every stroke used to ship a
+   full PNG data-URL through the network state - several a second while
+   painting - and every peer paid a main-thread decode for each. Now at most
+   one publish per 900ms with a guaranteed trailing send, so the last stroke
+   always lands but the wire and the other phones stop hitching. */
+let _ptexLastSend = 0, _ptexTrailing = null;
 function publishPaint(force){
   if(!myBody || (!paintDirty && !force)) return;
+  const now = performance.now();
+  if(now - _ptexLastSend < 900){
+    if(!_ptexTrailing){
+      _ptexTrailing = setTimeout(()=>{ _ptexTrailing = null; publishPaint(true); },
+        Math.max(50, 900 - (now - _ptexLastSend)));
+    }
+    return;
+  }
+  _ptexLastSend = now;
   paintDirty = false;
   wetUntil = performance.now() + 15000;                          // P34: fresh coat = wet coat
   myAvg = canvasAvg(myBody.paint.cv);
@@ -1848,9 +1863,22 @@ function clientTick(dt){
       if(p.state!==me){                                        // apply their published body paint
         const pt = p.state.getState('ptex');
         if(pt && pt !== p.lastPtex){ p.lastPtex = pt;
-          const img = new Image();
-          img.onload = ()=>{ p.paint.ctx.drawImage(img,0,0,128,128); p.paint.tex.needsUpdate = true; };
-          img.src = pt; }
+          // decode off the main thread where possible, and if several paints
+          // arrive while one decodes, only the newest is applied (stale
+          // decodes are dropped) - this was a per-stroke main-thread decode
+          if(window.createImageBitmap && window.fetch){
+            fetch(pt).then(r=>r.blob()).then(b=>createImageBitmap(b)).then(bmp=>{
+              if(p.lastPtex !== pt) return;                    // a newer coat superseded this one
+              p.paint.ctx.drawImage(bmp,0,0,128,128); p.paint.tex.needsUpdate = true;
+              bmp.close && bmp.close();
+            }).catch(()=>{});
+          } else {
+            const img = new Image();
+            img.onload = ()=>{ if(p.lastPtex !== pt) return;
+              p.paint.ctx.drawImage(img,0,0,128,128); p.paint.tex.needsUpdate = true; };
+            img.src = pt;
+          }
+        }
       }
       const cl = (p.state===me) ? camoLevel : (p.state.getState('camo')||0);
       let op = 1 - cl*(1-CAMO_MIN_OPACITY);
