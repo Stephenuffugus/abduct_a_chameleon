@@ -682,6 +682,85 @@ function buildWorld(map){
 
   for(const o of (map.objects||[])) addCover(o.type, o.x, o.y);
 
+  /* ── PAINTABLE GROUND COVER ──────────────────────────────────────────
+     Penny's note on round one was that there was nothing to paint. She was
+     right, and the reason was structural: the only paint targets in the world
+     were the big cover objects, and the grass scatter below is explicitly
+     dressing that registers nothing. So in the open you could stand in a
+     meadow with no colour within reach and no way to blend.
+     This pass scatters real plants and REGISTERS EACH ONE as a paint target,
+     tinted so the colour you can match is exactly the colour you can see.
+     Seeded off the cell, so every client in a multiplayer round grows the
+     same garden without a byte crossing the wire. */
+  const PAINTABLE = {
+    grass:  ['bush','bush_small','flower_y','mushrooms','log'],
+    moss:   ['bush','bush_big','mushroom','mushrooms','moss_hang'],
+    foliage:['bush_big','bush','flower_p','flower_r','mushroom'],
+    dirt:   ['bush_small','log','mushroom'],
+    sand:   ['cactus_s','rock_a','bush_small'],
+    mud:    ['bush_small','mushrooms','log'],
+    water:  ['lily','lily_big']
+  };
+  /* one honest colour per plant, matching how the model reads on screen */
+  const PAINT_HUE = { bush:0x3f6d33, bush_small:0x4c7d3c, bush_big:0x335c2c,
+    flower_p:0x8a63c8, flower_r:0xc2453f, flower_y:0xd8bf3c,
+    mushroom:0xb04038, mushrooms:0xc0a878, log:0x6b4b30,
+    moss_hang:0x4a6b3a, lily:0x4e8f5a, lily_big:0x3f7d4c,
+    cactus_s:0x3f7a45, rock_a:0x6a6f78 };
+  let paintDeco = 0, PAINT_CAP = 260;
+  for(let y=0;y<mapRows && paintDeco<PAINT_CAP;y++) for(let x=0;x<mapCols && paintDeco<PAINT_CAP;x++){
+    const kinds = PAINTABLE[map.terrain[y][x]]; if(!kinds) continue;
+    const h = hash2(x*13+7, y*17+11);
+    /* clustered rather than evenly sprinkled: a clump reads as a place to hide,
+       an even sprinkle reads as wallpaper */
+    const clump = hash2(x>>1, y>>1) % 100 < 46;
+    if((h%1000)/1000 >= (clump ? 0.34 : 0.06)) continue;
+    const kind = kinds[(h>>5)%kinds.length];
+    const hue = PAINT_HUE[kind] || 0x4c7d3c;
+    const m = new THREE.MeshLambertMaterial({ color: hue });
+    const pr = propMesh(kind, m, 0.55 + ((h>>3)%50)/100);
+    if(!pr) continue;
+    const wx = (x+0.5-mapCols/2)*TILE + (((h>>8)%100)/100-0.5)*TILE*0.55;
+    const wz = (y+0.5-mapRows/2)*TILE + (((h>>12)%100)/100-0.5)*TILE*0.55;
+    pr.node.position.set(wx, pr.node.position.y, wz);
+    pr.node.rotation.y = (h%628)/100;
+    worldGroup.add(pr.node);
+    addTarget(wx, wz, hue, 2.2);      /* ← the whole point: now it is paintable */
+    paintDeco++;
+  }
+
+  /* Second pass: the clumped scatter above is pretty but it leaves bare ground,
+     and MEASURED on a real map it left 33 percent of walkable cells with less
+     than three colours in reach and some with none at all. A hider standing
+     there has no move. So walk the walkable cells and plant into the gaps
+     specifically, which fixes the worst case by construction rather than by
+     turning the density up everywhere and paying for it in draw calls. */
+  const FILL_R = TILE * 3, FILL_CAP = 240;
+  let filled = 0;
+  const SOLID_FILL = { void:1, wall:1 };
+  for(let y=1;y<mapRows-1 && filled<FILL_CAP;y++) for(let x=1;x<mapCols-1 && filled<FILL_CAP;x++){
+    const t = map.terrain[y][x];
+    if(SOLID_FILL[t]) continue;
+    const kinds = PAINTABLE[t] || PAINTABLE.grass;
+    const w = cellToWorld(x,y);
+    let near = 0;
+    for(const pt of paintTargets){ const dx=pt.x-w.x, dz=pt.z-w.z;
+      if(dx*dx+dz*dz < FILL_R*FILL_R){ near++; if(near>=3) break; } }
+    if(near>=3) continue;
+    const h = hash2(x*29+3, y*31+13);
+    const kind = kinds[(h>>7)%kinds.length];
+    const hue = PAINT_HUE[kind] || 0x4c7d3c;
+    const pr = propMesh(kind, new THREE.MeshLambertMaterial({ color: hue }), 0.5 + ((h>>3)%45)/100);
+    if(!pr) continue;
+    const wx = w.x + (((h>>8)%100)/100-0.5)*TILE*0.5;
+    const wz = w.z + (((h>>12)%100)/100-0.5)*TILE*0.5;
+    pr.node.position.set(wx, pr.node.position.y, wz);
+    pr.node.rotation.y = (h%628)/100;
+    worldGroup.add(pr.node);
+    addTarget(wx, wz, hue, 2.2);
+    filled++;
+  }
+
   // P37: decorative grass tufts on soft ground — dressing only, never paint targets or LOS
   const DECO_ON = { grass:0.10, moss:0.10, foliage:0.14, dirt:0.03, sand:0.02, mud:0.04 };
   let deco = 0;
@@ -745,13 +824,43 @@ function maybePattern(baseMat, hues, gx, gy, chance){
   return { m, avg: mixHex(c1, c2) };
 }
 function addTarget(x, z, colorHex, r){ paintTargets.push({ x, z, color:new THREE.Color(colorHex), r:r||2.6 }); }
+/* measurement hook: how much of the walkable map is actually within reach of
+   something to paint. Penny's round-one note was that there was nothing, and
+   an assertion beats an opinion. Reports the worst case, not the average. */
+window.__aac3dPaint = function(){
+  if(!MAP || !MAP.terrain) return null;
+  const SOLID = { void:1, wall:1 };
+  let walkable = 0, covered = 0, worst = 1e9;
+  for(let y=0;y<mapRows;y++) for(let x=0;x<mapCols;x++){
+    const t = MAP.terrain[y][x]; if(SOLID[t]) continue;
+    walkable++;
+    const w = cellToWorld(x,y);
+    let n = 0, near = 1e9;
+    for(const p of paintTargets){
+      const dx=p.x-w.x, dz=p.z-w.z, d=Math.sqrt(dx*dx+dz*dz);
+      if(d < TILE*4){ n++; if(d<near) near=d; }
+    }
+    if(n>=3) covered++; else if(n<worst) worst=n;
+  }
+  return { map: MAP.name||'?', targets: paintTargets.length, walkable,
+           coveredPct: Math.round(covered/Math.max(1,walkable)*100),
+           worstCellTargets: worst===1e9?3:worst };
+};
 function addCover(type, gx, gy){
   const w = cellToWorld(gx, gy); const g = new THREE.Group(); g.position.set(w.x, 0, w.z);
   if(type==='tree'){
     const lm = instMat(COVER_MAT.leaf, LEAF_HUES, gx, gy);
-    const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.36,2.4,7), COVER_MAT.trunk); tr.position.y=1.2;
-    const lf = new THREE.Mesh(new THREE.ConeGeometry(1.5,3.2,9), lm); lf.position.y=3.4;
-    g.add(tr, lf); losMeshes.push(tr, lf); addTarget(w.x, w.z, lm.color.getHex(), 2.8);
+    /* four silhouettes, chosen by cell so a wood is not one tree stamped over
+       and over. The cone fallback stays for a missing asset. */
+    const TK = ['tree_a','tree_b','tree_c','tree_d'];
+    const pr = propMesh(TK[hash2(gx+5,gy+9)%TK.length], lm, 5.2 + (hash2(gx,gy)%18)/10);
+    if(pr){ pr.node.rotation.y=(hash2(gx,gy)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
+    else{
+      const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.36,2.4,7), COVER_MAT.trunk); tr.position.y=1.2;
+      const lf = new THREE.Mesh(new THREE.ConeGeometry(1.5,3.2,9), lm); lf.position.y=3.4;
+      g.add(tr, lf); losMeshes.push(tr, lf);
+    }
+    addTarget(w.x, w.z, lm.color.getHex(), 2.8);
   }else if(type==='boulder'){
     const rm = instMat(COVER_MAT.rock, ROCK_HUES, gx, gy);
     const pr = propMesh('boulder', rm, 1.7);
@@ -941,7 +1050,22 @@ function setCharAction(p, name){
 const PROP_URLS = { crate:'assets/props/crate.glb', crates:'assets/props/crates.glb',
   barrel:'assets/props/barrel.glb', boulder:'assets/props/boulder.glb',
   pillar:'assets/props/pillar.glb', chest:'assets/props/chest.glb', table:'assets/props/table.glb',
-  statue:'assets/props/statue.glb', grass:'assets/props/grass.glb', grass_small:'assets/props/grass_small.glb' };
+  statue:'assets/props/statue.glb', grass:'assets/props/grass.glb', grass_small:'assets/props/grass_small.glb',
+  /* Kenney Nature Kit (CC0). The dungeon props are indoor pieces and this is a
+     moonlit forest, which is why the world had so little to look at. */
+  tree_a:'assets/nature/tree_default.glb', tree_b:'assets/nature/tree_oak.glb',
+  tree_c:'assets/nature/tree_detailed.glb', tree_d:'assets/nature/tree_fat.glb',
+  tree_dead:'assets/nature/tree_oak_fall.glb', tree_pine:'assets/nature/tree_pineTallA.glb',
+  rock_a:'assets/nature/rock_largeA.glb', rock_b:'assets/nature/rock_largeB.glb',
+  rock_c:'assets/nature/rock_largeC.glb', rock_tall:'assets/nature/rock_tallA.glb',
+  cactus_s:'assets/nature/cactus_short.glb', cactus_t:'assets/nature/cactus_tall.glb',
+  bush:'assets/nature/plant_bush.glb', bush_small:'assets/nature/plant_bushSmall.glb',
+  bush_big:'assets/nature/plant_bushDetailed.glb',
+  flower_p:'assets/nature/flower_purpleA.glb', flower_r:'assets/nature/flower_redA.glb',
+  flower_y:'assets/nature/flower_yellowA.glb',
+  mushroom:'assets/nature/mushroom_red.glb', mushrooms:'assets/nature/mushroom_tanGroup.glb',
+  lily:'assets/nature/lily_small.glb', lily_big:'assets/nature/lily_large.glb',
+  moss_hang:'assets/nature/hanging_moss.glb', log:'assets/nature/log.glb' };
 const DECO_KEEP_UV = new Set(['grass','grass_small']);   // deco keeps its baked colormap look
 const propLib = {};
 async function loadProps(){
