@@ -30,6 +30,7 @@
 <body>
 <canvas id="game"></canvas>
 <input id="hex" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="7" />
+<script src="qr.js"></script><!-- vendored qrcode-generator (MIT, Kazuhiko Arase) for the host-screen join QR -->
 <script>
 "use strict";
 /* =====================================================================
@@ -2599,7 +2600,13 @@ const NET={ ws:null, on:false, role:null, code:null, peer:false, status:'off', e
 function mpServerUrl(){
   try{ const q=new URLSearchParams(location.search).get('mp'); if(q) return q; }catch(_){}
   if(location.protocol==='file:') return 'ws://localhost:8080/ws';
-  return (location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
+  // played from the relay mirror or a dev box: same host owns the /ws
+  if(/onrender\.com$/.test(location.hostname) || location.hostname==='localhost' || location.hostname==='127.0.0.1')
+    return (location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
+  // played from github.io / the portal / anywhere else: Stephen's deployed
+  // relay (Render free tier - first connect after a quiet spell waits ~30s
+  // while the service wakes)
+  return 'wss://abduct-a-chameleon.onrender.com/ws';
 }
 function netConnect(then){
   if(NET.ws && NET.on){ then&&then(); return; }
@@ -2745,6 +2752,25 @@ function netGuestEnd(d){
   appState='SUMMARY'; menuIndex=0; SFX[win?'win':'lose']();
 }
 // ---- lobby screens ----
+// host-screen QR (vendored qr.js): cached per room code
+let _qrCache={ code:null, canvas:null };
+function qrCanvasFor(code){
+  if(_qrCache.code===code) return _qrCache.canvas;
+  let cv=null;
+  try{
+    const q=qrcode(0,'M');
+    q.addData('https://abduct-a-chameleon.onrender.com/?join='+code);
+    q.make();
+    const n=q.getModuleCount(), px=4, pad=4, size=n*px+pad*2;
+    cv=document.createElement('canvas'); cv.width=size; cv.height=size;
+    const c2=cv.getContext('2d');
+    c2.fillStyle='#fff'; c2.fillRect(0,0,size,size);
+    c2.fillStyle='#000';
+    for(let r=0;r<n;r++)for(let c=0;c<n;c++) if(q.isDark(r,c)) c2.fillRect(pad+c*px, pad+r*px, px, px);
+  }catch(_){ cv=null; }
+  _qrCache={ code:code, canvas:cv };
+  return cv;
+}
 function drawOnline(){ const cx=vpW/2; navList=[];
   txt('PLAY ONLINE', cx, vpH*0.14, 24, COL.txt,'center','800');
   txt('one of you hides and paints · the other flies the ship and hunts', cx, vpH*0.14+24, 11, COL.muted,'center','500');
@@ -2753,7 +2779,15 @@ function drawOnline(){ const cx=vpW/2; navList=[];
   else if(NET.role==='host' && NET.code && !NET.peer){
     txt('YOUR ROOM CODE', cx, by, 11, COL.muted,'center','700');
     txt(NET.code.split('').join(' '), cx, by+40, 44, COL.amber,'center','800');
-    txt('the hunter joins with this code — you will HIDE', cx, by+74, 11, COL.muted,'center','500'); by+=104;
+    txt('the hunter joins with this code — you will HIDE', cx, by+74, 11, COL.muted,'center','500'); by+=90;
+    // the QR carries the whole join: scan on the other phone, land in the
+    // room. Encodes the relay mirror URL + ?join=CODE.
+    const qc=qrCanvasFor(NET.code);
+    if(qc){ const qs=Math.min(140, vpW*0.36);
+      ctx.fillStyle='#fff'; rr(cx-qs/2-5, by-5, qs+10, qs+10, 8); ctx.fill();
+      ctx.drawImage(qc, cx-qs/2, by, qs, qs);
+      txt('or scan on the other phone', cx, by+qs+16, 10, COL.muted,'center','500');
+      by+=qs+34; }
     navBtn('Cancel', bx,by,bw,44, ()=>{ netLeave(); }, {size:14});
   }
   else if(NET.status==='loading'){ txt('waiting for the hunter to load…', cx, by+20, 13, COL.muted,'center','600'); }
@@ -3679,6 +3713,36 @@ try{ window.__aac = { get state(){ return { appState, roundState,
       moveUfo(i,x,y){ const u=round&&round.ufos[i]; if(u){ u.x=x; u.y=y; } },
       covers(){ return coverObjects.map(o=>({type:o.type,wx:o.wx,wy:o.wy})); } } }; }catch(_){}
 boot();
+
+/* ?join=CODE — the QR's landing path: scanned on the second phone, this
+   opens the game already joining the host's room. Same send the manual
+   code entry performs; the alphabet excludes I and O like the keypad. */
+(function(){
+  try{
+    const p=new URLSearchParams(location.search);
+    const j=p.get('join');
+    if(j && /^[A-HJ-NP-Z]{4}$/i.test(j)){
+      const code=j.toUpperCase();
+      setTimeout(function(){
+        NET.codeInput=code;
+        appState='ONLINE'; menuIndex=0;
+        netConnect(function(){
+          try{ NET.ws.send(JSON.stringify({t:'join', code:code})); }catch(_){}
+        });
+      }, 700);
+      return;
+    }
+    // ?host=1 — deep-link straight to hosting a room (the QR's twin)
+    if(p.get('host')==='1'){
+      setTimeout(function(){
+        appState='ONLINE'; menuIndex=0;
+        netConnect(function(){
+          try{ NET.ws.send(JSON.stringify({t:'host'})); }catch(_){}
+        });
+      }, 700);
+    }
+  }catch(_){}
+})();
 
 </script>
 </body>
