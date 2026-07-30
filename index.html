@@ -30,7 +30,8 @@
 <body>
 <canvas id="game"></canvas>
 <input id="hex" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="7" />
-<script src="qr.js"></script><!-- vendored qrcode-generator (MIT, Kazuhiko Arase) for the host-screen join QR -->
+<script src="qr.js"></script>
+<script src="pages/files-1.js"></script><!-- THE ABDUCTION FILES page bank; see docs/ABDUCTION-FILES-CANON.md --><!-- vendored qrcode-generator (MIT, Kazuhiko Arase) for the host-screen join QR -->
 <script>
 "use strict";
 /* =====================================================================
@@ -2402,7 +2403,14 @@ function drawHuntHUD(){
     panel(vpW/2-150, 64, 300, 46, 10);
     txt('THE CHAMELEON IS HIDING', vpW/2, 84, 13, COL.amber,'center','800');
     txt('your ship lifts off in '+Math.ceil(round.hide2pNet)+'s', vpW/2, 101, 10, COL.muted,'center','600');
+    /* the wait is reading time. Opens itself once per hide phase; CLOSE gives
+       the map back and READ THE FILE brings it round again. */
+    if(!round.filesOffered){ round.filesOffered=true; filesShow(); }
+    if(filesOpen) drawFilesOverlay(round.hide2pNet);
+    else uiBtn('READ THE CASE FILE', vpW/2-90, 116, 180, 48, ()=>{ filesShow(); }, {rad:9,size:11,color:COL.amber,stroke:COL.amber});
   }
+  /* ⛔ reading can never cost you the round */
+  else if(filesOpen) filesClose();
   { // the scanner: solo hunts always; online with LIMITED charges that expose
   const scansLeft = round.online ? (NET.scans|0) : 1;
   const right=settings.handed!=='left', bs=66, bx=right?vpW-14-bs:14, by=vpH-bs-14, ready=player.pulseCd<=0 && scansLeft>0;
@@ -3215,6 +3223,7 @@ function menuConfirm(){ if(showHelp){ showHelp=false; return; }
   const n=navList[menuIndex]; if(n){ n.fn(); } }
 function menuBack(){ if(showHelp){ showHelp=false; SFX.back(); return; }
   if(appState==='SETTINGS'){ closeSettings(); return; }
+  if(appState==='FILES'){ if(filesOpen){ filesClose(); SFX.back(); return; } appState='TITLE'; menuIndex=0; SFX.back(); return; }
   if(appState==='WARDROBE'){ appState='TITLE'; menuIndex=0; SFX.back(); return; }
   if(appState==='ONLINE'){ netLeave(); appState='TITLE'; menuIndex=0; SFX.back(); return; }
   if(appState==='ONLINE_JOIN'){ appState='ONLINE'; menuIndex=0; SFX.back(); return; } SFX.back();
@@ -3240,6 +3249,7 @@ function drawMenu(){ applyScreenTransform(); drawMenuBg(); navList=[];
   if(FX_MOTION>0 && ta<1) ctx.translate(0,(1-easeOutCubic(ta))*14);
   if(appState==='BOOT') drawBoot();
   else if(appState==='TITLE') drawTitle();
+  else if(appState==='FILES') drawFilesScreen();
   else if(appState==='MODE_SELECT') drawModeSelect();
   else if(appState==='LEVEL_SELECT') drawLevelSelect();
   else if(appState==='DIFFICULTY_SELECT') drawDifficulty();
@@ -3254,6 +3264,91 @@ function drawMenu(){ applyScreenTransform(); drawMenuBg(); navList=[];
 }
 function drawBoot(){ txt('ABDUCT A CHAMELEON', vpW/2, vpH/2-10, 26, COL.amber,'center','800');
   txt('loading…', vpW/2, vpH/2+24, 13, COL.muted,'center','500'); }
+/* ══════════════════════════════════════════════════════════════════════
+   THE ABDUCTION FILES
+   The hunter spends sixty seconds grounded while the chameleon hides. That
+   used to be sixty seconds of a small banner. Now it is a page of the case
+   file: why the Vell cross all that dark to lift something the size of a
+   spoon. A thousand page numbers exist and the bank fills in batches, so the
+   count on screen is honest about what has been recovered.
+   Reading can never cost you the round: the overlay force closes the instant
+   the ship lifts, and the liftoff clock sits on the panel the whole time. */
+const AAC_FILES_TOTAL = 1000;
+const AAC_READ_KEY = 'aac.files.v1';
+let filesRead = (function(){ try{ const r=JSON.parse(localStorage.getItem(AAC_READ_KEY)||'[]'); return new Set(Array.isArray(r)?r:[]); }catch(_){ return new Set(); } })();
+function filesSaveRead(){ try{ localStorage.setItem(AAC_READ_KEY, JSON.stringify([...filesRead])); }catch(_){} }
+function filesBank(){ return (typeof window!=='undefined' && window.AAC_FILES) ? window.AAC_FILES : []; }
+const AAC_THREAD_NAME = { FR:'FIELD REPORT', SF:'SUBJECT FILE', HW:'THE HOMEWORLD', IW:'INTERCEPTED WHISPER' };
+let filesOpen=false, filesPage=null, filesScroll=0, filesHits=[];
+function filesPick(){
+  const bank=filesBank(); if(!bank.length) return null;
+  const fresh=bank.filter(p=>!filesRead.has(p.n));
+  const pool=fresh.length?fresh:bank;                 /* read them all? start again */
+  const p=pool[Math.floor(Math.random()*pool.length)];
+  if(p && !filesRead.has(p.n)){ filesRead.add(p.n); filesSaveRead(); }
+  return p;
+}
+function filesShow(){ if(!filesBank().length) return; filesPage=filesPick(); filesOpen=!!filesPage; }
+function filesClose(){ filesOpen=false; }
+/* word wrap that measures with the real font, so a long page never spills */
+function filesWrap(body,maxW,size){
+  ctx.font='500 '+(size*hudScale)+'px system-ui,sans-serif';
+  const words=String(body).split(/\s+/); const lines=[]; let line='';
+  for(const w of words){ const t=line?line+' '+w:w;
+    if(ctx.measureText(t).width>maxW && line){ lines.push(line); line=w; } else line=t; }
+  if(line) lines.push(line);
+  return lines;
+}
+function drawFilesOverlay(secsLeft){
+  const p=filesPage; if(!p) return;
+  const w=Math.min(360,vpW-24), x=(vpW-w)/2, pad=16;
+  const size=Math.min(13, Math.max(11, vpW/30));
+  const lines=filesWrap(p.b, w-pad*2, size);
+  const h=Math.min(vpH-140, 96+lines.length*(size*1.5)+58);
+  const y=Math.max(52,(vpH-h)/2-20);
+  ctx.fillStyle='rgba(6,9,16,0.55)'; ctx.fillRect(0,0,vpW,vpH);
+  panel(x,y,w,h,12);
+  ctx.strokeStyle='rgba(242,179,61,0.5)'; ctx.lineWidth=1; rr(x,y,w,h,12); ctx.stroke();
+  txt('CASE FILE \u00b7 PAGE '+p.n+' OF '+AAC_FILES_TOTAL, x+w/2, y+20, 9, COL.muted,'center','700');
+  txt(AAC_THREAD_NAME[p.t]||'CASE FILE', x+w/2, y+36, 9, COL.cyan,'center','700');
+  txt(p.h, x+w/2, y+58, Math.min(15,size+2), COL.amber,'center','800');
+  let ty=y+80;
+  for(const ln of lines){ txt(ln, x+pad, ty, size, COL.txt,'left','500'); ty+=size*1.5; }
+  /* the clock belongs to the hide phase; browsing the shelf later has no clock */
+  if(secsLeft!=null) txt('your ship lifts off in '+Math.max(0,Math.ceil(secsLeft))+'s', x+w/2, y+h-34, 10, COL.muted,'center','600');
+  else txt('recovered page '+p.n+' of '+AAC_FILES_TOTAL, x+w/2, y+h-34, 10, COL.muted,'center','600');
+  const bw=(w-pad*2-10)/2;
+  uiBtn('NEXT PAGE', x+pad, y+h-26, bw, 48, ()=>{ const n=filesPick(); if(n)filesPage=n; SFX.ui&&SFX.ui(); }, {rad:9,size:11,color:COL.amber,stroke:COL.amber});
+  uiBtn('CLOSE', x+pad+bw+10, y+h-26, bw, 48, ()=>{ filesClose(); SFX.back&&SFX.back(); }, {rad:9,size:11});
+}
+function drawFilesScreen(){
+  const cx=vpW/2, bank=filesBank();
+  const have=bank.filter(p=>filesRead.has(p.n)).length;
+  txt('THE ABDUCTION FILES', cx, vpH*0.11, 22, COL.txt,'center','800');
+  txt(have+' of '+AAC_FILES_TOTAL+' pages recovered', cx, vpH*0.11+22, 11, COL.muted,'center','500');
+  txt('found one page at a time, while the chameleons hide', cx, vpH*0.11+38, 10, 'rgba(140,150,175,0.75)','center','500');
+  const listTop=vpH*0.11+56, listH=vpH-listTop-70;
+  const rowH=34, w=Math.min(340,vpW-40), x=cx-w/2;
+  const sorted=bank.slice().sort((a,b)=>a.n-b.n);
+  const maxScroll=Math.max(0, sorted.length*rowH-listH);
+  filesScroll=clamp(filesScroll,0,maxScroll);
+  filesHits=[];
+  ctx.save(); ctx.beginPath(); ctx.rect(x,listTop,w,listH); ctx.clip();
+  for(let i=0;i<sorted.length;i++){
+    const p=sorted[i], ry=listTop+i*rowH-filesScroll;
+    if(ry>listTop+listH || ry+rowH<listTop) continue;
+    const got=filesRead.has(p.n);
+    panel(x,ry+2,w,rowH-6,7);
+    txt(String(p.n).padStart(4,'0'), x+12, ry+rowH/2, 10, got?COL.cyan:'rgba(120,130,155,0.6)','left','700');
+    txt(got?p.h:'not yet recovered', x+52, ry+rowH/2, 11, got?COL.txt:'rgba(120,130,155,0.6)','left', got?'600':'500');
+    if(got) filesHits.push({x:x,y:ry+2,w:w,h:rowH-6,fn:()=>{ filesPage=p; filesOpen=true; SFX.ui&&SFX.ui(); }});
+  }
+  ctx.restore();
+  for(const hh of filesHits) roundHits.push(hh);
+  if(!bank.length) txt('the bank is still being written', cx, listTop+40, 12, COL.muted,'center','500');
+  navBtn('\u2039  Back', cx-Math.min(150,vpW*0.35), vpH-56, Math.min(300,vpW*0.7), 44, ()=>{ gotoTitle(); }, {size:14});
+  if(filesOpen && filesPage) drawFilesOverlay(null);
+}
 function drawTitle(){
   const cx=vpW/2; hueAnim+=0;
   // P10: our actual characters — the person hider slowly repainting to the ground hue, waving; the alien under its ship
@@ -3277,6 +3372,8 @@ function drawTitle(){
   const hw=(bw-10)/2;
   navBtn('👕  Wardrobe', bx,by,hw,Math.round(44*k), ()=>{ appState='WARDROBE'; menuIndex=0; SFX.ui(); }, {size:14});
   navBtn('⚙  Settings', bx+hw+10,by,hw,Math.round(44*k), ()=>{ openSettings('TITLE'); }, {size:14}); by+=Math.round(54*k);
+  navBtn('\u{1F5C2}  The Files', bx,by,hw,Math.round(42*k), ()=>{ appState='FILES'; filesScroll=0; filesOpen=false; SFX.ui(); }, {size:13});
+  by+=Math.round(50*k);
   navBtn('How to Play', bx,by,hw,Math.round(42*k), ()=>{ showHelp=true; SFX.ui(); }, {size:13});
   navBtn(settings.muted?'🔇  Muted':'🔊  Sound', bx+hw+10,by,hw,Math.round(42*k), ()=>{ setMuted(!settings.muted); }, {size:13});
   if(EMBED){                                                        // P22: inside the portal iframe
