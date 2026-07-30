@@ -89,6 +89,18 @@ const BEAM_R = 26, BEAM_BREAK_R = 64, BEAM_HOLD_C = 0.05, REACQUIRE_TIME = 0.9, 
 const BEAM_SLOW = 0.6;
 const TURN_RATE = 3.2, ARRIVE_DT = 0.25, BELIEF_TRACK = 6.0;
 const SPAWN_GRACE = 1.5, COORD_RANGE = 480;
+/* 1v1 round shape (Stephen + Penny live playtest 7/30): a real hide phase
+   before the hunt (the hunter is frozen + the survive clock waits), a
+   tractor slow under the ship, and the scanner returns with LIMITED charges
+   that EXPOSE - a perfectly blended hider could never be beamed even when
+   found, which made human-vs-human catches impossible. */
+/* hider's head start: move, paint, settle. 60 by default; the host can set
+   ?hide2p=N (5..300) - the first step toward host-configured rooms. */
+const HIDE_2P_S = (function(){ try{ const v=parseInt(new URLSearchParams(location.search).get('hide2p'),10);
+  if(v>=5 && v<=300) return v; }catch(_){} return 60; })();
+const NET_SCANS = 3;             // hunter's scan charges per round
+const EXPOSE_S  = 6;             // seconds a ping keeps a hider beamable
+function hide2pLeft(){ return round&&round.hide2pEnds ? Math.max(0,(round.hide2pEnds-nowMs())/1000) : 0; }
 // per-difficulty
 const DIFF = {
   EASY:   { UFO_COUNT:2, SCAN_R:144, PATROL_SPD:90,  SCAN_SPD:36, INVEST_SPD:100,
@@ -934,6 +946,11 @@ function inRect(sx,sy,r){ return sx>=r.x && sx<=r.x+r.w && sy>=r.y && sy<=r.y+r.
 
 function gatherInput(){
   if(ctrlMode==='PAINT' && !studio.open){ ctrlMode='MOVE'; camLock=false; }   // heal any close-without-exit desync (never leave the hider rooted)
+  /* sticky-stick heal (playtest 7/30: "controls persist after i went a
+     direction"): when the browser eats a pointerup (edge swipes, sheets),
+     the joystick survived with stale dx/dy and the character kept walking.
+     If its pointer is no longer tracked, the stick is dead - drop it. */
+  if(joystick && !pointers.has(joystick.id)) joystick=null;
   let mx=0, my=0;
   if(keys.has('KeyW')||keys.has('ArrowUp')) my-=1;
   if(keys.has('KeyS')||keys.has('ArrowDown')) my+=1;
@@ -1296,7 +1313,14 @@ function movePlayer(dt){
   // unit direction × analog curve speed (INSPECT nudges slowly for fine repositioning)
   const mvp=Math.hypot(input.mx,input.my);
   const ux=mvp>1e-4?input.mx/mvp:0, uy=mvp>1e-4?input.my/mvp:0;
-  const base=(ctrlMode==='INSPECT')?input.moveMag*INSPECT_NUDGE:input.speed;
+  let base=(ctrlMode==='INSPECT')?input.moveMag*INSPECT_NUDGE:input.speed;
+  /* tractor pull (playtest 7/30): under the human hunter's ship the ground
+     lets go of you a little - down to half speed dead-centre, fading to
+     nothing at the ring's edge. Escapes become fights, not sprints. */
+  if(round && round.online==='host' && round.ufos[0] && hide2pLeft()<=0){
+    const _u=round.ufos[0], _d=Math.hypot(_u.x-player.x,_u.y-player.y), _R=BEAM_R*2.4;
+    if(_d<_R) base*=0.5+0.5*(_d/_R);
+  }
   const desx = ux*base*mult, desy = uy*base*mult;
   if(dominant==='ice'){ const k=Math.min(1, dt/ICE_MOMENTUM_TAU);
     player.vx+=(desx-player.vx)*k; player.vy+=(desy-player.vy)*k; }
@@ -2196,7 +2220,13 @@ function drawRoundHUD(){
   uiBtn('🕺', ax, ay, 60, BS, ()=> cyclePose(1), {rad:14, size:20}); pushMode('pose',ax,60);
   txt(POSE_NAMES[player.pose], ax+30, ay-8, 9, COL.muted, 'center', '600');
   if(round.online){ uiBtn('LEAVE', edge, 14, 62, 40, ()=>{ netLeave(); gotoTitle(); }, {rad:9, size:11, color:COL.danger, stroke:COL.danger});
-    txt('🌐 LIVE', edge+70, 34, 10, COL.cyan, 'left','800'); }
+    txt('🌐 LIVE', edge+70, 34, 10, COL.cyan, 'left','800');
+    // the hider's head start: hide, paint, settle before the ship lifts off
+    if(hide2pLeft()>0){
+      panel(vpW/2-160, 64, 320, 46, 10);
+      txt('HIDE + PAINT YOURSELF', vpW/2, 84, 13, COL.amber,'center','800');
+      txt('the hunter lifts off in '+Math.ceil(hide2pLeft())+'s', vpW/2, 101, 10, COL.muted,'center','600');
+    } }
   else uiBtn('⏸', edge, 14, 40, 40, ()=> togglePause(), {rad:9, size:16});
   uiBtn(settings.muted?'🔇':'🔊', edge+46+(round.online?22:0), 14, 40, 40, ()=> setMuted(!settings.muted), {rad:9, size:14});
   // MODE pill (always visible, always the one road ALL the way home to Move)
@@ -2367,11 +2397,18 @@ function drawHuntHUD(){
     uiBtn(settings.muted?'🔇':'🔊',82,14,40,40,()=>setMuted(!settings.muted),{rad:9,size:14}); }
   else { uiBtn('⏸',14,14,40,40,()=>togglePause(),{rad:9,size:16});
   uiBtn(settings.muted?'🔇':'🔊',60,14,40,40,()=>setMuted(!settings.muted),{rad:9,size:14}); }
-  if(!round.online){                                             // P20: 1v1 has no scanner — you hunt with your eyes
-  const right=settings.handed!=='left', bs=66, bx=right?vpW-14-bs:14, by=vpH-bs-14, ready=player.pulseCd<=0;
+  // hide-phase banner: the hunter's ship is grounded while the hider paints
+  if(round.online && round.hide2pNet>0){
+    panel(vpW/2-150, 64, 300, 46, 10);
+    txt('THE CHAMELEON IS HIDING', vpW/2, 84, 13, COL.amber,'center','800');
+    txt('your ship lifts off in '+Math.ceil(round.hide2pNet)+'s', vpW/2, 101, 10, COL.muted,'center','600');
+  }
+  { // the scanner: solo hunts always; online with LIMITED charges that expose
+  const scansLeft = round.online ? (NET.scans|0) : 1;
+  const right=settings.handed!=='left', bs=66, bx=right?vpW-14-bs:14, by=vpH-bs-14, ready=player.pulseCd<=0 && scansLeft>0;
   ctx.fillStyle=ready?'rgba(63,208,224,0.22)':'rgba(21,27,44,0.6)'; rr(bx,by,bs,bs,15); ctx.fill();
   ctx.strokeStyle=ready?COL.cyan:COL.line; ctx.lineWidth=2; rr(bx,by,bs,bs,15); ctx.stroke();
-  txt('SCAN',bx+bs/2,by+bs/2,14,ready?COL.cyan:COL.muted,'center','700');
+  txt(round.online?('SCAN ×'+scansLeft):'SCAN',bx+bs/2,by+bs/2,round.online?12:14,ready?COL.cyan:COL.muted,'center','700');
   if(player.pulseCd>0){ ctx.globalAlpha=0.5; ctx.fillStyle='#05070d'; ctx.beginPath(); ctx.moveTo(bx+bs/2,by+bs/2);
     ctx.arc(bx+bs/2,by+bs/2,bs/2,-Math.PI/2,-Math.PI/2+TAU*clamp01(player.pulseCd/PULSE_CD)); ctx.closePath(); ctx.fill(); ctx.globalAlpha=1; }
   roundHits.push({x:bx,y:by,w:bs,h:bs,fn:()=>huntPulse()});
@@ -2649,6 +2686,16 @@ function netOnPeer(d){
   }
   else if(d.k==='start' && NET.role==='guest' && NET.pend){ netStartGuest(NET.pend.entry, NET.pend.seed); }
   else if(d.k==='in' && NET.role==='host'){ NET.intent.mx=clamp(+d.mx||0,-1,1); NET.intent.my=clamp(+d.my||0,-1,1); }
+  else if(d.k==='ping' && NET.role==='host' && round && round.online==='host'){
+    // the hunter spent a scan charge: if the ship is close enough with a clear
+    // line, the hider is EXPOSED - visible on sensors and beamable - for a while
+    if(hide2pLeft()<=0){ const u=round.ufos[0];
+      if(u && Math.hypot(u.x-player.x,u.y-player.y)<HUNT_SCAN_R*1.4 && losClear(u.x,u.y,player.x,player.y)){
+        player.exposedUntil = nowMs() + EXPOSE_S*1000;
+        SFX.spotted(); FX.spottedV=1; showToast('⚠ SCANNED — you are exposed!');
+      } else { SFX.match(0.4); }
+    }
+  }
   else if(d.k==='st' && NET.role==='guest'){ netApplySnap(d); }
   else if(d.k==='end' && NET.role==='guest'){ netGuestEnd(d); }
   else if(d.k==='bye'){ if(appState==='ROUND'||appState==='SUMMARY'){ showToast('🌐 the other player left'); netReset(); gotoTitle(); } }
@@ -2661,6 +2708,8 @@ function netStartHost(entry, seed){
   round.ufos.length=1; const u=round.ufos[0];                    // exactly one hunter, and it's human
   u.x=(s0.x+0.5)*TILE; u.y=(s0.y+0.5)*TILE; u.remote=true; u.state='PATROL'; u.suspicion=0; u.beamCharge=0;
   round.online='host'; NET.status='playing'; NET.snapT=0;
+  round.hide2pEnds = nowMs() + HIDE_2P_S*1000;   // the hide phase: hunter frozen, clock waiting
+  player.exposedUntil = 0;
 }
 function netStartGuest(entry, seed){
   startRound(entry,'HUNT',DIFF.NORMAL,seed);
@@ -2669,9 +2718,13 @@ function netStartGuest(entry, seed){
   round.bots.length=1; const b=round.bots[0];                    // the "bot" is the human hider, streamed
   if(b){ b.caught=false; b.pinged=0; b.state='HIDE'; }
   round.online='guest'; round.timeLeft=DIFF.NORMAL.SURVIVE_TIME; NET.status='playing'; NET.lastSnapAt=nowMs();
+  round.hide2pNet = HIDE_2P_S;                    // local mirror of the hide phase, refreshed by snapshots
+  NET.scans = NET_SCANS;
 }
 // ---- host side: drive the remote hunter + stream snapshots (called from the fixed-step sim) ----
 function remoteUfoStep(u,dt,D){
+  // hide phase: the hunter's ship is grounded and its sensors are dark
+  if(hide2pLeft()>0){ u.vx*=0.8; u.vy*=0.8; u.state='PATROL'; u.suspicion=0; u.beamCharge=0; return; }
   const SPD=D.CHASE_SPD*1.12;                                    // region tuning carries into the human hunter
   const mx=NET.intent.mx, my=NET.intent.my, mv=Math.hypot(mx,my);
   if(mv>0.05){ u.vx=mx/Math.max(1,mv)*SPD; u.vy=my/Math.max(1,mv)*SPD; u.heading=Math.atan2(my,mx); }
@@ -2682,6 +2735,9 @@ function remoteUfoStep(u,dt,D){
   const dx=player.x-u.x, dy=player.y-u.y, d=Math.hypot(dx,dy);
   let signal=0;
   if(d<=D.SCAN_R && losClear(u.x,u.y,player.x,player.y)) signal=player.C*smoothstep(0,1,clamp01(1-d/D.SCAN_R));
+  // an EXPOSED hider (scan charge) reads on the sensors no matter the blend
+  const exp2p = nowMs() < (player.exposedUntil||0);
+  if(exp2p && d<=D.SCAN_R && losClear(u.x,u.y,player.x,player.y)) signal=Math.max(signal, 0.55*clamp01(1-d/D.SCAN_R));
   if(signal>D.NOISE_FLOOR){ const grace=round.spawnGrace>0?0.5:1; u.suspicion+=D.SUSPECT_GAIN*signal*dt*grace;
     u.lastSuspect.x+=(player.x-u.lastSuspect.x)*Math.min(1,clamp(signal,0.1,1)*BELIEF_TRACK*dt);
     u.lastSuspect.y+=(player.y-u.lastSuspect.y)*Math.min(1,clamp(signal,0.1,1)*BELIEF_TRACK*dt); }
@@ -2689,7 +2745,7 @@ function remoteUfoStep(u,dt,D){
   u.suspicion=clamp01(u.suspicion); u.signal=signal;
   // the beam is proximity-engaged like HUNT mode; re-hide still breaks the lock (the hider's tools all work)
   const prev=u.state;
-  if(d<BEAM_R && losClear(u.x,u.y,player.x,player.y) && player.C>=BEAM_HOLD_C && round.spawnGrace<=0){
+  if(d<BEAM_R && losClear(u.x,u.y,player.x,player.y) && (player.C>=BEAM_HOLD_C || exp2p) && round.spawnGrace<=0){
     if(u.state!=='BEAM'){ addTrauma(TRAUMA.beamLock); vibe(40); }
     u.state='BEAM'; u.beamCharge+=(1/D.LOCK_TIME)*dt;
     if(u.beamCharge>=1) triggerAbduction(u);
@@ -2705,6 +2761,7 @@ function stepHostNet(dt){
   NET.snapT+=dt; if(NET.snapT<1/12) return; NET.snapT=0;
   const u=round.ufos[0]||{};
   netSend({ k:'st', tl:Math.round(round.timeLeft*10)/10, gr:round.spawnGrace>0?1:0,
+    hl:+hide2pLeft().toFixed(1), ex:(nowMs()<(player.exposedUntil||0))?1:0,
     h:{ x:Math.round(player.x), y:Math.round(player.y), c1:rgb2hex(player.currentPaint),
         c2:player.splitPaint?rgb2hex(player.currentPaint2):null, cz:+player.conceal.toFixed(2),
         po:player.pose, al:player.alive?1:0, fa:+player.facing.toFixed(2) },
@@ -2715,10 +2772,13 @@ function netApplySnap(d){
   if(!round||round.online!=='guest') return;
   NET.lastSnapAt=nowMs();
   round.timeLeft=d.tl; round.spawnGrace=d.gr?1:0;
+  round.hide2pNet=d.hl||0;
   const b=round.bots[0];
   if(b){ b._tx=d.h.x; b._ty=d.h.y; b.currentPaint=hex2rgb(d.h.c1)||b.currentPaint;
     b.currentPaint2=d.h.c2?hex2rgb(d.h.c2):null; b.conceal=d.h.cz; b.C=clamp01(1-d.h.cz);
-    b.pose=d.h.po; b.facing=d.h.fa; b.alive=!!d.h.al; }
+    b.pose=d.h.po; b.facing=d.h.fa; b.alive=!!d.h.al;
+    if(d.ex) b.pinged=PING_HOLD;    // exposed: the existing ping marker points the hunter
+  }
   NET.uSnap=d.u;
 }
 function stepGuestNet(dt){
@@ -2728,6 +2788,12 @@ function stepGuestNet(dt){
     if(round.countdown<=0){ roundState='PLAYING'; SFX.go(); } return; }
   if(roundState!=='PLAYING') return;
   gatherInput();
+  // hide phase: the ship is grounded; watch the countdown, plan your sweep.
+  // The hider's streamed position still tracks (they are MOVING out there).
+  if(round.hide2pNet>0){ round.hide2pNet=Math.max(0,round.hide2pNet-dt);
+    const bh=round.bots[0];
+    if(bh && bh._tx!=null){ bh.x+=(bh._tx-bh.x)*Math.min(1,dt*12); bh.y+=(bh._ty-bh.y)*Math.min(1,dt*12); }
+    return; }
   NET.sendT+=dt; if(NET.sendT>=1/20){ NET.sendT=0; netSend({k:'in', mx:+input.mx.toFixed(2), my:+input.my.toFixed(2)}); }
   // predict own saucer, then ease toward the host's authority — snappy but honest
   const D=round.diff, SPD=D.CHASE_SPD*1.12, mv=Math.hypot(input.mx,input.my);
@@ -2945,7 +3011,16 @@ function botHiderThink(b,dt){ b.stateT+=dt; b.animT+=dt;
   const sp=Math.hypot(b.vx,b.vy); b.walkPhase+=dt*(sp>8?7:0); b.breathP+=dt*(sp>8?0.5:1.6);
   b.blinkT-=dt; if(b.blinkE>0)b.blinkE=Math.max(0,b.blinkE-dt*7); if(b.blinkT<=0){b.blinkE=1;b.blinkT=2+(b.animT*7%3);} }
 function huntPulse(){ if(!round||round.mode!=='HUNT'||player.pulseCd>0||roundState!=='PLAYING') return;
-  if(round.online){ showToast('🌐 no scanner in 1v1 — hunt with your eyes'); return; }   // fairness: the human hider gets no ping
+  if(round.online){
+    /* the scanner is BACK in 1v1 with limited charges (playtest 7/30: a
+       perfectly blended hider could never be picked up even when found).
+       Three per round; a hit EXPOSES the hider for a few seconds. */
+    if(round.hide2pNet>0){ showToast('scanners come online after the hide phase'); return; }
+    if((NET.scans|0)<=0){ showToast('no scan charges left — hunt with your eyes'); return; }
+    NET.scans--; player.pulseCd=PULSE_CD; player.pulseT=0.55; SFX.match(0.5); addTrauma(0.08);
+    netSend({k:'ping'});
+    return;
+  }
   player.pulseCd=PULSE_CD; player.pulseT=0.55; SFX.match(0.5); addTrauma(0.08);
   for(const b of round.bots){ if(b.caught) continue; const d=Math.hypot(b.x-player.x,b.y-player.y);
     if(d<HUNT_SCAN_R*1.4 && losClear(player.x,player.y,b.x,b.y)) b.pinged=PING_HOLD; } }
@@ -3072,7 +3147,7 @@ function stepSim(dt){
   if(player.C<STREAK_C && (round.maxSusp||0)<ENTER_CHASE){ M.streakCur+=ms; M.streakBestMs=Math.max(M.streakBestMs,M.streakCur); } else M.streakCur=0;
   if(sp>10) M.timeMovingMs+=ms; else M.timeStillMs+=ms;
   updateBlendBook(dt);                                          // P8-6 log terrain mastery
-  if(!round.diff.practice && isFinite(round.timeLeft) && round.mode!=='TA'){ round.timeLeft-=dt; if(round.timeLeft<=0){ round.timeLeft=0; endRound(true); } }
+  if(!round.diff.practice && isFinite(round.timeLeft) && round.mode!=='TA' && hide2pLeft()<=0){ round.timeLeft-=dt; if(round.timeLeft<=0){ round.timeLeft=0; endRound(true); } }
   if(round.mode==='TA') stepTABeacons(dt);
   // HEAT: escalate over time (mutates the per-round diff clone, never the shared const)
   if(round.heat){ round.heatT+=dt; round.heatUfoT+=dt; const d=round.diff, step=Math.floor(round.heatT/HEAT_RAMP), ramp=1+step*0.12;

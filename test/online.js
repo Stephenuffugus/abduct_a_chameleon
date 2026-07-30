@@ -14,7 +14,7 @@ function makeWin(tag){
   const errors=[], rafQueue=[]; let rafId=1, VT=1000;
   const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true, tourDone:true, perf:'smooth'})};
   const dom=new JSDOM(html,{runScripts:'dangerously',resources:'usable',pretendToBeVisual:true,
-    url:`http://localhost:8000/index.html?mp=ws://localhost:${PORT}/ws`,
+    url:`http://localhost:8000/index.html?mp=ws://localhost:${PORT}/ws&hide2p=5`,
     beforeParse(window){
       try{ Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:k=>k in _ls?_ls[k]:null,setItem:(k,v)=>{_ls[k]=String(v);},removeItem:k=>{delete _ls[k];},clear:()=>{for(const k in _ls)delete _ls[k];},key:i=>Object.keys(_ls)[i]||null,get length(){return Object.keys(_ls).length;}}}); }catch(_){}
       window.HTMLCanvasElement.prototype.getContext=()=>stubCtx();window.OffscreenCanvas=class{constructor(w,h){this.width=w;this.height=h;}getContext(){return stubCtx();}};
