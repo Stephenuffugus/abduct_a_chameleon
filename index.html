@@ -636,7 +636,7 @@ let settings={ muted:false, lastMode:'SURVIVE', lastLevel:0, lastDiff:'NORMAL',
   volMaster:0.85, volSfx:1.0, volMusic:0.6,
   motion:'full', screenShake:'full', photosensitive:false,
   colorblind:'off', highContrast:false, textSize:'M',
-  haptics:true, handed:'right', tutorialSeen:false,
+  haptics:true, handed:'right', tutorialSeen:false, helpAutoShown:false,
   perf:'auto', controlsSeen:false };
 let hudScale=1;
 const CB_PAL={
@@ -3841,7 +3841,19 @@ function boot(){
   resize(); addEventListener('resize', resize);
   document.addEventListener('visibilitychange', ()=>{ if(document.hidden && appState==='ROUND' && roundState==='PLAYING') togglePause(); });
   appState='BOOT';
-  loadLevels().then(()=>{ appState='TITLE'; }).catch(()=>{ appState='TITLE'; });
+  /* Stephen 2026-07-31: "when I click on the game to open it, the first thing
+     that should pop up should be the HOW TO PLAY". The help screen already
+     existed and was good; it was only ever one tap away behind a button, so a
+     new player never saw it. Now it opens itself the first time, once per
+     device, and the button still reopens it whenever they want.
+     ⛔ A SEPARATE flag from tutorialSeen on purpose: tutorialSeen is already
+     true for everyone who ever pressed PLAY, so reusing it would have shipped
+     this to nobody. */
+  function _firstTitle(){
+    appState='TITLE';
+    if(!settings.helpAutoShown){ settings.helpAutoShown=true; saveSettings(); showHelp=true; }
+  }
+  loadLevels().then(_firstTitle).catch(_firstTitle);
   lastFrame=performance.now();
   requestAnimationFrame(frame);
 }

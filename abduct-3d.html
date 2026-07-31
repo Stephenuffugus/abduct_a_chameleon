@@ -159,6 +159,26 @@
   #tapStart .big{ font-size:22px; font-weight:800; letter-spacing:.1em; color:var(--amber) }
   #tapStart .sm{ color:var(--muted); font-size:12px }
 
+  /* ⛔ Stephen 2026-07-31: this game had NO how-to-play at all. Objective,
+     how it plays and every control, shown before anything else, once per
+     device, with a ? button to read it again. Sits above the orientation gate
+     so it is readable in portrait before the game asks you to turn. */
+  #howto{ position:fixed; inset:0; z-index:90; display:none; overflow-y:auto;
+    background:#080c19f2; padding:22px 18px 26px; -webkit-overflow-scrolling:touch }
+  #howto .in{ max-width:520px; margin:0 auto }
+  #howto .kick{ font-size:12px; letter-spacing:.22em; color:var(--cyan); font-weight:800 }
+  #howto h2{ margin:6px 0 2px; font-size:26px; color:var(--amber) }
+  #howto h3{ margin:18px 0 6px; font-size:13px; letter-spacing:.16em; color:var(--cyan); text-transform:uppercase }
+  #howto p{ margin:0 0 8px; font-size:15px; line-height:1.55; color:var(--txt) }
+  #howto ul{ margin:0; padding-left:0; list-style:none }
+  #howto li{ font-size:14.5px; line-height:1.5; margin:7px 0; color:var(--txt) }
+  #howto li b{ color:var(--amber) }
+  #howto .dim{ color:var(--muted); font-size:13px }
+  #howto .go{ display:block; width:100%; min-height:56px; margin-top:20px; border-radius:14px;
+    border:1px solid var(--amber); background:var(--amber); color:#12130a;
+    font-size:17px; font-weight:800; letter-spacing:.06em; cursor:pointer }
+  #howtoBtn{ position:fixed; right:12px; top:12px; z-index:64; width:44px; height:44px; border-radius:50%;
+    background:var(--panel); border:1px solid var(--line); color:var(--txt); font-size:19px; font-weight:800; cursor:pointer }
   /* drop target flash */
   #dropzone{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;
     background:rgba(63,208,224,.10);border:3px dashed var(--cyan);font-family:var(--mono);color:var(--cyan);font-size:18px}
@@ -218,6 +238,60 @@
     <div class="num" id="hidewaitNum">20</div>
     <div class="sub">The chameleons are picking their spots. Your scanners come online when the countdown ends.</div></div>
   <div id="tapStart"><div class="big">▶ TAP TO PLAY</div><div class="sm">goes fullscreen · sound on</div></div>
+
+  <div id="howto"><div class="in">
+    <div class="kick">HOW TO PLAY</div>
+    <h2>Abduct a Chameleon 3D</h2>
+
+    <h3>The goal</h3>
+    <p>Alien ships are hunting the ground for anything that does not belong. If you
+    are a <b>chameleon</b>, paint your body to match what you are standing on and
+    survive until the timer runs out. If you are a <b>hunter</b>, fly the ship, find
+    the one shape whose colour is wrong, and beam it up.</p>
+
+    <h3>How it plays</h3>
+    <p>Hiders get a head start to choose a spot and paint themselves while the
+    scanners are still warming up. Colour is the whole game: the closer your paint
+    is to the ground beneath you, the longer a hunter's eye slides straight past.
+    Movement is what gives you away, so pick your spot and settle.</p>
+
+    <h3>The controls, on a phone</h3>
+    <ul>
+      <li><b>Left half of the screen</b> moves you</li>
+      <li><b>Right half</b> looks around</li>
+      <li>The <b>paint</b> button (🎨) opens the paint studio, where you colour your own body</li>
+      <li>The <b>view</b> button (👁) switches between your own eyes and a look from above</li>
+      <li>The <b>pose</b> button (🕺) changes your shape, because a shape can hide as well as a colour</li>
+      <li>The <b>taunt</b> button (📣) pulls a hunter somewhere you are not</li>
+      <li>The <b>decoy</b> button (👥) leaves behind something that looks like you</li>
+      <li><b>BEAM</b> and <b>SCAN</b> appear when you are the hunter, and <b>▲ ▼</b> change your altitude</li>
+    </ul>
+
+    <h3>The controls, on a keyboard</h3>
+    <p class="dim">WASD moves, the mouse looks, E paints, V changes view, Q changes
+    pose, T taunts, F drops a decoy, G scans, and Escape backs out of the paint studio.</p>
+
+    <button class="go" id="howtoGo">▶ PLAY</button>
+    <p class="dim" style="text-align:center;margin-top:10px">Tap the ? in the corner to read this again any time.</p>
+  </div></div>
+  <button id="howtoBtn" type="button" aria-label="How to play" title="How to play">?</button>
+
+  <script>
+  /* Classic script on purpose: it runs at parse time, so the rules are on
+     screen before the module bundle has even started fetching. */
+  (function(){
+    var ov = document.getElementById('howto'), btn = document.getElementById('howtoBtn');
+    function open(){ ov.style.display = 'block'; ov.scrollTop = 0; }
+    function close(){
+      ov.style.display = 'none';
+      try{ localStorage.setItem('ac3d_howto','1'); }catch(e){}
+    }
+    document.getElementById('howtoGo').addEventListener('click', close);
+    btn.addEventListener('click', open);
+    var seen = null; try{ seen = localStorage.getItem('ac3d_howto'); }catch(e){}
+    if(!seen) open();
+  })();
+  </script>
 
   <div id="dropzone">Release to load map</div>
 
