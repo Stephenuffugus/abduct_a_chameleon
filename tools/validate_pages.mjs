@@ -1,7 +1,7 @@
 /* validate_pages.mjs — the gate every Abduction Files bank must pass.
    node tools/validate_pages.mjs
    Checks, in order of how badly each one would embarrass us on a real screen:
-     numbers unique and in range      (a duplicate page number breaks the shelf)
+     numbers whole, unique, in range  (a duplicate or a 564.5 breaks the shelf)
      body length 40 to 90 words       (short reads thin, long overflows the panel)
      no dash characters at all        (house rule for player copy)
      heading present and under 40     (it has to fit one line on a phone)
@@ -40,6 +40,11 @@ for (const f of files) {
     total++;
     const id = `${f} page ${p && p.n}`;
     if (!p || typeof p.n !== 'number') { problems.push(`${id}: missing number`); continue; }
+    /* ⛔ A page number must be a WHOLE number. Twice during drafting a
+       placeholder like 564.5 slipped in: unique, in range, and it would have
+       sailed through this gate and rendered as PAGE 564.5 OF 1000 on a real
+       screen. Cheap check, real bug. */
+    if (!Number.isInteger(p.n)) problems.push(`${id}: page number ${p.n} is not a whole number`);
     if (p.n < 1 || p.n > MAXN) problems.push(`${id}: number out of 1..${MAXN}`);
     if (seenN.has(p.n)) problems.push(`${id}: duplicate of ${seenN.get(p.n)}`);
     seenN.set(p.n, id);
