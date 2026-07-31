@@ -53,6 +53,11 @@
   .sc.me .nm{color:var(--amber)}
 
   /* ---- meters (bottom center) ---- */
+  #surfLine{ font-family:var(--mono); font-size:11px; letter-spacing:.04em; opacity:.72;
+    margin-top:5px; text-align:center; color:var(--txt); min-height:13px;
+    transition:opacity .2s ease }
+  #surfLine .bad{ color:var(--danger) }
+  #surfLine .good{ color:var(--cyan) }
   #meter{position:fixed;bottom:66px;left:50%;transform:translateX(-50%);z-index:10;width:min(340px,70vw);
     pointer-events:none}
   #meterLabel{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
@@ -202,6 +207,10 @@
   <div id="meter" class="hidden">
     <div id="meterLabel">—</div>
     <div id="meterBar"><div id="meterFill"></div></div>
+    <!-- ⛔ the ground has traits now (TERRAIN_FX). A mechanic the player cannot
+         see is a bug, so the surface under your feet names itself and says what
+         it does to you. -->
+    <div id="surfLine"></div>
   </div>
 
   <div id="reticle"><div class="ring"></div></div>
@@ -418,6 +427,43 @@ const TERRAIN = {
   moss:'#63C46A', lava:'#FF5A2B', ash:'#42465C', crystal:'#A98BFF'
 };
 
+/* ============================ Ground that matters ============================
+   ⛔ Before this table there were sixteen terrain colours and TWO of them did
+   anything: water slowed you to 0.55 and lava to 0.70 and blocked settling, both
+   hardcoded inline in moveLocal. The other fourteen were paint swatches. So the
+   only question a surface ever asked was "what colour am I", and the answer was
+   always "match it and sit down".
+
+   Now every surface asks a second question. `s` is a speed multiplier and `c`
+   scales how fast stillness builds, which is half of the camo formula
+   (camo = stillness x paint match). That splits the two things a hider wants:
+   the ground that is EASIEST TO MATCH is often the worst ground to settle on.
+   Metal is a flat even colour you can match in one tap and you ring like a bell
+   when you move on it. Foliage is a mess to match and swallows you once you stop.
+   Lava you can match perfectly and can never, ever settle on.
+
+   `tip` is shown in the HUD while you stand there. A hidden mechanic is a bug:
+   the player has to be able to learn this by walking around. */
+const TERRAIN_FX = {
+  grass:    { s:1.00, c:1.00, tip:'even ground' },
+  dirt:     { s:1.00, c:1.05, tip:'dry and quiet' },
+  foliage:  { s:0.90, c:1.40, tip:'deep cover, settles fast' },
+  moss:     { s:1.00, c:1.25, tip:'soft underfoot' },
+  mud:      { s:0.60, c:1.30, tip:'slow, but it swallows sound' },
+  water:    { s:0.55, c:0.55, tip:'ripples give you away' },
+  sand:     { s:0.85, c:1.00, tip:'loose footing' },
+  snow:     { s:0.80, c:0.85, tip:'you leave tracks' },
+  ice:      { s:1.15, c:0.70, tip:'fast and hard to stop' },
+  rock:     { s:1.00, c:0.80, tip:'nothing to sink into' },
+  concrete: { s:1.05, c:0.70, tip:'hard and open' },
+  metal:    { s:1.05, c:0.60, tip:'it rings when you move' },
+  ash:      { s:0.90, c:1.15, tip:'soft, dusty' },
+  crystal:  { s:1.00, c:0.85, tip:'the light keeps catching you' },
+  lava:     { s:0.70, c:0.00, tip:'you can never settle here' },
+  void:     { s:1.00, c:1.00, tip:'' }
+};
+function terrainFx(key){ return TERRAIN_FX[key] || TERRAIN_FX.void; }
+
 /* ============================ Globals ============================ */
 let scene, camera, renderer, clock;
 let players = [];               // { state, group, hider, ufo, beamMesh, mats:[], base:Color, target:Vec3, targetYaw }
@@ -429,6 +475,7 @@ let localYaw = 0, seekerView = 'topdown', camoLevel = 0, beamOn = false;
 let sendAccum = 0, started = false, myLastRound = -1;
 // P30: the hider's own top-down check ("this is EXACTLY how the abductors see you") + paint state
 let hiderView = 'third';        // 'third' | 'topdown'
+let curSurf = 'grass';          // terrain key under the local hider, for the HUD
 let stillness = 0;              // builds while motionless — melting in is stillness × paint match
 let myMatch = 0;                // 0..1 — how well my body paint matches what I'm hiding against
 let myAvg = { r:237, g:239, b:244 };   // average of my body paint (published so others can judge me)
@@ -1965,7 +2012,13 @@ function clientTick(dt){
     applyGamepadLook(dt, role, abd);
     if(abd) flyLocal(dt);
     else if(active && !paintOpen) moveLocal(dt, role);
-    else if(active && paintOpen){ stillness = Math.min(1, stillness + dt/CAMO_RAMP); }   // painting = holding still
+    else if(active && paintOpen){
+      /* ⛔ painting builds stillness too, so the ground rules have to apply here
+         as well or standing in lava with the studio open is a free camo loophole. */
+      const pf = terrainFx(terrainKeyAt(localPos.x, localPos.z));
+      if(pf.c <= 0) stillness = 0;
+      else stillness = Math.min(1, stillness + (dt*pf.c)/CAMO_RAMP);
+    }
   }
 
   // publish my transform (+ camo / already-published beam)
@@ -2139,13 +2192,14 @@ function moveLocal(dt, role){
     localPos.y = clamp(localPos.y, UFO_MIN_ALT, UFO_MAX_ALT);
   }else{
     const surf = terrainKeyAt(localPos.x, localPos.z);
-    let mult = 1;
-    if(surf==='water') mult = 0.55;              // wading slows you down
-    else if(surf==='lava') mult = 0.70;          // dangerous footing
-    localPos.x += mv.x*HIDER_SPEED*mult*dt; localPos.z += mv.z*HIDER_SPEED*mult*dt; localPos.y = 0;
+    const fx = terrainFx(surf);
+    curSurf = surf;                              // HUD reads this so the ground can be learned
+    localPos.x += mv.x*HIDER_SPEED*fx.s*dt; localPos.z += mv.z*HIDER_SPEED*fx.s*dt; localPos.y = 0;
     resolveWalls();
-    if(surf==='lava') stillness = 0;             // can't blend while standing in lava
-    else if(!moving) stillness = Math.min(1, stillness + dt/CAMO_RAMP);
+    /* fx.c === 0 is lava: settling is impossible rather than merely slow, so it
+       stays a hard zero instead of a very small ramp. */
+    if(fx.c <= 0) stillness = 0;
+    else if(!moving) stillness = Math.min(1, stillness + (dt*fx.c)/CAMO_RAMP);
     else stillness = Math.max(0, stillness - dt/0.35);   // moving always gives you away
   }
   localPos.x = clamp(localPos.x, -halfW+1, halfW-1);
@@ -2271,6 +2325,12 @@ function updateHUD(role, abd){
       $('meterLabel').textContent = 'paint match '+mp+'% · hidden '+hp+'%' + (myMatch<0.5?' — 🎨 paint to match!':earning);
       fill.style.width=(camoLevel*100)+'%';
       fill.style.background = earnRate>0 ? 'var(--cyan)' : (camoLevel>0.8 ? 'var(--cyan)' : 'var(--amber)'); }
+    /* name the ground and what it costs you. cls marks the two extremes so a
+       player learns "red means I cannot settle here" without reading anything. */
+    const sf = terrainFx(curSurf);
+    const cls = sf.c <= 0 ? 'bad' : (sf.c >= 1.25 ? 'good' : '');
+    $('surfLine').innerHTML = curSurf==='void' ? '' :
+      (curSurf.toUpperCase() + (sf.tip ? '<span class="'+cls+'">  ·  '+sf.tip+'</span>' : ''));
   }else if(!abd && phase==='playing' && role==='seeker'){
     mEl.classList.remove('hidden');
     const maxLock = hiders.reduce((m,h)=> Math.max(m, h.state.getState('lock')||0), 0);
