@@ -182,8 +182,49 @@
   #howto .go{ display:block; width:100%; min-height:56px; margin-top:20px; border-radius:14px;
     border:1px solid var(--amber); background:var(--amber); color:#12130a;
     font-size:17px; font-weight:800; letter-spacing:.06em; cursor:pointer }
-  #howtoBtn{ position:fixed; right:12px; top:12px; z-index:64; width:44px; height:44px; border-radius:50%;
-    background:var(--panel); border:1px solid var(--line); color:var(--txt); font-size:19px; font-weight:800; cursor:pointer }
+  #howtoBtn{ position:fixed; right:12px; top:12px; z-index:64; width:48px; height:48px; border-radius:50%;
+    background:var(--panel); border:1px solid var(--line); color:var(--txt); font-size:19px; font-weight:800; cursor:pointer;
+    touch-action:manipulation }
+
+  /* ---- settings panel ----
+     Sits at z-88: above the pointer-lock prompt (20), the paint studio (25),
+     the rotate gate (70) and the tap-to-start card (65), but UNDER #howto (90)
+     so the panel's own HOW TO PLAY button lands on top of it, not behind. */
+  #settings{ position:fixed; inset:0; z-index:88; display:none; overflow-y:auto;
+    background:rgba(8,12,25,.86); backdrop-filter:blur(4px); padding:18px 16px 26px;
+    -webkit-overflow-scrolling:touch }
+  #settings.on{ display:block }
+  #settings .in{ max-width:460px; margin:0 auto; background:var(--panel-solid);
+    border:1px solid var(--line); border-radius:16px; padding:14px 16px 18px }
+  #settings .hd{ display:flex; align-items:center; justify-content:space-between; margin-bottom:4px }
+  #settings .hd b{ font-size:12px; letter-spacing:.22em; color:var(--cyan) }
+  #setClose{ width:48px; height:48px; min-width:48px; border-radius:12px; background:#0A0E19;
+    border:1px solid var(--line); color:var(--txt); font-size:20px; cursor:pointer; touch-action:manipulation }
+  .srow{ padding:10px 0; border-top:1px solid var(--line-soft) }
+  .srow .lab{ display:flex; justify-content:space-between; align-items:baseline; gap:10px }
+  .srow .lab span{ font-size:13.5px; font-weight:700; letter-spacing:.05em }
+  .srow .lab i{ font-family:var(--mono); font-style:normal; font-size:13px; color:var(--amber) }
+  .srow .hint{ font-size:11.5px; color:var(--muted); line-height:1.45 }
+  /* The track is 6px because a fat track looks wrong in this HUD, but the INPUT
+     is 48px tall — the padding around the track is the touch target, so the law
+     is kept without the slider looking like a health bar. */
+  .srow input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; height:48px;
+    margin:0; background:transparent; cursor:pointer; touch-action:manipulation }
+  .srow input[type=range]::-webkit-slider-runnable-track{ height:6px; border-radius:3px;
+    background:#0A0E19; border:1px solid var(--line) }
+  .srow input[type=range]::-moz-range-track{ height:6px; border-radius:3px;
+    background:#0A0E19; border:1px solid var(--line) }
+  .srow input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none;
+    width:26px; height:26px; border-radius:50%; background:var(--amber); border:2px solid #12130a;
+    margin-top:-11px }
+  .srow input[type=range]::-moz-range-thumb{ width:26px; height:26px; border-radius:50%;
+    background:var(--amber); border:2px solid #12130a }
+  .sbtn{ display:block; width:100%; min-height:52px; margin-top:8px; border-radius:12px; background:#0A0E19;
+    border:1px solid var(--line); color:var(--txt); font-size:14px; font-weight:700; letter-spacing:.06em;
+    cursor:pointer; touch-action:manipulation }
+  .sbtn.tog.on{ border-color:var(--amber); color:var(--amber); background:rgba(242,179,61,.14) }
+  .sbtn.go{ margin-top:14px; min-height:56px; font-size:16px; border-color:var(--amber);
+    background:var(--amber); color:#12130a }
   /* drop target flash */
   #dropzone{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;
     background:rgba(63,208,224,.10);border:3px dashed var(--cyan);font-family:var(--mono);color:var(--cyan);font-size:18px}
@@ -220,6 +261,9 @@
     <div id="ctrlSeeker" class="hidden"><b>Seeker (UFO)</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd>/<kbd>Shift</kbd> altitude · hold <kbd>Mouse</kbd> beam (drains) · <kbd>G</kbd> echo scan (pings anything that moves) · <kbd>V</kbd> view</div>
     <div id="ctrlSpec" class="hidden"><b>Spectating</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · mouse look · back next round</div>
     <div id="ctrlPad" style="margin-top:5px;opacity:.72"><b>Controller</b> — sticks move/look · RT beam · A camo · B decoy · X pose · Y view · RB/LB altitude</div>
+    <!-- the ? button cannot be clicked while the mouse is captured, so the key
+         is the real door on desktop and has to be written down somewhere -->
+    <div style="margin-top:5px;opacity:.72"><kbd>Esc</kbd> settings · sensitivity, invert, volume</div>
   </div>
 
   <div id="poseBar" class="hidden"><span class="pl">Pose</span><div id="poseBtns"></div></div>
@@ -278,12 +322,51 @@
 
     <h3>The controls, on a keyboard</h3>
     <p class="dim">WASD moves, the mouse looks, E paints, V changes view, Q changes
-    pose, T taunts, F drops a decoy, G scans, and Escape backs out of the paint studio.</p>
+    pose, T taunts, F drops a decoy, G scans, and Escape backs out of the paint
+    studio — or opens Settings when nothing else is open.</p>
+
+    <h3>If the looking feels wrong</h3>
+    <p class="dim">Settings has a <b>look sensitivity</b> slider, an <b>invert
+    look Y</b> switch and a <b>master volume</b> dial. They are yours alone —
+    nobody else in the match is affected — and they are remembered on this
+    device.</p>
 
     <button class="go" id="howtoGo">▶ PLAY</button>
-    <p class="dim" style="text-align:center;margin-top:10px">Tap the ? in the corner to read this again any time.</p>
+    <p class="dim" style="text-align:center;margin-top:10px">Tap the ? in the corner (or press Escape) for Settings and these rules, any time.</p>
   </div></div>
-  <button id="howtoBtn" type="button" aria-label="How to play" title="How to play">?</button>
+  <button id="howtoBtn" type="button" aria-label="Settings and how to play" title="Settings">?</button>
+
+  <!-- ⛔ SETTINGS ARE PER CLIENT. Nothing in this panel ever goes through
+       setState — how loud my phone is and which way my thumb pushes are not
+       the room's business, and pushing them would desync nothing but bandwidth.
+       Everything persists to localStorage under aac3d_* and applies live. -->
+  <div id="settings" role="dialog" aria-modal="true" aria-label="Settings"><div class="in">
+    <div class="hd"><b>SETTINGS</b>
+      <button id="setClose" type="button" aria-label="Close settings">✕</button></div>
+
+    <div class="srow">
+      <div class="lab"><span>Look sensitivity</span><i id="setSensVal">1.00×</i></div>
+      <input id="setSens" type="range" min="0.3" max="2.5" step="0.05" value="1" aria-label="Look sensitivity" />
+      <div class="hint">Scales mouse, controller stick and thumb-drag looking alike.</div>
+    </div>
+
+    <div class="srow">
+      <div class="lab"><span>Invert look Y</span></div>
+      <button id="setInvY" class="sbtn tog" type="button" aria-pressed="false">OFF</button>
+    </div>
+
+    <div class="srow">
+      <div class="lab"><span>Master volume</span><i id="setVolVal">100%</i></div>
+      <input id="setVol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Master volume" />
+      <div class="hint">Every sound in the game rides this one dial.</div>
+    </div>
+
+    <div class="srow">
+      <button id="setHowto" class="sbtn" type="button">HOW TO PLAY</button>
+    </div>
+
+    <button id="setDone" class="sbtn go" type="button">DONE · BACK TO THE GAME</button>
+  </div></div>
 
   <script>
   /* Classic script on purpose: it runs at parse time, so the rules are on
@@ -296,7 +379,17 @@
       try{ localStorage.setItem('ac3d_howto','1'); }catch(e){}
     }
     document.getElementById('howtoGo').addEventListener('click', close);
-    btn.addEventListener('click', open);
+    /* The module owns the settings panel, so it cannot wire this button until
+       it has evaluated. One delegating listener instead of two: if the panel is
+       up, the ? opens it; if the module never loaded (offline, CDN down) the ?
+       still does the only useful thing left and shows the rules. It is never a
+       dead button. */
+    btn.addEventListener('click', function(){
+      if(window.AC3D_SETTINGS && window.AC3D_SETTINGS.open) window.AC3D_SETTINGS.open();
+      else open();
+    });
+    /* the module reopens HOW TO PLAY from inside the panel through this */
+    window.AC3D_HOWTO = { open: open, close: close };
     var seen = null; try{ seen = localStorage.getItem('ac3d_howto'); }catch(e){}
     if(!seen) open();
   })();
@@ -498,14 +591,47 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3();
 const ABDUCT_ANIM = 1.15;       // seconds the beam-up animation lasts
 let prevPhase = '';
 
+/* ============================ Settings (per client) ============================ */
+/* ⛔ These NEVER touch setState. They are one player's comfort on one device:
+   sensitivity, invert, volume. Stored under aac3d_* and applied live — no
+   reload, no "apply" button, because a sensitivity slider you cannot feel while
+   you drag it is a guessing game. */
+const OPT = { sens:1, invertY:false, vol:1 };
+const OPT_KEY = { sens:'aac3d_sens', invertY:'aac3d_invertY', vol:'aac3d_vol' };
+let settingsOpen = false;
+function optLoad(){
+  /* one try/catch around the lot: Safari private mode throws on the very first
+     localStorage read, and a thrown default is still a fine default. */
+  try{
+    const s = parseFloat(localStorage.getItem(OPT_KEY.sens));
+    if(isFinite(s)) OPT.sens = clamp(s, 0.3, 2.5);
+    const v = parseFloat(localStorage.getItem(OPT_KEY.vol));
+    if(isFinite(v)) OPT.vol = clamp(v, 0, 1);
+    OPT.invertY = localStorage.getItem(OPT_KEY.invertY) === '1';
+  }catch(_){}
+}
+function optSave(k, v){ try{ localStorage.setItem(OPT_KEY[k], String(v)); }catch(_){} }
+optLoad();
+
 /* ============================ Audio (synth, no files) ============================ */
-let AC = null, master = null, beamOsc = null, beamGain = null;
+let AC = null, master = null, outGain = null, beamOsc = null, beamGain = null;
 function ensureAudio(){
   if(AC){ if(AC.state==='suspended') AC.resume(); return; }
   try{
     AC = new (window.AudioContext || window.webkitAudioContext)();
-    master = AC.createGain(); master.gain.value = 0.32; master.connect(AC.destination);
+    master = AC.createGain(); master.gain.value = 0.32;
+    /* MASTER VOLUME gets its own node between the mix bus and the speakers, so
+       one slider moves every sound — including the live beam drone — without
+       touching a single SFX definition or the per-sound vol arguments. */
+    outGain = AC.createGain(); outGain.gain.value = OPT.vol;
+    master.connect(outGain); outGain.connect(AC.destination);
   }catch(_){ AC = null; }
+}
+function applyVolume(){
+  if(!AC || !outGain) return;
+  /* setTargetAtTime rather than a raw assignment: stepping the gain under the
+     sustained sawtooth of the beam clicks audibly. */
+  outGain.gain.setTargetAtTime(OPT.vol, AC.currentTime, 0.015);
 }
 function tone(freq, dur, type='sine', vol=0.4, slideTo=null){
   if(!AC) return;
@@ -1280,12 +1406,96 @@ function gatherGamepad(role, abd){
   if(edge(1) && role==='hider' && !abd) dropDecoy();                                   // B = decoy
   const o = document.getElementById('clickToPlay'); if(o) o.classList.add('hidden');
 }
-function applyGamepadLook(dt, role, abd){
+/* ⛔ THE ONE DOOR FOR LOOKING. Mouse, controller stick and thumb-drag all arrive
+   here as radians-at-1.0-sensitivity, so LOOK SENSITIVITY and INVERT Y are
+   applied in exactly one place and the three inputs can never drift apart. If
+   you add a fourth look input, route it through here too. */
+function applyLook(dx, dy){
+  const s = OPT.sens;
+  dx *= s; dy *= s * (OPT.invertY ? -1 : 1);
+  if(myRole()==='seeker' && !amAbducted()){
+    seekerYaw -= dx; seekerPitch = clamp(seekerPitch - dy, 0.2, 1.45);
+  }else{
+    yaw -= dx; pitch = clamp(pitch - dy, -0.5, 1.3);
+  }
+}
+function applyGamepadLook(dt){
   if(!gp.present || (gp.lx===0 && gp.ly===0)) return;
   const s = 2.6 * dt;
-  if(role==='seeker' && !abd){ seekerYaw -= gp.lx*s; seekerPitch = clamp(seekerPitch - gp.ly*s, 0.2, 1.45); }
-  else { yaw -= gp.lx*s; pitch = clamp(pitch - gp.ly*s, -0.5, 1.3); }
+  applyLook(gp.lx*s, gp.ly*s);
 }
+
+/* ============================ Settings panel ============================ */
+function setSettingsOpen(on){
+  settingsOpen = !!on;
+  document.getElementById('settings').classList.toggle('on', settingsOpen);
+  if(settingsOpen){
+    /* Release the mouse or the sliders are unreachable behind the lock. Note
+       what we do NOT do on close: re-request it. The canvas already re-locks on
+       the next click in the world, so grabbing it back here would fight that —
+       and Chrome refuses a lock requested too soon after an exit anyway, which
+       would leave the game feeling like it ate the click. */
+    if(document.pointerLockElement) document.exitPointerLock();
+    ensureAudio();     // the tap that opened this IS the gesture the AudioContext needs
+  }
+}
+function setupSettings(){
+  const ov = document.getElementById('settings');
+  if(!ov) return;
+  const sens = document.getElementById('setSens'), sensV = document.getElementById('setSensVal');
+  const vol  = document.getElementById('setVol'),  volV  = document.getElementById('setVolVal');
+  const invY = document.getElementById('setInvY');
+
+  const drawSens = ()=>{ sensV.textContent = OPT.sens.toFixed(2) + '×'; };
+  const drawVol  = ()=>{ volV.textContent  = Math.round(OPT.vol*100) + '%'; };
+  const drawInv  = ()=>{ invY.textContent = OPT.invertY ? 'ON' : 'OFF';
+    invY.classList.toggle('on', OPT.invertY);
+    invY.setAttribute('aria-pressed', OPT.invertY ? 'true' : 'false'); };
+  sens.value = OPT.sens; vol.value = OPT.vol;
+  drawSens(); drawVol(); drawInv();
+
+  sens.addEventListener('input', ()=>{
+    OPT.sens = clamp(parseFloat(sens.value) || 1, 0.3, 2.5);
+    drawSens(); optSave('sens', OPT.sens); });
+  vol.addEventListener('input', ()=>{
+    OPT.vol = clamp(parseFloat(vol.value) || 0, 0, 1);
+    drawVol(); applyVolume(); optSave('vol', OPT.vol); });
+  /* a blip when you let go of the volume slider — otherwise you are setting a
+     number for a game that happens to be silent at that moment */
+  vol.addEventListener('change', ()=>{ ensureAudio(); applyVolume(); SFX.blip(); });
+  invY.addEventListener('click', ()=>{
+    OPT.invertY = !OPT.invertY; drawInv();
+    optSave('invertY', OPT.invertY ? '1' : '0'); SFX.click(); });
+
+  document.getElementById('setClose').addEventListener('click', ()=> setSettingsOpen(false));
+  document.getElementById('setDone').addEventListener('click', ()=> setSettingsOpen(false));
+  document.getElementById('setHowto').addEventListener('click', ()=>{
+    setSettingsOpen(false);
+    if(window.AC3D_HOWTO) window.AC3D_HOWTO.open();
+  });
+  /* ⛔ Escape is the DESKTOP door in, not just the way out. A pointer-locked
+     mouse physically cannot click the ? button — the cursor is captured, so the
+     click lands on the canvas and the button never sees it. Verified headless.
+     So Escape opens the panel too, and setSettingsOpen() drops the lock itself
+     rather than trusting the browser to have dropped it (Chrome and Firefox
+     disagree about whether Esc unlocks before or after the keydown).
+     Own listener rather than setupInput()'s: this must still work if init()
+     threw before setupInput() ever ran. */
+  addEventListener('keydown', e=>{
+    if(e.code !== 'Escape') return;
+    if(settingsOpen){ setSettingsOpen(false); return; }
+    if(paintOpen) return;                                   // Esc backs out of the studio first
+    if(getComputedStyle(document.getElementById('howto')).display !== 'none') return;
+    setSettingsOpen(true);
+  });
+
+  /* Handing the ? button its real job. The parse-time script looks for this and
+     falls back to the rules if the module never got here. */
+  window.AC3D_SETTINGS = { open: ()=> setSettingsOpen(true) };
+}
+/* Wired at module scope, not from init(): the panel must survive a failed boot
+   (no network, CDN down) because it is also the only way back to the rules. */
+setupSettings();
 
 /* ============================ Avatars ============================ */
 function baseColor(state){
@@ -1366,8 +1576,7 @@ function setupInput(){
   });
   document.addEventListener('mousemove', e=>{
     if(document.pointerLockElement !== cv) return;
-    if(myRole()==='seeker' && !amAbducted()){ seekerYaw -= e.movementX*SENS; seekerPitch = clamp(seekerPitch - e.movementY*SENS,0.2,1.45); }
-    else { yaw -= e.movementX*SENS; pitch = clamp(pitch - e.movementY*SENS,-0.5,1.3); }
+    applyLook(e.movementX*SENS, e.movementY*SENS);
   });
   document.addEventListener('mousedown', ()=>{ if(document.pointerLockElement===cv) setBeam(true); });
   document.addEventListener('mouseup',   ()=> setBeam(false));
@@ -1837,8 +2046,7 @@ function setupTouch(){
   R.addEventListener('pointerdown', e=>{ ensureAudio(); rId=e.pointerId; rx0=e.clientX; ry0=e.clientY; R.setPointerCapture(rId); });
   R.addEventListener('pointermove', e=>{ if(e.pointerId!==rId) return;
     const dx=e.clientX-rx0, dy=e.clientY-ry0; rx0=e.clientX; ry0=e.clientY;
-    if(myRole()==='seeker' && !amAbducted()){ seekerYaw -= dx*0.006; seekerPitch = clamp(seekerPitch - dy*0.006, 0.2, 1.45); }
-    else { yaw -= dx*0.006; pitch = clamp(pitch - dy*0.006, -0.5, 1.3); } });
+    applyLook(dx*0.006, dy*0.006); });
   const rEnd = e=>{ if(e.pointerId===rId) rId=null; };
   R.addEventListener('pointerup', rEnd); R.addEventListener('pointercancel', rEnd);
   document.getElementById('tPaint').onclick = ()=> setPaintOpen(!paintOpen);
@@ -2007,9 +2215,12 @@ function clientTick(dt){
   }
   const phNow = getState('phase') || 'waiting';                  // solo rooms never write a phase — undefined IS waiting
   const active = (phNow==='playing' || phNow==='waiting') && !abd && !seekerBlind();
-  const canControl = document.pointerLockElement === renderer.domElement || gp.present || touch.on;
+  /* !settingsOpen: on desktop the panel already kills control by releasing the
+     lock, but on a phone touch.on stays true, so without this a stick left
+     leaning under the panel would keep walking you into the open. */
+  const canControl = (document.pointerLockElement === renderer.domElement || gp.present || touch.on) && !settingsOpen;
   if(canControl){
-    applyGamepadLook(dt, role, abd);
+    applyGamepadLook(dt);
     if(abd) flyLocal(dt);
     else if(active && !paintOpen) moveLocal(dt, role);
     else if(active && paintOpen){
