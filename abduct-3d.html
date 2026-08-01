@@ -2353,6 +2353,12 @@ function targetTonesAt(x, z, plat){
   const ground = plat ? _tcTone.set(plat.colorHex) : _tcTone.set(TERRAIN[key] || TERRAIN.grass);
   if(!best) return [{ color:ground, w:1, kind:'ground', name:gname }];
   const w = clamp(0.65 * (1 - Math.sqrt(bd)/best.r), 0, 0.65);
+  /* ⛔ Never tax a player for something they have no tool to fix. Below
+     SPLIT_MIN_W the second tone is too light to unlock the SPLIT button, but it
+     was still dragging the score down: measured MATCH capping at 89% at the
+     outer edge of a cover radius with no way to improve it and no affordance
+     shown. If the split cannot engage, the faint tone does not count at all. */
+  if(w <= SPLIT_MIN_W) return [{ color:ground, w:1, kind:'ground', name:gname }];
   const tones = [{ color:best.color, w:w, kind:'cover', name:'NEARBY COVER' },
                  { color:ground, w:1-w, kind:'ground', name:gname }];
   tones.sort((a,b)=> b.w - a.w);
