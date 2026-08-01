@@ -92,6 +92,8 @@
   #bannerTitle{font-size:26px;font-weight:700;letter-spacing:.08em;margin:0 0 8px}
   #bannerSub{color:var(--muted);font-size:14px;line-height:1.55;margin:0}
   #bannerTitle.win{color:var(--cyan)} #bannerTitle.survive{color:var(--amber)} #bannerTitle.caught{color:var(--danger)}
+  #bannerCareer{font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;color:var(--muted-2);
+    margin:10px 0 0;padding-top:8px;border-top:1px solid var(--line-soft)}
 
   /* ---- overlays ---- */
   .overlay{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
@@ -132,6 +134,8 @@
   body.touch #banner .inner { margin-top:52px; padding:7px 13px; max-width:88vw; border-radius:10px }
   body.touch #bannerTitle { font-size:12.5px; margin:0 0 2px }
   body.touch #bannerSub { font-size:10px; line-height:1.35 }
+  /* on a phone the career strip is the first thing that should give up room */
+  body.touch #bannerCareer { font-size:9px; margin-top:5px; padding-top:5px; line-height:1.5 }
   body.touch #meter { bottom:92px; width:min(300px,54vw) }
   body.touch #paint { right:8px; transform:translateY(-50%) scale(.92); transform-origin:right center }
   #mapsToggle{ position:fixed; top:14px; left:50%; transform:translateX(calc(-50% - 110px)); z-index:12;
@@ -223,6 +227,18 @@
     border:1px solid var(--line); color:var(--txt); font-size:14px; font-weight:700; letter-spacing:.06em;
     cursor:pointer; touch-action:manipulation }
   .sbtn.tog.on{ border-color:var(--amber); color:var(--amber); background:rgba(242,179,61,.14) }
+  /* CAREER read-out. Mono on the values so the digits line up in a column the
+     eye can scan down instead of read across; 2.05 line-height because five
+     stacked rows at 13px on a phone want the air more than the panel wants the
+     space. */
+  .crow{ display:flex; justify-content:space-between; align-items:baseline; gap:12px; line-height:2.05 }
+  .crow span{ font-size:13px; color:var(--muted) }
+  .crow b{ font-family:var(--mono); font-size:13.5px; font-weight:600; color:var(--txt) }
+  .crow b.hi{ color:var(--amber) }
+  /* the armed state has to LOOK like a different button than the one you tapped,
+     or the second tap is just the first tap again */
+  #setWipe{ min-height:48px; font-size:12.5px; color:var(--muted) }
+  #setWipe.arm{ border-color:var(--danger); color:var(--danger); background:rgba(224,101,94,.14) }
   .sbtn.go{ margin-top:14px; min-height:56px; font-size:16px; border-color:var(--amber);
     background:var(--amber); color:#12130a }
   /* drop target flash */
@@ -270,7 +286,11 @@
 
   <div id="maphint">drop a SCANNER .json to load a map (host)</div>
 
-  <div id="banner" class="hidden"><div class="inner"><h1 id="bannerTitle"></h1><p id="bannerSub"></p></div></div>
+  <div id="banner" class="hidden"><div class="inner"><h1 id="bannerTitle"></h1><p id="bannerSub"></p>
+    <!-- lifetime totals get their own dim mono strip under a rule, so the line a
+         new player must read (the sub) never has to compete with numbers only a
+         returning player cares about. Empty and hidden until there is a career. -->
+    <p id="bannerCareer" class="hidden"></p></div></div>
 
   <div class="overlay hidden" id="clickToPlay">
     <div class="card"><h2>Click to capture mouse</h2>
@@ -359,6 +379,25 @@
       <div class="lab"><span>Master volume</span><i id="setVolVal">100%</i></div>
       <input id="setVol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Master volume" />
       <div class="hint">Every sound in the game rides this one dial.</div>
+    </div>
+
+    <!-- ⛔ CAREER IS PER CLIENT TOO, for the same reason the sliders are: these
+         totals are one player's history on one device. Nothing here is ever
+         pushed to the room, so no match can be desynced by it and no scoreboard
+         can be inflated with it. -->
+    <div class="srow">
+      <div class="lab"><span>Career</span><i id="setCarSince">nothing yet</i></div>
+      <div class="crow"><span>Lifetime stars</span><b id="carStars" class="hi">0</b></div>
+      <div class="crow"><span>Rounds played</span><b id="carRounds">0</b></div>
+      <div class="crow"><span>Times abducted</span><b id="carCaught">0</b></div>
+      <div class="crow"><span>Best single round</span><b id="carBestRound">0 ⭐</b></div>
+      <div class="crow"><span>Longest unbroken hide</span><b id="carBestHidden">0s</b></div>
+      <!-- two taps, never one. A one-tap wipe of a lifetime total is cruel, and
+           this panel is opened mid-game by a thumb that is already moving. The
+           first tap only arms it and says so; the second is the one that bites,
+           and it disarms itself after a few seconds if you walked away. -->
+      <button id="setWipe" class="sbtn" type="button">RESET CAREER</button>
+      <div class="hint" id="setWipeHint">Erases these five numbers on this device. It will ask first.</div>
     </div>
 
     <div class="srow">
@@ -612,6 +651,239 @@ function optLoad(){
 }
 function optSave(k, v){ try{ localStorage.setItem(OPT_KEY[k], String(v)); }catch(_){} }
 optLoad();
+
+/* ============================ Career (per client) ============================ */
+/* ⛔ SAME LAW AS SETTINGS, AND IT MATTERS MORE HERE: not one byte of this ever
+   goes through setState. A career is one person's history on one device. Pushed
+   into room state it would be a number nobody else can verify sitting on
+   everybody else's wire, it would fight itself the moment somebody opened two
+   tabs, and it would be gone the instant the room emptied — which is exactly the
+   failure this whole block exists to fix.
+   ONE json blob under aac3d_career rather than six aac3d_* keys: it is read and
+   written as a unit, and six keys is six chances to end up half-written. The
+   sibling comfort settings stay one-key-each because each of those really is
+   independent; a career is not. */
+const CAREER_KEY = 'aac3d_career';
+const CAREER = { stars:0, rounds:0, caught:0, bestHidden:0, bestRound:0, firstPlayed:0 };
+/* Ceilings, not just floors. A corrupt or hand-edited save can hold 1e308, and
+   1e308 + 1 === 1e308 — the counter silently stops counting and every round
+   after it is lost with no error anywhere. Clamping on READ means one bad save
+   can only ever cost the history it already held, never the arithmetic after. */
+const CAREER_MAX = { stars:1e9, rounds:1e7, caught:1e7, bestHidden:1e6, bestRound:1e7 };
+/* the same 0.55 the earn rule uses. One threshold for "you are actually hidden",
+   or the money on screen and the record in the panel disagree about it. */
+const CAMO_HIGH = 0.55;
+function careerNum(v, max){
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  if(!isFinite(n) || n <= 0) return 0;      // NaN, ±Infinity, negatives, "banana" all mean "no history"
+  return Math.min(Math.floor(n), max);
+}
+/* ⛔ READ THE DISK, do not trust the snapshot. Split out of careerLoad because
+   every WRITE now has to re-read first: two tabs of this game share one
+   localStorage, and the game itself tells you to open a second tab to start a
+   round ("Open this URL in another tab"). Writing an in-memory snapshot back
+   wholesale meant the second player's tab stamped its own totals over the
+   first player's, and a lifetime count went BACKWARD. Measured: 4,000 stars
+   replaced by 12. */
+function careerReadDisk(){
+  const d = { stars:0, rounds:0, caught:0, bestHidden:0, bestRound:0, firstPlayed:0 };
+  try{
+    const raw = localStorage.getItem(CAREER_KEY);
+    if(!raw) return d;
+    const o = JSON.parse(raw);
+    if(!o || typeof o !== 'object' || Array.isArray(o)) return d;
+    d.stars      = careerNum(o.stars,      CAREER_MAX.stars);
+    d.rounds     = careerNum(o.rounds,     CAREER_MAX.rounds);
+    d.caught     = careerNum(o.caught,     CAREER_MAX.caught);
+    d.bestHidden = careerNum(o.bestHidden, CAREER_MAX.bestHidden);
+    d.bestRound  = careerNum(o.bestRound,  CAREER_MAX.bestRound);
+    const fp = typeof o.firstPlayed === 'number' ? o.firstPlayed : parseFloat(o.firstPlayed);
+    d.firstPlayed = (isFinite(fp) && fp > 0 && fp <= Date.now() + 864e5) ? Math.floor(fp) : 0;
+  }catch(_){}
+  return d;
+}
+function careerLoad(){
+  try{
+    const raw = localStorage.getItem(CAREER_KEY);
+    if(!raw) return;
+    const o = JSON.parse(raw);
+    /* typeof null === 'object' and an array passes that test too, so both get
+       their own check: a save holding `7`, `null` or `[]` has to land on the
+       defaults. The game must never fail to boot because a save is malformed. */
+    if(!o || typeof o !== 'object' || Array.isArray(o)) return;
+    CAREER.stars      = careerNum(o.stars,      CAREER_MAX.stars);
+    CAREER.rounds     = careerNum(o.rounds,     CAREER_MAX.rounds);
+    CAREER.caught     = careerNum(o.caught,     CAREER_MAX.caught);
+    CAREER.bestHidden = careerNum(o.bestHidden, CAREER_MAX.bestHidden);
+    CAREER.bestRound  = careerNum(o.bestRound,  CAREER_MAX.bestRound);
+    const fp = typeof o.firstPlayed === 'number' ? o.firstPlayed : parseFloat(o.firstPlayed);
+    /* a first-played in the future is a wrong device clock or a tampered save.
+       Drop it rather than print "playing since 2087" forever. */
+    CAREER.firstPlayed = (isFinite(fp) && fp > 0 && fp <= Date.now() + 864e5) ? Math.floor(fp) : 0;
+  }catch(_){}   // unreadable / unparseable / private-mode throw: a fresh career is a fine default
+}
+careerLoad();
+
+let careerDirty = false, careerLastWrite = 0;
+/* Earned since the last SUCCESSFUL write. The merge adds these to whatever is on
+   disk rather than overwriting it, which is what makes two tabs add up instead
+   of fighting. Counters are add-only and bests are a max, so the merge is
+   order independent: whichever tab writes last, nobody loses anything. */
+const PEND = { stars:0, rounds:0, caught:0 };
+function careerSave(force){
+  if(!careerDirty) return;
+  const t = Date.now();
+  /* localStorage is synchronous on the main thread and the commit below runs
+     every frame, so an unthrottled write would stutter the render for nothing.
+     4s is the most a crash can cost, and every real exit — pagehide, tab
+     hidden, round boundary, reset — forces a write anyway. */
+  if(!force && t - careerLastWrite < 4000) return;
+
+  const disk = careerReadDisk();
+  disk.stars  = Math.min(CAREER_MAX.stars,  disk.stars  + PEND.stars);
+  disk.rounds = Math.min(CAREER_MAX.rounds, disk.rounds + PEND.rounds);
+  disk.caught = Math.min(CAREER_MAX.caught, disk.caught + PEND.caught);
+  disk.bestRound  = Math.max(disk.bestRound,  CAREER.bestRound);
+  disk.bestHidden = Math.max(disk.bestHidden, CAREER.bestHidden);
+  /* earliest wins: whichever tab has been playing longest owns "playing since" */
+  const fps = [disk.firstPlayed, CAREER.firstPlayed].filter(x => x > 0);
+  disk.firstPlayed = fps.length ? Math.min.apply(null, fps) : 0;
+
+  /* ⛔ The flag clears AFTER the write returns, not before. Clearing it first
+     meant one failed write (quota, private mode) dropped the change forever:
+     every force path starts with `if(!careerDirty) return`, so pagehide and the
+     rest went quiet even once storage recovered. Measured: 50 stars lost while
+     storage was fully writable. Staying dirty costs one retry; clearing early
+     costs the session. */
+  try{ localStorage.setItem(CAREER_KEY, JSON.stringify(disk)); }
+  catch(_){ return; }                       // private mode / quota: keep PEND, retry on the next force
+
+  careerLastWrite = t; careerDirty = false;
+  PEND.stars = PEND.rounds = PEND.caught = 0;
+  Object.assign(CAREER, disk);              // adopt the merged truth so the panel shows the real total
+}
+/* Another tab just wrote. Adopt its totals plus whatever we have not banked yet,
+   so both tabs agree on screen and a RESET performed in one is visible in the
+   other instead of being quietly resurrected by it. */
+addEventListener('storage', (e)=>{
+  if(e.key !== CAREER_KEY) return;
+  const d = careerReadDisk();
+  CAREER.stars      = Math.min(CAREER_MAX.stars,  d.stars  + PEND.stars);
+  CAREER.rounds     = Math.min(CAREER_MAX.rounds, d.rounds + PEND.rounds);
+  CAREER.caught     = Math.min(CAREER_MAX.caught, d.caught + PEND.caught);
+  CAREER.bestRound  = d.bestRound;  CAREER.bestHidden = d.bestHidden;
+  CAREER.firstPlayed = d.firstPlayed;
+  try{ careerDraw(); }catch(_){}
+});
+
+/* ---- session → lifetime ----
+   ⭐ THE COMMIT POINT IS A WATERMARK, NOT AN EVENT. careerCommit() runs every
+   frame, at every round boundary and on the way out of the tab, and it can be
+   called a thousand times a second without inflating a single number: it never
+   adds "what just happened", it adds the DIFFERENCE between a monotonic session
+   total and the part of that total already banked.
+   The event-shaped version ("on round end, add the score") was the obvious
+   design and the wrong one. The HUD that shows these numbers repaints 60×/s and
+   would have been one careless call away from banking the same round sixty
+   times; phase can flip back and forth on a reconnect; and a phone that kills a
+   backgrounded tab never reaches "round end" at all, so a whole session would
+   have banked nothing. With a watermark, double counting is arithmetically
+   impossible and a MISSED call costs nothing but a later flush. */
+let starsBanked = 0, caughtBanked = 0;
+let mpCaught = 0, prevAbd = false;      // networked abductions, edge-triggered
+let hiddenRun = 0, hiddenBest = 0;      // current unbroken high-camo stretch / best this session
+let roundStarsBase = 0;                 // session-star reading at the last round boundary
+function sessionStars(){
+  /* soloStars and the networked score are each monotone within a session, so
+     their sum is too — exactly the shape the watermark needs. */
+  let mp = 0;
+  try{ mp = (me && me.getState('score')) || 0; }catch(_){}
+  return soloStars + (isFinite(mp) && mp > 0 ? mp : 0);
+}
+function sessionCaught(){ return botCatches + mpCaught; }
+function careerCommit(force){
+  const s = sessionStars();
+  if(s > starsBanked){ CAREER.stars = Math.min(CAREER_MAX.stars, CAREER.stars + (s - starsBanked));
+    PEND.stars += (s - starsBanked); }
+  /* re-baseline even when it FELL. A rejoin resets the room score to zero;
+     without this line the next star would be counted up from zero all over
+     again. Lifetime totals only ever move one way. */
+  if(s !== starsBanked){ starsBanked = s; careerDirty = true; }
+
+  const c = sessionCaught();
+  if(c > caughtBanked){ CAREER.caught = Math.min(CAREER_MAX.caught, CAREER.caught + (c - caughtBanked));
+    PEND.caught += (c - caughtBanked); }
+  if(c !== caughtBanked){ caughtBanked = c; careerDirty = true; }
+
+  /* bests are a max, which is idempotent by nature — safe to apply mid-round, so
+     a tab closed thirty seconds into a personal best still keeps it. */
+  const rs = Math.max(0, Math.min(CAREER_MAX.bestRound, s - roundStarsBase));
+  if(rs > CAREER.bestRound){ CAREER.bestRound = rs; careerDirty = true; }
+  const hb = Math.min(CAREER_MAX.bestHidden, Math.floor(hiddenBest));
+  if(hb > CAREER.bestHidden){ CAREER.bestHidden = hb; careerDirty = true; }
+
+  /* stamped on the first thing worth remembering, not on page load: somebody who
+     opened the tab and closed it has not been playing since Tuesday. */
+  if(careerDirty && !CAREER.firstPlayed) CAREER.firstPlayed = Date.now();
+  careerSave(force);
+}
+/* A "round" is a LIFE: it starts at a spawn and ends when the beam gets you or
+   the clock does. Networked rounds count at the whistle (a round you rage-quit
+   still counts), the solo training ground counts per catch, because a catch is
+   the only ending a training stint has. */
+function careerRound(){
+  CAREER.rounds = Math.min(CAREER_MAX.rounds, CAREER.rounds + 1);
+  PEND.rounds += 1;
+  careerDirty = true;
+  careerCommit(true);               // bank the finished round BEFORE the baseline moves
+  roundStarsBase = sessionStars();  // ...and only then start the next one from zero
+  hiddenRun = 0;
+}
+function careerTick(dt){
+  const hidden = myRole()==='hider' && !amAbducted() && camoLevel > CAMO_HIGH;
+  if(hidden){ hiddenRun += dt; if(hiddenRun > hiddenBest) hiddenBest = hiddenRun; }
+  else hiddenRun = 0;               // the stretch is UNBROKEN — one flicker of visibility ends it
+  const abd = amAbducted();
+  if(abd && !prevAbd) mpCaught++;   // edge, not level: 'abducted' stays true for the rest of the round
+  prevAbd = abd;
+  careerCommit(false);
+}
+/* The exits that actually happen on a phone. beforeunload never fires when the
+   OS reaps a backgrounded tab and 'unload' is not guaranteed either; pagehide
+   and the hidden visibility state are the two that do. Both force the write. */
+addEventListener('pagehide', ()=> careerCommit(true));
+addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'hidden') careerCommit(true); });
+
+function careerFmtNum(n){ return (n||0).toLocaleString('en-US'); }
+function careerFmtTime(s){
+  s = Math.max(0, Math.round(s||0));
+  return s < 60 ? s+'s' : (Math.floor(s/60)+'m '+(s%60)+'s');
+}
+/* One short mono strip under the banner instead of more words inside the
+   sentence: on a phone that sub is already three lines at 10px, and a career is
+   glanced at, not read. Silent for a first-timer — a row of zeros is not a
+   welcome. */
+function careerLine(){
+  if(!CAREER.stars && !CAREER.rounds && !CAREER.caught) return '';
+  return 'CAREER  ⭐ '+careerFmtNum(CAREER.stars)+'  ·  '+careerFmtNum(CAREER.rounds)+(CAREER.rounds===1?' round':' rounds')
+       + '  ·  best '+careerFmtNum(CAREER.bestRound)+'⭐  ·  hidden '+careerFmtTime(CAREER.bestHidden);
+}
+/* getElementById directly, never the $ helper: this is called from
+   setupSettings(), which runs at module scope ABOVE the line where $ is
+   declared — reaching for it there is a temporal-dead-zone throw that would
+   take the whole module down with it. */
+function careerDraw(){
+  const g = id => document.getElementById(id);
+  if(!g('carStars')) return;
+  g('carStars').textContent      = careerFmtNum(CAREER.stars);
+  g('carRounds').textContent     = careerFmtNum(CAREER.rounds);
+  g('carCaught').textContent     = careerFmtNum(CAREER.caught);
+  g('carBestRound').textContent  = careerFmtNum(CAREER.bestRound)+' ⭐';
+  g('carBestHidden').textContent = careerFmtTime(CAREER.bestHidden);
+  g('setCarSince').textContent = CAREER.firstPlayed
+    ? ('since '+new Date(CAREER.firstPlayed).toLocaleDateString('en-US',{ month:'short', year:'numeric' }))
+    : 'nothing yet';
+}
 
 /* ============================ Audio (synth, no files) ============================ */
 let AC = null, master = null, outGain = null, beamOsc = null, beamGain = null;
@@ -1437,6 +1709,9 @@ function setSettingsOpen(on){
        would leave the game feeling like it ate the click. */
     if(document.pointerLockElement) document.exitPointerLock();
     ensureAudio();     // the tap that opened this IS the gesture the AudioContext needs
+    /* force a commit before drawing: the panel must show the run you are in the
+       middle of, not the run as of the last throttled write four seconds ago. */
+    careerCommit(true); careerDraw();
   }
 }
 function setupSettings(){
@@ -1467,6 +1742,50 @@ function setupSettings(){
     OPT.invertY = !OPT.invertY; drawInv();
     optSave('invertY', OPT.invertY ? '1' : '0'); SFX.click(); });
 
+  /* ---- career read-out + the two-tap wipe ---- */
+  careerDraw();
+  const wipe = document.getElementById('setWipe'), wipeHint = document.getElementById('setWipeHint');
+  const WIPE_LABEL = 'RESET CAREER', WIPE_HINT = 'Erases these five numbers on this device. It will ask first.';
+  let wipeArmedUntil = 0, wipeTimer = 0;
+  function wipeDisarm(){
+    wipeArmedUntil = 0; clearTimeout(wipeTimer);
+    wipe.classList.remove('arm'); wipe.textContent = WIPE_LABEL; wipeHint.textContent = WIPE_HINT;
+  }
+  wipe.addEventListener('click', ()=>{
+    if(Date.now() > wipeArmedUntil){
+      /* ARM. Nothing is deleted on this tap and the button says so in its own
+         label — a hint nobody reads is not a confirmation step. */
+      wipeArmedUntil = Date.now() + 6000;
+      wipe.classList.add('arm'); wipe.textContent = '⚠ TAP AGAIN TO ERASE FOREVER';
+      wipeHint.textContent = 'Nothing is deleted yet. This backs out on its own in a few seconds.';
+      SFX.lose();
+      clearTimeout(wipeTimer); wipeTimer = setTimeout(wipeDisarm, 6000);
+      return;
+    }
+    CAREER.stars = 0; CAREER.rounds = 0; CAREER.caught = 0;
+    CAREER.bestHidden = 0; CAREER.bestRound = 0; CAREER.firstPlayed = 0;
+    /* Re-baseline every watermark to NOW. Without this the running session is
+       still sitting above a banked-zero and the very next commit would pour it
+       all straight back in — a reset that undoes itself a second later reads as
+       a broken button, and the player has already lost the numbers. */
+    starsBanked = sessionStars(); caughtBanked = sessionCaught();
+    roundStarsBase = starsBanked; hiddenBest = 0; hiddenRun = 0;
+    /* ⛔ The wipe writes DIRECTLY and never goes through careerSave, because that
+       path re-reads the disk and adds to it, which would hand back the very
+       numbers being erased. Pending deltas are dropped too: they were earned
+       before the reset and the player just asked for that to be gone. */
+    PEND.stars = PEND.rounds = PEND.caught = 0;
+    try{ localStorage.setItem(CAREER_KEY, JSON.stringify(CAREER));
+      careerLastWrite = Date.now(); careerDirty = false; }catch(_){}
+    careerDraw(); wipeDisarm(); SFX.click();
+    wipeHint.textContent = 'Career erased. Everything from here counts as new.';
+  });
+  /* leaving the panel disarms it: an armed destructive button left waiting for
+     you the next time you open Settings is a trap, not a confirmation. */
+  document.getElementById('setClose').addEventListener('click', wipeDisarm);
+  document.getElementById('setDone').addEventListener('click', wipeDisarm);
+  document.getElementById('setHowto').addEventListener('click', wipeDisarm);
+
   document.getElementById('setClose').addEventListener('click', ()=> setSettingsOpen(false));
   document.getElementById('setDone').addEventListener('click', ()=> setSettingsOpen(false));
   document.getElementById('setHowto').addEventListener('click', ()=>{
@@ -1483,7 +1802,7 @@ function setupSettings(){
      threw before setupInput() ever ran. */
   addEventListener('keydown', e=>{
     if(e.code !== 'Escape') return;
-    if(settingsOpen){ setSettingsOpen(false); return; }
+    if(settingsOpen){ wipeDisarm(); setSettingsOpen(false); return; }
     if(paintOpen) return;                                   // Esc backs out of the studio first
     if(getComputedStyle(document.getElementById('howto')).display !== 'none') return;
     setSettingsOpen(true);
@@ -1831,7 +2150,7 @@ function earnTick(dt){
        hasLOS({x:bot.g.position.x,y:bot.alt,z:bot.g.position.z}, {x:localPos.x,y:0,z:localPos.z})) watchers = 1;
   }
   // the rule that makes it a game of nerve: seen + blended = earn; seen + visible = you're just bait
-  const blended = camoLevel > 0.55;
+  const blended = camoLevel > CAMO_HIGH;
   const taunting = performance.now() < tauntUntil;
   earnRate = (watchers > 0 && blended) ? (2 * watchers * (taunting ? 3 : 1)) : 0;
   if(earnRate > 0){
@@ -1893,6 +2212,7 @@ function botTick(dt){
   else botLock = Math.max(0, botLock - dt*1.6);
   if(botLock >= LOCK_TIME){
     botLock = 0; botCatches++; SFX.abduct(); setPaintOpen(false);
+    careerRound();      // a training stint ends the only way it can — banks the run, starts the next
     const hSp = (MAP && MAP.spawns || []).filter(x=>x.role==='hider');
     const sp = hSp.length ? hSp[Math.floor(Math.random()*hSp.length)] : null;
     const w = sp ? cellToWorld(sp.x, sp.y) : {x:0,z:0};
@@ -2182,12 +2502,20 @@ function clientTick(dt){
   // round transitions -> snap to spawn
   const rid = getState('roundId') || 0;
   if(rid !== myLastRound){
+    /* ⛔ myLastRound starts at -1, so the FIRST id this client ever sees looked
+       like a round transition and banked a round nobody played: join a room
+       mid-round, or just reload, and the career gained a free one. A first
+       sighting is adopted silently; only a real change after that counts. */
+    const firstSight = (myLastRound === -1);
     myLastRound = rid;
     const sp = me.getState('spawn');
     if(sp) localPos.set(sp.x, sp.alt || 1.1, sp.z);
     camoLevel = 0; stillness = 0; setBeam(false); setPaintOpen(false); hiderView = 'third';
     beamEnergy = 1; overheat = 0;
-    if(rid > 0) SFX.roundStart();
+    /* the roundId guard above already fires exactly once per round, which is the
+       only reason this is safe to put here — rounds is a count, not a watermark,
+       so it is the one number that needs its own once-per-round door. */
+    if(rid > 0){ SFX.roundStart(); if(!firstSight) careerRound(); }
   }
   // round-end sting (from this player's perspective)
   const ph = getState('phase') || 'waiting';
@@ -2195,6 +2523,7 @@ function clientTick(dt){
     if(ph==='intermission'){
       const iWon = (getState('winner')==='seekers' && role==='seeker') || (getState('winner')==='hiders' && role==='hider');
       iWon ? SFX.win() : SFX.lose();
+      careerCommit(true);   // the round is over and the survive bonus has landed: write it down now
     }
     prevPhase = ph;
   }
@@ -2203,6 +2532,7 @@ function clientTick(dt){
   gatherGamepad(role, abd);
   botTick(dt);                                                   // P32 training UFO when you're alone
   earnTick(dt);                                                  // P33 nerve scoring — earn while watched
+  careerTick(dt);                                                // roll this session into the lifetime profile
   const _mvd = Math.hypot(localPos.x-(clientTick._px||localPos.x), localPos.z-(clientTick._pz||localPos.z));
   clientTick._px = localPos.x; clientTick._pz = localPos.z;
   wetTick(dt, _mvd > 0.02);                                      // P34 wet paint drips while you move
@@ -2563,23 +2893,32 @@ function updateHUD(role, abd){
   const bEl=$('banner');
   if(phase==='waiting'){
     if(bot) showBanner('','Training grounds',
-      '⭐ '+soloStars+' · caught '+botCatches+'× — earn while it looks and sees nothing. 🎨 paint · 👁 sky · 📣 bait. Second player = real rounds.');
+      '⭐ '+soloStars+' this run · caught '+botCatches+'× — earn while it looks and sees nothing. 🎨 paint · 👁 sky · 📣 bait. Second player = real rounds.',
+      careerLine());
     else showBanner('','Waiting for players','Roam around to try the controls. Open this URL in another tab (or use Add a Player) to start a round.');
   }
   else if(phase==='intermission'){
     const w=getState('winner'), left=((getState('interEnds')||0)-Date.now())/1000;
-    if(w==='seekers') showBanner('win','Seekers win',`Everyone was abducted. Next round in ${fmt(left)}. Roles rotate.`);
-    else showBanner('survive','Hiders survived',`The clock ran out. Next round in ${fmt(left)}. Roles rotate.`);
+    /* intermission is the other honest place to show a career: the round just
+       ended, the numbers just moved, and nobody is being shot at. */
+    if(w==='seekers') showBanner('win','Seekers win',`Everyone was abducted. Next round in ${fmt(left)}. Roles rotate.`, careerLine());
+    else showBanner('survive','Hiders survived',`The clock ran out. Next round in ${fmt(left)}. Roles rotate.`, careerLine());
   }
   else if(abd){ showBanner('caught','Abducted','Spectating until the next round.'); }
   else bEl.classList.add('hidden');
 }
 let _bannerKey='';
-function showBanner(cls, title, sub){
+function showBanner(cls, title, sub, career){
   const key=cls+title+sub;
   const bEl=$('banner'); bEl.classList.remove('hidden');
   if(key!==_bannerKey){ _bannerKey=key; $('bannerTitle').textContent=title; $('bannerTitle').className=cls; $('bannerSub').textContent=sub; }
   else { $('bannerSub').textContent=sub; }   // keep countdown fresh
+  /* written on every call and deliberately NOT part of the key: the totals move
+     while the same banner stays up (you earn during 'Training grounds'), and one
+     text assignment a frame is cheaper than the comparison to avoid it. */
+  const cEl=$('bannerCareer');
+  cEl.textContent = career || '';
+  cEl.classList.toggle('hidden', !career);
 }
 
 /* Boot LAST: init() synchronously reaches CHAR_URL/PROP_URLS, which are
