@@ -67,9 +67,13 @@ const ORACLE = () => {
 
   ck('every perch holds you up', perches.every(p => p.supported),
      perches.filter(p => !p.supported).map(p => p.name).join(',') || 'all supported');
-  ck('standing on a perch makes IT the ground tone',
-     perches.every(p => p.groundTone && p.groundTone.name === p.name),
-     perches.filter(p => !p.groundTone || p.groundTone.name !== p.name).map(p => p.name).join(',') || 'all');
+  /* The ground tone must be A PERCH, not necessarily the one queried: pieces can
+     legitimately stack (a bench tucked under a picnic table), and supportAt
+     correctly returns the HIGHEST one covering the point. */
+  const perchNames = new Set(perches.map(p => p.name));
+  ck('standing on a perch makes a perch the ground tone',
+     perches.every(p => p.groundTone && perchNames.has(p.groundTone.name)),
+     perches.filter(p => !p.groundTone || !perchNames.has(p.groundTone.name)).map(p => p.name).join(',') || 'all');
   ck('no perch is taller than a jump can reach', out.tallest <= 2.0, 'tallest=' + out.tallest);
   ck('walls are NOT perches', !out.kinds.includes('WALL'), out.kinds.join(','));
   return out;

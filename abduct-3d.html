@@ -1418,6 +1418,8 @@ function buildWorld(map){
 
   for(const o of (map.objects||[])) addCover(o.type, o.x, o.y);
 
+  placeStructures(map);            // playground, park, picnic spots and hedges
+
   /* ── SPRAY TAGS ON OUTDOOR WALLS ─────────────────────────────────────
      Only OUTWARD faces get marked. A tag on the inside of a party wall is a
      tag nobody can ever stand against, and it would still cost a draw call. */
@@ -1647,6 +1649,246 @@ function patternTexture(c1, c2, kind){
   else { for(let yy=8;yy<64;yy+=16) for(let xx=8;xx<64;xx+=16){ x.beginPath(); x.arc(xx,yy,5.5,0,Math.PI*2); x.fill(); } }   // dots
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
+/* ===== STRUCTURES: a playground, a park, a picnic ==========================
+   Stephen 8/01: "we could have buildings and a playground, parks, different
+   flowers." Random maps were trees, rocks and crates on open ground, so every
+   map read the same. These are LANDMARKS - places a player names out loud
+   ("the slide", "the fountain") and remembers a spot inside.
+
+   Playground equipment is deliberately painted in BRIGHT primaries, which makes
+   it a hard hiding place: you cannot half-match a red slide, you commit to red
+   and then you are red everywhere else you go. Hedges and picnic wood are the
+   easy end. That spread is the point - a map should have easy spots and spots
+   that cost you something. */
+const PLAY_HUES  = [0xC8402F, 0x2E6FB5, 0xE0A828, 0x3E8E4A, 0x8E4FA8, 0xD9663F];
+const STRUCT_MAT = {
+  metal: new THREE.MeshStandardMaterial({ color:0x9aa2ad, roughness:.5, metalness:.35 }),
+  wood:  new THREE.MeshStandardMaterial({ color:0x8a6a42, roughness:.9 }),
+  hedge: new THREE.MeshStandardMaterial({ color:0x2c5233, roughness:1 }),
+  stone: new THREE.MeshStandardMaterial({ color:0x8d8f8a, roughness:.95 }),
+  water: new THREE.MeshStandardMaterial({ color:0x3f7fa8, roughness:.25, metalness:.2 }),
+  sand:  new THREE.MeshStandardMaterial({ color:0xc9b184, roughness:1 })
+};
+function _sMat(base, hex){ const m = base.clone(); m.color = new THREE.Color(hex); return m; }
+function _sBox(w,h,d,mat){ return new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat); }
+function _sCyl(r,h,mat,seg){ return new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,seg||10), mat); }
+
+/* Built at the origin, then placed. World coordinates for targets and perches
+   are read back from the real matrices afterwards, so a piece can be rotated or
+   nested and still register in the right place. */
+function placeStructure(built, wx, wz, rotY){
+  const g = built.group;
+  g.position.set(wx, 0, wz); g.rotation.y = rotY || 0;
+  worldGroup.add(g); cover.push(g);
+  g.updateMatrixWorld(true);
+  const _c = new THREE.Vector3();
+  for(const pc of built.pieces){
+    const bb = new THREE.Box3().setFromObject(pc.mesh);
+    if(!isFinite(bb.max.y)) continue;
+    bb.getCenter(_c);
+    if(pc.hex != null) addTarget(_c.x, _c.z, pc.hex, pc.r || 1.5);
+    if(pc.stand && bb.max.y > 0.3 && bb.max.y <= STAND_MAX_TOP){
+      platforms.push({ minX:bb.min.x, maxX:bb.max.x, minZ:bb.min.z, maxZ:bb.max.z,
+        top:bb.max.y, colorHex:(pc.hex==null?0x808080:pc.hex), cx:_c.x, cz:_c.z,
+        name:pc.name || 'PERCH' });
+    }
+  }
+}
+function _pc(built, mesh, opt){
+  opt = opt || {};
+  built.group.add(mesh);
+  if(opt.los !== false) losMeshes.push(mesh);
+  built.pieces.push({ mesh, hex:opt.hex, r:opt.r, stand:!!opt.stand, name:opt.name });
+  return mesh;
+}
+function buildSwings(R){
+  const b = { group:new THREE.Group(), pieces:[] };
+  const hue = PLAY_HUES[Math.floor(R()*PLAY_HUES.length)];
+  const mm = _sMat(STRUCT_MAT.metal, hue);
+  for(const sx of [-1.6, 1.6]){
+    for(const dz of [-0.8, 0.8]){
+      const leg = _sBox(0.16, 2.5, 0.16, mm);
+      leg.position.set(sx, 1.25, dz); leg.rotation.x = dz > 0 ? -0.22 : 0.22;
+      _pc(b, leg, { hex:hue, r:1.1 });
+    }
+  }
+  const bar = _sCyl(0.11, 3.6, mm); bar.rotation.z = Math.PI/2; bar.position.y = 2.45;
+  _pc(b, bar, { hex:hue, r:1.6 });
+  for(const sx of [-0.8, 0.8]){
+    for(const cx2 of [-0.28, 0.28]){
+      const ch = _sCyl(0.03, 1.5, STRUCT_MAT.metal, 5);
+      ch.position.set(sx+cx2, 1.68, 0); _pc(b, ch, { los:false });
+    }
+    const seat = _sBox(0.72, 0.09, 0.3, STRUCT_MAT.wood);
+    seat.position.set(sx, 0.94, 0);
+    _pc(b, seat, { hex:0x8a6a42, r:0.9, name:'SWING SEAT' });
+  }
+  return b;
+}
+function buildSlide(R){
+  const b = { group:new THREE.Group(), pieces:[] };
+  const hue = PLAY_HUES[Math.floor(R()*PLAY_HUES.length)];
+  const mm = _sMat(STRUCT_MAT.metal, hue);
+  const deck = _sBox(1.5, 0.16, 1.5, mm); deck.position.set(0, 1.7, 0);
+  _pc(b, deck, { hex:hue, r:1.3, stand:true, name:'SLIDE DECK' });
+  for(const [dx,dz] of [[-0.6,-0.6],[0.6,-0.6],[-0.6,0.6],[0.6,0.6]]){
+    const leg = _sBox(0.13, 1.7, 0.13, STRUCT_MAT.metal);
+    leg.position.set(dx, 0.85, dz); _pc(b, leg, { los:false });
+  }
+  const ramp = _sBox(1.15, 0.12, 3.1, mm);
+  ramp.position.set(0, 1.0, 1.9); ramp.rotation.x = 0.52;
+  _pc(b, ramp, { hex:hue, r:1.5, name:'SLIDE' });
+  for(let i=0;i<4;i++){
+    const rung = _sCyl(0.05, 1.1, STRUCT_MAT.metal, 6);
+    rung.rotation.z = Math.PI/2; rung.position.set(0, 0.42+i*0.42, -0.95);
+    _pc(b, rung, { los:false });
+  }
+  return b;
+}
+function buildSeesaw(R){
+  const b = { group:new THREE.Group(), pieces:[] };
+  const hue = PLAY_HUES[Math.floor(R()*PLAY_HUES.length)];
+  const post = _sCyl(0.16, 0.75, STRUCT_MAT.metal); post.position.y = 0.37;
+  _pc(b, post, { los:false });
+  const plank = _sBox(0.5, 0.13, 3.6, _sMat(STRUCT_MAT.wood, hue));
+  plank.position.y = 0.8; plank.rotation.x = 0.16;
+  _pc(b, plank, { hex:hue, r:1.7, stand:true, name:'SEESAW' });
+  return b;
+}
+function buildSandpit(R){
+  const b = { group:new THREE.Group(), pieces:[] };
+  const s = 2.6;
+  for(const [dx,dz,rw,rd] of [[0,-s/2,s,0.3],[0,s/2,s,0.3],[-s/2,0,0.3,s],[s/2,0,0.3,s]]){
+    const edge = _sBox(rw, 0.34, rd, STRUCT_MAT.wood);
+    edge.position.set(dx, 0.17, dz);
+    _pc(b, edge, { hex:0x8a6a42, r:1.2, stand:true, name:'SANDPIT EDGE' });
+  }
+  const sand = _sBox(s-0.3, 0.1, s-0.3, STRUCT_MAT.sand); sand.position.y = 0.06;
+  _pc(b, sand, { los:false, hex:0xc9b184, r:1.4 });
+  return b;
+}
+function buildClimber(R){
+  const b = { group:new THREE.Group(), pieces:[] };
+  const hue = PLAY_HUES[Math.floor(R()*PLAY_HUES.length)];
+  const mm = _sMat(STRUCT_MAT.metal, hue);
+  for(const dx of [-1.1, 1.1]) for(const dz of [-1.1, 1.1]){
+    const leg = _sBox(0.12, 2.0, 0.12, mm); leg.position.set(dx, 1.0, dz);
+    _pc(b, leg, { hex:hue, r:0.8 });
+  }
+  for(let lvl=1; lvl<=2; lvl++){
+    const y = lvl * 0.95;
+    for(const dz of [-1.1, 1.1]){
+      const r1 = _sCyl(0.06, 2.2, mm, 6); r1.rotation.z = Math.PI/2; r1.position.set(0, y, dz);
+      _pc(b, r1, { los:false });
+    }
+    for(const dx of [-1.1, 1.1]){
+      const r2 = _sCyl(0.06, 2.2, mm, 6); r2.rotation.x = Math.PI/2; r2.position.set(dx, y, 0);
+      _pc(b, r2, { los:false });
+    }
+  }
+  return b;
+}
+function buildFountain(R){
+  const b = { group:new THREE.Group(), pieces:[] };
+  const basin = _sCyl(1.9, 0.5, STRUCT_MAT.stone, 16); basin.position.y = 0.25;
+  _pc(b, basin, { hex:0x8d8f8a, r:2.0, stand:true, name:'FOUNTAIN RIM' });
+  const water = _sCyl(1.6, 0.12, STRUCT_MAT.water, 16); water.position.y = 0.46;
+  _pc(b, water, { los:false, hex:0x3f7fa8, r:1.6 });
+  const col = _sCyl(0.28, 1.2, STRUCT_MAT.stone, 10); col.position.y = 1.0;
+  _pc(b, col, { hex:0x8d8f8a, r:0.9 });
+  const cap = _sCyl(0.62, 0.16, STRUCT_MAT.stone, 12); cap.position.y = 1.65;
+  _pc(b, cap, { hex:0x8d8f8a, r:0.8 });
+  return b;
+}
+function buildBench(R){
+  const b = { group:new THREE.Group(), pieces:[] };
+  const seat = _sBox(1.9, 0.11, 0.52, STRUCT_MAT.wood); seat.position.y = 0.52;
+  _pc(b, seat, { hex:0x8a6a42, r:1.1, stand:true, name:'BENCH' });
+  const back = _sBox(1.9, 0.5, 0.1, STRUCT_MAT.wood); back.position.set(0, 0.85, -0.22);
+  _pc(b, back, { hex:0x8a6a42, r:1.0 });
+  for(const dx of [-0.8, 0.8]){
+    const leg = _sBox(0.12, 0.52, 0.44, STRUCT_MAT.metal); leg.position.set(dx, 0.26, 0);
+    _pc(b, leg, { los:false });
+  }
+  return b;
+}
+function buildPicnic(R){
+  const b = { group:new THREE.Group(), pieces:[] };
+  const top = _sBox(2.1, 0.12, 1.0, STRUCT_MAT.wood); top.position.y = 0.78;
+  _pc(b, top, { hex:0x8a6a42, r:1.3, stand:true, name:'PICNIC TABLE' });
+  for(const dz of [-0.78, 0.78]){
+    const bench = _sBox(2.1, 0.1, 0.34, STRUCT_MAT.wood); bench.position.set(0, 0.46, dz);
+    _pc(b, bench, { hex:0x8a6a42, r:1.0, stand:true, name:'PICNIC BENCH' });
+  }
+  for(const dx of [-0.85, 0.85]){
+    const leg = _sBox(0.12, 0.78, 1.7, STRUCT_MAT.wood); leg.position.set(dx, 0.39, 0);
+    _pc(b, leg, { los:false });
+  }
+  return b;
+}
+function buildHedge(R){
+  const b = { group:new THREE.Group(), pieces:[] };
+  const len = 3.0 + R()*2.5;
+  const h = _sBox(len, 1.25, 0.85, STRUCT_MAT.hedge); h.position.y = 0.62;
+  _pc(b, h, { hex:0x2c5233, r:Math.max(1.6, len*0.42), stand:true, name:'HEDGE' });
+  return b;
+}
+/* Find a clear rectangle: walkable terrain, nothing already standing on it. */
+function findPlots(map, wCells, hCells, want, taken){
+  const bad = { void:1, water:1, lava:1 };
+  const occupied = new Set();
+  for(const o of (map.objects||[])) occupied.add(o.x+','+o.y);
+  const out = [];
+  for(let gy=1; gy+hCells<mapRows-1 && out.length<want; gy+=2){
+    for(let gx=1; gx+wCells<mapCols-1 && out.length<want; gx+=2){
+      let ok = true;
+      for(let y=gy; y<gy+hCells && ok; y++) for(let x=gx; x<gx+wCells && ok; x++){
+        const k = (map.terrain[y] && map.terrain[y][x]) || 'void';
+        if(bad[k] || occupied.has(x+','+y) || taken.has(x+','+y)) ok = false;
+      }
+      if(!ok) continue;
+      for(let y=gy-1; y<gy+hCells+1; y++) for(let x=gx-1; x<gx+wCells+1; x++) taken.add(x+','+y);
+      out.push({ gx, gy });
+    }
+  }
+  return out;
+}
+/* ⛔ Platforms are AXIS-ALIGNED boxes, so a long thin piece rotated to some
+   arbitrary angle gets a bounding box far larger than the piece: a rotated
+   picnic bench swelled until it overlapped the table above it, and you could
+   stand on empty air beside it. Structures rotate in quarter turns only, which
+   keeps every box tight and honest. Visually it costs nothing. */
+function _quarter(R){ return Math.floor(R()*4) * (Math.PI/2); }
+function placeStructures(map){
+  const taken = new Set();
+  let seed = 0; const nm = String(map && map.name || 'world');
+  for(let i=0;i<nm.length;i++) seed = (seed*31 + nm.charCodeAt(i))|0;
+  const R = mulberry32(seed >>> 0);
+  const big = findPlots(map, 5, 5, 2, taken);
+  if(big[0]){                                             // THE PLAYGROUND
+    const c = cellToWorld(big[0].gx+2, big[0].gy+2);
+    placeStructure(buildSwings(R),  c.x-2.2, c.z-1.6, _quarter(R));
+    placeStructure(buildSlide(R),   c.x+2.0, c.z-1.4, _quarter(R));
+    placeStructure(buildSeesaw(R),  c.x-1.8, c.z+2.2, _quarter(R));
+    placeStructure(buildSandpit(R), c.x+2.2, c.z+2.4, 0);
+    placeStructure(buildClimber(R), c.x,     c.z,     _quarter(R));
+  }
+  if(big[1]){                                             // THE PARK
+    const c = cellToWorld(big[1].gx+2, big[1].gy+2);
+    placeStructure(buildFountain(R), c.x, c.z, 0);
+    for(let i=0;i<4;i++){
+      const a2 = i*1.57 + 0.4;
+      placeStructure(buildBench(R), c.x+Math.cos(a2)*3.6, c.z+Math.sin(a2)*3.6, Math.round((-a2+Math.PI/2)/(Math.PI/2))*(Math.PI/2));
+    }
+  }
+  const small = findPlots(map, 3, 3, 6, taken);            // picnic spots and hedges
+  small.forEach((pl, i)=>{
+    const c = cellToWorld(pl.gx+1, pl.gy+1);
+    if(i % 2 === 0) placeStructure(buildPicnic(R), c.x, c.z, _quarter(R));
+    else placeStructure(buildHedge(R), c.x, c.z, (Math.floor(R()*2)) * 1.5708);
+  });
+}
+
 /* ===== SURFACE MARKS ======================================================
    Stephen 8/01: "have spray paint on some outdoor walls, have all kinds of
    small details which would then make the player have to get good with the
@@ -1731,7 +1973,7 @@ function markCanvas(kind, seed){
     g.addColorStop(1,'rgba(24,18,16,0)');
     x.fillStyle = g; x.fillRect(0,0,S,S);
     x.globalAlpha = 0.5; x.strokeStyle = '#0a0a0c'; x.lineWidth = 2;
-    for(let i=0;i<7;i++){ const a2 = R()*6.28; x.beginPath(); x.moveTo(48,48);
+    for(let i=0;i<7;i++){ const a2 = _quarter(R); x.beginPath(); x.moveTo(48,48);
       x.lineTo(48+Math.cos(a2)*(26+R()*20), 48+Math.sin(a2)*(26+R()*20)); x.stroke(); }
   }else if(kind === 'chalk'){
     x.strokeStyle = 'rgba(232,220,200,0.8)'; x.lineWidth = 3; x.lineCap = 'round';
