@@ -1388,32 +1388,32 @@ function makeSampleMap(){
 const GEN_THEMES = [
   { base:'grass', road:'dirt', verge:'mud', water:'water', bank:'mud',
     patches:[['foliage',6,4,7],['moss',3,2,4],['rock',2,2,4]],
-    cover:[['tree','foliage',0.22],['tree','grass',0.05],['boulder','rock',0.3],['crate','dirt',0.05]], buildings:2 },
+    cover:[['tree','foliage',0.22],['tree','grass',0.05],['boulder','rock',0.3],['crate','dirt',0.05]], buildings:7 },
   { base:'sand',  road:'rock', verge:'dirt', water:null, bank:'sand',
     patches:[['rock',4,3,6],['dirt',3,2,4]],
-    cover:[['cactus','sand',0.04],['boulder','rock',0.28],['dead_tree','sand',0.015],['crate','dirt',0.06]], buildings:2 },
+    cover:[['cactus','sand',0.04],['boulder','rock',0.28],['dead_tree','sand',0.015],['crate','dirt',0.06]], buildings:7 },
   { base:'snow',  road:'ice', verge:'rock', water:'ice', bank:'rock',
     patches:[['ice',4,3,6],['rock',3,2,4]],
-    cover:[['ice_spike','ice',0.07],['ice_spike','snow',0.025],['boulder','rock',0.3],['dead_tree','snow',0.02]], buildings:2 },
+    cover:[['ice_spike','ice',0.07],['ice_spike','snow',0.025],['boulder','rock',0.3],['dead_tree','snow',0.02]], buildings:7 },
   { base:'concrete', road:'metal', verge:'dirt', water:'water', bank:'concrete',
     patches:[['metal',4,2,4],['grass',4,3,5],['dirt',2,2,3]],
-    cover:[['tree','grass',0.12],['crate','concrete',0.05],['barrel','metal',0.06],['barrel','concrete',0.02]], buildings:4 },
+    cover:[['tree','grass',0.12],['crate','concrete',0.05],['barrel','metal',0.06],['barrel','concrete',0.02]], buildings:11 },
   { base:'moss',  road:'crystal', verge:'ash', water:'water', bank:'ash',
     patches:[['crystal',4,3,5],['ash',3,2,4]],
-    cover:[['alien_pod','moss',0.05],['alien_pod','crystal',0.05],['boulder','crystal',0.12],['dead_tree','ash',0.06]], buildings:2 },
+    cover:[['alien_pod','moss',0.05],['alien_pod','crystal',0.05],['boulder','crystal',0.12],['dead_tree','ash',0.06]], buildings:7 },
   /* ── four new places ── */
   { base:'dirt', road:'concrete', verge:'sand', water:'water', bank:'mud',
     patches:[['grass',5,3,6],['mud',3,2,4],['rock',2,2,3]],
-    cover:[['tree','grass',0.14],['crate','dirt',0.06],['boulder','rock',0.26],['barrel','concrete',0.03]], buildings:3 },
+    cover:[['tree','grass',0.14],['crate','dirt',0.06],['boulder','rock',0.26],['barrel','concrete',0.03]], buildings:9 },
   { base:'rock', road:'dirt', verge:'sand', water:'water', bank:'sand',
     patches:[['moss',4,3,5],['sand',3,2,4],['crystal',2,2,3]],
-    cover:[['boulder','rock',0.24],['boulder','crystal',0.14],['dead_tree','sand',0.03],['crate','dirt',0.04]], buildings:2 },
+    cover:[['boulder','rock',0.24],['boulder','crystal',0.14],['dead_tree','sand',0.03],['crate','dirt',0.04]], buildings:7 },
   { base:'mud', road:'dirt', verge:'grass', water:'water', bank:'sand',
     patches:[['foliage',5,3,6],['water',2,2,4],['moss',3,2,4]],
-    cover:[['tree','foliage',0.20],['dead_tree','mud',0.05],['crate','dirt',0.04],['boulder','rock',0.2]], buildings:2 },
+    cover:[['tree','foliage',0.20],['dead_tree','mud',0.05],['crate','dirt',0.04],['boulder','rock',0.2]], buildings:7 },
   { base:'ash', road:'metal', verge:'rock', water:null, bank:'rock',
     patches:[['rock',4,3,5],['crystal',2,2,3],['dirt',3,2,4]],
-    cover:[['dead_tree','ash',0.07],['boulder','rock',0.28],['barrel','metal',0.05],['crate','ash',0.04]], buildings:3 },
+    cover:[['dead_tree','ash',0.07],['boulder','rock',0.28],['barrel','metal',0.05],['crate','ash',0.04]], buildings:9 },
 ];
 function makeRandomMap(seed){
   seed = seed>>>0 || 1;
@@ -1519,14 +1519,60 @@ function makeRandomMap(seed){
   }
   const objs=[], seen=new Set();
   const put=(x,y,type)=>{ const k=x+','+y; if(inb(x,y)&&!seen.has(k)){ seen.add(k); objs.push({x,y,type}); } };
+  /* ⭐⭐ A BUILDING WITH NO ROOF IS NOT A HIDING PLACE. The seeker looks STRAIGHT
+     DOWN, so a bare wall ring is a movement obstacle and nothing else — the
+     interior is as exposed as open ground. Roofing them turns the one structure
+     type the generator already had into the strongest spot in the game, and it
+     is the canopy idea at building scale.
+     ⚖ FAIRNESS: the roof is BROKEN, ~62% of interior cells, so there are always
+     patches of sky and a seeker who commits to a pass can still find you. And it
+     is self-limiting anyway — earnTick only pays while a hunter can SEE you, so
+     a roofed interior is safe and scores exactly nothing. Survive there, never
+     win there.
+     ⛔ DOORS ON EDGE MIDPOINTS, NEVER CORNERS. A corner gap is not a door: the
+     two flanking walls' AABBs, inflated by PLAYER_RADIUS 0.6 on a 3m TILE,
+     overlap on the diagonal, so the opening is sealed. That mistake measured
+     91% of maps sealed and 24% stranding a hider spawn on the last attempt.
+     An edge door leaves 3 - 2*0.6 = 1.8m against a 1.2m player. Two doors on
+     opposite walls so a building is a route, not a dead end. */
+  /* ⛔⛔ BUILDINGS MUST NOT TOUCH. Raising the count from 2-4 to 7-11 immediately
+     took connected free regions from 1 to 3-4: two buildings placed at random
+     overlap, and one's wall runs straight across the other's doorway, sealing it.
+     Stranded spawns happened to read 0 on the seeds I tried, but that is luck,
+     and luck is exactly how the previous structure generator shipped a version
+     that sealed 91% of maps. Reject any footprint that comes within two cells of
+     one already placed - correct by construction, no repair pass needed, and it
+     leaves streets between them instead of a collapsed heap. */
+  const placedRects = [];
   for(let b=0;b<th.buildings;b++){
     const bw=4+Math.floor(rnd()*4), bh=4+Math.floor(rnd()*4);
-    const x0=3+Math.floor(rnd()*(cols-bw-6)), y0=3+Math.floor(rnd()*(rows-bh-6));
-    const door=Math.floor(rnd()*4), mx=x0+(bw>>1), my=y0+(bh>>1);
-    for(let x=x0;x<=x0+bw;x++){ if(!(door===0&&x===mx)) put(x,y0,'wall'); if(!(door===1&&x===mx)) put(x,y0+bh,'wall'); }
-    for(let y=y0;y<=y0+bh;y++){ if(!(door===2&&y===my)) put(x0,y,'wall'); if(!(door===3&&y===my)) put(x0+bw,y,'wall'); }
+    let x0=0, y0=0, ok=false;
+    for(let tryN=0; tryN<24 && !ok; tryN++){
+      x0=3+Math.floor(rnd()*(cols-bw-6)); y0=3+Math.floor(rnd()*(rows-bh-6));
+      ok = true;
+      for(const r of placedRects){
+        if(x0-2 <= r.x1 && x0+bw+2 >= r.x0 && y0-2 <= r.y1 && y0+bh+2 >= r.y0){ ok=false; break; }
+      }
+    }
+    if(!ok) continue;                       // no room left; a sparser town beats a sealed one
+    placedRects.push({ x0, y0, x1:x0+bw, y1:y0+bh });
+    const mx=x0+(bw>>1), my=y0+(bh>>1);
+    const pair = rnd()<0.5;                    // N+S, or E+W: always through-routes
+    for(let x=x0;x<=x0+bw;x++){
+      if(!(pair && x===mx)) put(x,y0,'wall');
+      if(!(pair && x===mx)) put(x,y0+bh,'wall');
+    }
+    for(let y=y0;y<=y0+bh;y++){
+      if(!(!pair && y===my)) put(x0,y,'wall');
+      if(!(!pair && y===my)) put(x0+bw,y,'wall');
+    }
+    /* floor clutter FIRST: put() refuses an occupied cell, so roofing before
+       furnishing would leave the interior bare - and things to stand among are
+       exactly what makes an interior worth hiding in */
     put(mx,my,'crate'); if(rnd()<0.7) put(mx+1,my,'barrel');
     if(rnd()<0.5) put(mx-1,my,'chest'); if(rnd()<0.5) put(mx,my+1,'table');
+    for(let y=y0+1;y<y0+bh;y++) for(let x=x0+1;x<x0+bw;x++)
+      if(rnd() < 0.62) put(x,y,'roof');
   }
   /* ⭐ COVER COMES IN STANDS, NOT SPRINKLES. Uniform density is the same mistake
      the litter made: it fills a map evenly, which reads as noise and gives a
@@ -3024,6 +3070,13 @@ function addCover(type, gx, gy){
     if(pr){ pr.node.rotation.y = ((hash2(gy,gx)>>2)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
     else{ const b = new THREE.Mesh(new THREE.BoxGeometry(2.0,1.2,1.0), tm); b.position.y=0.6; g.add(b); losMeshes.push(b); }
     addTarget(w.x, w.z, tm.color.getHex(), 2.4);
+  }else if(type==='roof'){
+    /* one interior tile of a building's roof. No posts — the walls hold it up —
+       and it sits higher than a canopy so the two read as different shelter.
+       Above STAND_MAX_TOP, so like the canopy it can never become a perch. */
+    const rm = instMat(COVER_MAT.crate, WALL_HUES, gx+29, gy+31);
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(3.05, 0.26, 3.05), rm);
+    slab.position.y = 2.9; g.add(slab); losMeshes.push(slab);
   }else if(type==='canopy'){
     /* ⭐⭐ THE THING THAT ACTUALLY BEATS A HUNTER WHO LOOKS STRAIGHT DOWN.
        Measured 2026-08-02: overhead cover existed on 2-3% of a map, and on

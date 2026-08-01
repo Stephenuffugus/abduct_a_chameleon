@@ -43,7 +43,8 @@ for (let i = 0; i < 4; i++) {
   console.log(`${String(L.map).padEnd(14)} objs=${String(L.objects).padStart(4)} canopies=${String(cn).padStart(3)}` +
     `  ROOFED=${String((L.overheadCoverPct*100).toFixed(0)+'%').padStart(4)}` +
     `  twoTone=${String((L.twoToneOpportunity*100).toFixed(0)+'%').padStart(4)}` +
-    `  regions=${L.regions} stranded=${L.strandedSpawns}`);
+    `  regions=${L.regions} stranded=${L.strandedSpawns}` +
+    `  losMeshes=${L.losMeshes} hasLOS=${L.losCastMs}ms`);
 }
 if (errs.length) console.log('JS errors:', errs.slice(0,2).join(' | '));
 await b.close(); srv.close();
