@@ -4,10 +4,16 @@ Last updated: **2026-08-01**. This is the living record of what we're building, 
 where every external thing comes from. The older `HANDOFF-3d.md` is a predecessor document and
 partially stale; trust this file first, then `HANDOFF-v02.md` for the 2D game's history.
 
-> **⛔ READ THIS FIRST (2026-08-01): eight changes shipped in one day and NONE have been
-> played by Stephen.** Do not add more mechanics until he has. The next decisions — is the
-> two-tone tax fair, is the jump height right, is the litter too busy — cannot be answered
-> from here. `docs/PLAY-THIS-FIRST.md` is the test list.
+> **⛔ NEXT SESSION STARTS HERE: `docs/PLAN-the-wait-and-the-files.md`.**
+> Stephen played the 8/01 build and gave two notes ten seconds in: the wait needs something to
+> PLAY, and the story pages must be **earned** — *"starting with all 1000 is just dumb and id never
+> want to read them but if i found them each game id read them if displayed as they came."*
+> The reading room I shipped is a LIBRARY, and nobody reads a menu. The plan turns the wait into
+> the place you earn pages (spot-the-hider calibration), which answers both notes with one build
+> and proves the render-a-frame technique the SURVEY PHOTOGRAPH needs later.
+>
+> Still true and still untested: the other seven 8/01 changes. `docs/PLAY-THIS-FIRST.md` is the
+> test list — is the two-tone tax fair, is the jump height right, is the litter too busy.
 
 > **Shipped since the 7/20 body of this doc** (read the commit messages, they carry the detail):
 > per-terrain speed/settle effects (`TERRAIN_FX`), the Kenney nature scatter that made every
