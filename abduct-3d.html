@@ -173,10 +173,33 @@
   @media (max-height: 470px){ #tPractice{ top:52px; min-height:44px; font-size:11px }
     #tStart{ top:104px; min-height:44px; font-size:11px; min-width:120px } }
   #hidewait .num{ font-size:26px; font-weight:900; color:var(--txt); font-variant-numeric:tabular-nums }
+  #hwTabs{ display:flex; gap:8px; justify-content:center }
+  #hwTabs button{ min-height:44px; padding:0 18px; border-radius:10px; cursor:pointer;
+    background:#0A0E19; border:1.5px solid var(--line); color:var(--muted);
+    font-family:var(--mono); font-size:11px; font-weight:800; letter-spacing:.12em;
+    touch-action:manipulation }
+  #hwTabs button.on{ border-color:var(--cyan); color:var(--cyan); background:rgba(63,208,224,.14) }
+  #hwCal{ display:none; flex-direction:column; gap:6px; align-items:center; min-height:0; overflow:hidden }
+  #hidewait.cal #hwCal{ display:flex }
+  #hidewait.cal #hwCard, #hidewait.cal #hwFoot{ display:none }
+  #hidewait:not(.cal) #hwCal{ display:none }
+  #calTop{ display:flex; justify-content:space-between; width:100%; max-width:640px;
+    font-family:var(--mono); font-size:10px; letter-spacing:.12em; color:var(--muted-2) }
+  #calWrap{ flex:1 1 auto; min-height:0; width:100%; display:flex; align-items:center; justify-content:center }
+  /* height-first, width derived - so the box the pointer hits IS the box we drew
+     in. object-fit:contain would letterbox and quietly break the hit test. */
+  #calCv{ height:100%; width:auto; aspect-ratio:16/9; max-width:min(100%,640px); max-height:100%;
+    border-radius:10px; border:1px solid var(--line); cursor:crosshair;
+    touch-action:manipulation; display:block }
+  #calMsg{ font-family:var(--mono); font-size:11px; min-height:17px; color:var(--amber); text-align:center }
   #hwWhy{ font-family:var(--mono); font-size:11px; line-height:1.6; color:var(--muted);
     max-width:760px; margin:0 auto; text-align:center }
   @media (max-height: 470px){ #hwWhy{ font-size:10px; line-height:1.5 } }
-  #hidewait.on{ display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:10px;
+  /* ⛔ FIVE CHILDREN, FOUR ROWS. Adding the tab strip without adding a row
+     handed 1fr to the TABS - they swelled, overlapped the header line and
+     pushed the board off the bottom of a landscape phone. In cal mode the
+     4th row is the board; in file mode it is the case file. */
+  #hidewait.on{ display:grid; grid-template-rows:auto auto auto minmax(0,1fr) auto; gap:10px;
     align-items:stretch; justify-items:stretch; padding:12px 14px }
   #hwHead{ display:flex; align-items:center; gap:12px; justify-content:center }
   #hwHead .lead{ font-size:15px; letter-spacing:.14em }
@@ -333,6 +356,11 @@
     width:min(92vw,560px); opacity:0; pointer-events:none;
     transition:transform .5s cubic-bezier(.2,.9,.25,1), opacity .5s ease }
   #recov.on{ transform:translate(-50%,0); opacity:1 }
+  /* ⛔ #recov sits at 24 to stay UNDER the paint dock (25). But the seeker's
+     blindfold is z-index 64, so a page won at the calibration board rendered
+     BEHIND the panel that was showing the board - a reward nobody could see,
+     which is the exact failure this whole rework exists to fix. */
+  #recov.hi{ z-index:66 }
   body.recovering #banner{ opacity:0; transition:opacity .35s ease; pointer-events:none }
   #recov .rc{ background:rgba(10,14,25,.93); border:1px solid var(--amber);
     border-left:4px solid var(--amber); border-radius:12px; padding:11px 14px;
@@ -526,6 +554,18 @@
     <div id="hwWhy">You are the hunter this round. Your saucer is blind while the chameleons paint
       themselves and pick a spot. When the number hits zero you can fly and beam. Until then, the
       Abduction Files are yours to read.</div>
+    <!-- ⭐ THE WAIT IS WHERE YOU LEARN THE JOB. Two minutes of blindfold was dead
+         time; now it trains the one skill a hunter has - seeing the shape whose
+         colour is slightly wrong - and pays a case file when you get it. -->
+    <div id="hwTabs">
+      <button id="hwTabCal" class="on" type="button">CALIBRATION</button>
+      <button id="hwTabFile" type="button">CASE FILE</button>
+    </div>
+    <div id="hwCal">
+      <div id="calTop"><span id="calRound">TARGET 1 OF 3</span><span id="calHint">one of these is a painted body · tap it</span></div>
+      <div id="calWrap"><canvas id="calCv" width="640" height="360"></canvas></div>
+      <div id="calMsg">&nbsp;</div>
+    </div>
     <div id="hwCard">
       <div id="hwMeta"><span id="hwThread">FR</span><span id="hwNum">CASE FILE · PAGE — OF 1000</span></div>
       <div id="hwHeading">—</div>
@@ -3012,6 +3052,8 @@ function showRecovery(p, reason){
   document.getElementById('recovBody').textContent = (p.b || '').slice(0, 260)
     + ((p.b||'').length > 260 ? '…' : '');
   el.classList.add('on');
+  /* over the blindfold when the blindfold is what you are looking at */
+  el.classList.toggle('hi', !!document.querySelector('#hidewait.on'));
   /* ⛔ the card and the free-play banner both sit at the top centre, so the page
      you just found landed on top of the instructions. The banner is always
      available; the card is a moment. The moment wins, briefly. */
@@ -3055,6 +3097,325 @@ function filesPrev(){
   const own = filesOwned(); if(!own.length) return filesRender(null);
   filesIdx = (filesIdx - 1 + own.length) % own.length; filesRender(own[filesIdx]);
 }
+/* ═══ CALIBRATION — the hunter's two minutes become the place you learn ═══
+   The blindfold was dead time: a clock and a case file. Now it drills the ONE
+   skill a hunter has — finding the shape whose colour is slightly wrong — and
+   pays a page when you get it, which is where most of an archive comes from.
+   ⛔ IT LEAKS NOTHING. It is a still frame we compose ourselves out of the real
+   TERRAIN palette, never a view of the live scene, so a seeker can stare at it
+   for the whole window and learn nothing about where anybody is hiding.
+   ⚖ The target's accuracy uses the REAL matchColor, so "88% match" here means
+   what it means out there. It ramps 0.78 → 0.88 → 0.96, and caps at 3 pages a
+   window so it cannot be farmed. */
+const CAL_ROUNDS = 3;
+const CAL_ACC = [0.78, 0.88, 0.96];
+let calRound = 0, calShapes = [], calTarget = null, calDone = false, calSeedN = 1;
+function calRand(){ calSeedN = (calSeedN*1664525 + 1013904223)>>>0; return calSeedN/4294967296; }
+/* nudge a colour until the real matchColor scores it at `acc` against the base */
+function calShade(base, acc){
+  const b = new THREE.Color(base);
+  const _s = new THREE.Color(); b.getRGB(_s, THREE.SRGBColorSpace);
+  const br = _s.r*255, bg = _s.g*255, bb = _s.b*255;
+  // matchColor: 1 - sqrt(.4dr²+.5dg²+.3db²)/150  →  solve for the distance we want
+  const want = (1 - acc) * 150;
+  const cl = v => Math.max(0, Math.min(255, Math.round(v)));
+  const dist = (r,g,b) => Math.sqrt(0.4*(r-br)*(r-br) + 0.5*(g-bg)*(g-bg) + 0.3*(b-bb)*(b-bb));
+  /* ⛔ TWO WRONG ANSWERS BEFORE THIS ONE.
+     (1) A free random direction, clamped to 0..255, silently SHORTENED the
+         distance on bright terrains - sand asked for 88% and scored 91.4%. A
+         trainer that overstates its own difficulty is worse than none.
+     (2) Forcing every channel toward the middle never clamps, but it makes the
+         direction a FUNCTION OF THE GROUND: on blue-grey every body on the
+         board came out pink, differing only in how pink. Three magenta people
+         is not a camouflage lesson.
+     So: try random directions, and only accept one whose CLAMPED result really
+     lands where we asked. Fall back inward, which always has headroom. */
+  for(let a=0; a<10; a++){
+    const dr = calRand()*2-1, dg = calRand()*2-1, db = calRand()*2-1;
+    const norm = Math.sqrt(0.4*dr*dr + 0.5*dg*dg + 0.3*db*db); if(norm < 0.15) continue;
+    const k = want / norm;
+    const r = cl(br + dr*k), g = cl(bg + dg*k), b2 = cl(bb + db*k);
+    if(Math.abs(dist(r,g,b2) - want) <= 1.2) return 'rgb('+r+','+g+','+b2+')';
+  }
+  const sr = br > 127 ? -1 : 1, sg = bg > 127 ? -1 : 1, sb = bb > 127 ? -1 : 1;
+  const dr = sr*(0.35+calRand()), dg = sg*(0.35+calRand()), db = sb*(0.35+calRand());
+  const norm = Math.sqrt(0.4*dr*dr + 0.5*dg*dg + 0.3*db*db) || 1, k = want / norm;
+  return 'rgb(' + cl(br + dr*k) + ',' + cl(bg + dg*k) + ',' + cl(bb + db*k) + ')';
+}
+/* ⛔ THE FIRST BOARD LOOKED LIKE CANDY. calShade picks a direction in raw RGB,
+   which on sand threw out purple and magenta blobs - nothing on that board read
+   as ground, so the eye sorted by "which one is not a sweet" and learned
+   nothing. Props are tinted along the terrain's OWN hue: lightness moves, hue
+   barely does. Then the only thing that stands out by colour is the body. */
+function calTint(base, amt){
+  const c = new THREE.Color(base), h = {};
+  c.getHSL(h, THREE.SRGBColorSpace);
+  /* ⛔ 0.06..0.94 let a mid-green prop go to near-black and near-white, which
+     reads as a hole and a light, not as ground. Keep props inside the range a
+     surface actually occupies. */
+  const l = Math.max(0.14, Math.min(0.86, h.l + (calRand()<0.5 ? -amt : amt)));
+  const t = new THREE.Color().setHSL(
+    (h.h + (calRand()-0.5)*0.05 + 1) % 1,
+    Math.max(0.03, Math.min(1, h.s * (0.7 + calRand()*0.5))),
+    l, THREE.SRGBColorSpace);
+  const _o = new THREE.Color(); t.getRGB(_o, THREE.SRGBColorSpace);
+  return 'rgb('+Math.round(_o.r*255)+','+Math.round(_o.g*255)+','+Math.round(_o.b*255)+')';
+}
+function calBody(x, y, fill, ctx, scale){
+  const k = scale || 1;
+  ctx.fillStyle = fill;
+  ctx.beginPath(); ctx.ellipse(x, y-13*k, 9*k, 10*k, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x, y+9*k,  13*k, 18*k, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillRect(x-15*k, y+2*k, 30*k, 6*k);
+}
+function calBlob(x, y, r, fill, ctx){
+  ctx.fillStyle = fill; ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  for(let a=0; a<Math.PI*2; a+=Math.PI/6){
+    const rr = r * (0.72 + calRand()*0.5);
+    ctx.lineTo(x + Math.cos(a)*rr, y + Math.sin(a)*rr);
+  }
+  ctx.closePath(); ctx.fill();
+}
+function calDeal2D(){
+  const cv = document.getElementById('calCv'); if(!cv) return;
+  const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+  calSeedN = (Date.now() ^ (calRound*7919)) >>> 0;
+  const keys = Object.keys(TERRAIN).filter(k=> k!=='void' && k!=='lava');
+  const base = TERRAIN[keys[Math.floor(calRand()*keys.length)]];
+  ctx.fillStyle = base; ctx.fillRect(0,0,W,H);
+  // ground mottle, the same idea as the world's corner jitter
+  for(let i=0;i<70;i++){
+    const j = 1 + (calRand()-0.5)*0.16;
+    const c = new THREE.Color(base); const _s = new THREE.Color();
+    c.getRGB(_s, THREE.SRGBColorSpace);
+    ctx.fillStyle = 'rgba('+Math.round(_s.r*255*j)+','+Math.round(_s.g*255*j)+','+Math.round(_s.b*255*j)+',0.55)';
+    calBlob(calRand()*W, calRand()*H, 22+calRand()*54, ctx.fillStyle, ctx);
+  }
+  calShapes = [];
+  const rocks = 11 + Math.floor(calRand()*7);
+  for(let i=0;i<rocks;i++){
+    const x = 30+calRand()*(W-60), y = 30+calRand()*(H-60), r = 14+calRand()*24;
+    calBlob(x, y, r, calTint(base, 0.07 + calRand()*0.16), ctx);
+  }
+  /* ⭐ TWO OF THE DECOYS ARE BODIES. Without them the drill is "find the person
+     shape" and colour never enters into it - which is the opposite of the skill
+     the next 150 seconds needs. These are unmistakably the wrong colour; the
+     answer is the one that is BOTH a body and nearly the right colour. */
+  /* ⛔ all three bodies landed in one pile on the first board - three overlapping
+     silhouettes is one blob, and there is nothing to compare. Space them. */
+  const spots = [];
+  function spot(){
+    for(let t=0;t<60;t++){
+      const x = 52+calRand()*(W-104), y = 46+calRand()*(H-92);
+      if(spots.every(p=> Math.hypot(p.x-x, p.y-y) > 92)){ spots.push({x,y}); return {x,y}; }
+    }
+    const x = 52+calRand()*(W-104), y = 46+calRand()*(H-92); spots.push({x,y}); return {x,y};
+  }
+  const acc = CAL_ACC[Math.min(calRound, CAL_ACC.length-1)];
+  const real = spot();
+  /* ⛔ THE ANSWER MUST BE THE BEST MATCH ON THE BOARD. The decoy bodies were
+     tinted along the terrain's hue while the target was placed by raw distance,
+     so on a blue-grey ground the "answer" came out magenta and the decoys came
+     out closer than it - training the exact opposite instinct. Decoys are now
+     scored by the same maths, a clear step worse. */
+  const decoyAcc = [];
+  for(let i=0;i<2;i++){ const d = spot();
+    const da = Math.max(0.34, acc - (0.20 + calRand()*0.14));
+    decoyAcc.push(+da.toFixed(3));
+    calBody(d.x, d.y, calShade(base, da), ctx, 0.85+calRand()*0.3); }
+  const bx = real.x, by = real.y;
+  calBody(bx, by, calShade(base, acc), ctx, 1);
+  calTarget = { x:bx, y:by, r:30, acc, decoyAcc, base };
+  document.getElementById('calRound').textContent = 'TARGET ' + (calRound+1) + ' OF ' + CAL_ROUNDS;
+  document.getElementById('calHint').textContent = Math.round(acc*100) + '% match · tap the body';
+  document.getElementById('calMsg').innerHTML = '&nbsp;';
+}
+
+/* ─── the board is a REAL FRAME OF THE GAME ────────────────────────────────
+   ⭐ The plan called for this and the 2D board was the stand-in: "the
+   render-to-texture puzzle. The real work, and the piece that proves the
+   technique the survey photograph will need." A flat abstract puzzle trains
+   colour discrimination; a frame of the actual world trains SPOTTING - the
+   body is small, it is lit by the same moon, it is behind the same crate, and
+   it fades with the same camo opacity a real hider gets.
+   ⛔ IT LEAKS NOTHING. Every real player rig, decoy and practice body is made
+   invisible for this one render, and the bodies in the shot are ones we placed
+   ourselves. A seeker can stare at it for the whole window and learn nothing
+   about where anybody actually is. */
+let calRT = null, calBodies = [], calCam = null, calBodyDecoys = [];
+/* ⚠ the practice range leaks the same way, but it spawns six bodies once a
+   session; calibration spawns three EVERY deal, several times a round, so the
+   paint canvas texture has to go back or a long session grows a heap of them. */
+function calClearBodies(){
+  for(const b of calBodies){ scene.remove(b.root); if(b.tex) b.tex.dispose(); }
+  calBodies = [];
+}
+function calMakeBody(x, z, acc){
+  const tones = targetTonesAt(x, z);
+  if(!tones || !tones.length) return null;
+  const hex0 = '#' + tones[0].color.getHexString();
+  const top = calShade(hex0, acc);
+  const bot = tones.length > 1 ? calShade('#' + tones[1].color.getHexString(), acc) : top;
+  const dg = charBase ? buildRealGuy(new THREE.Color(top)) : buildDoorGuy(new THREE.Color(top));
+  dg.paint.ctx.fillStyle = bot; dg.paint.ctx.fillRect(0,0,128,128);
+  dg.paint.ctx.fillStyle = top; dg.paint.ctx.fillRect(0,0,128,64);
+  dg.paint.tex.needsUpdate = true;
+  const root = new THREE.Group(); root.add(dg.root);
+  const sup = supportAt(x, z);
+  root.position.set(x, sup.top, z); root.rotation.y = calRand()*Math.PI*2;
+  scene.add(root);
+  const pose = POSE_KEYS[1 + Math.floor(calRand()*(POSE_KEYS.length-1))] || 'idle';
+  if(dg.mixer){ const a2 = dg.actions[POSE_CLIP[pose]] || dg.actions.Idle; if(a2){ a2.play(); dg.mixer.update(0.1); } }
+  else if(dg.joints) applyPose(dg.joints, pose);
+  const av = _cvAvg(dg.paint.cv,0,1), avT = _cvAvg(dg.paint.cv,0,0.5), avB = _cvAvg(dg.paint.cv,0.5,1);
+  /* the number we SHOW is the one the game's own scorer gives this body where
+     it is standing - not the number we asked for. Measured beats promised. */
+  const mq = effMatch(av, avT, avB, targetTonesAt(x, z, sup.plat)).mq;
+  const op = 1 - mq*(1 - CAMO_MIN_OPACITY);          // exactly what a seeker sees
+  for(const mm of dg.skin) mm.opacity = op;
+  const b = { root, x, z, top:sup.top, mq, tex:dg.paint.tex };
+  calBodies.push(b); return b;
+}
+function calDeal3D(){
+  const cv = document.getElementById('calCv'); if(!cv || !renderer || !scene) return false;
+  if(!paintTargets || paintTargets.length < 3) return false;
+  const W = cv.width, H = cv.height;
+  calClearBodies();
+  const acc = CAL_ACC[Math.min(calRound, CAL_ACC.length-1)];
+  /* a spot with cover, and two decoys far enough away to be separate silhouettes */
+  const spots = [];
+  function pickSpot(minGap){
+    for(let t=0;t<40;t++){
+      const tg = paintTargets[Math.floor(calRand()*paintTargets.length)];
+      const a = calRand()*Math.PI*2, r = 0.7 + calRand()*1.5;
+      const x = clamp(tg.x + Math.cos(a)*r, -halfW+3, halfW-3);
+      const z = clamp(tg.z + Math.sin(a)*r, -halfH+3, halfH-3);
+      if(spots.every(q=> Math.hypot(q.x-x, q.z-z) > minGap)){ spots.push({x,z}); return {x,z}; }
+    }
+    return null;
+  }
+  const home = pickSpot(0); if(!home) return false;
+  const real = calMakeBody(home.x, home.z, acc); if(!real) return false;
+  /* ⛔ The decoys were drawn from the WHOLE map and then rejected if further
+     than 16m from the answer - so most boards shipped with none at all and the
+     drill quietly degraded to "find the only person". Draw them from cover
+     NEAR the answer, and fall back to an offset from the answer itself. */
+  const near = paintTargets.filter(t=> Math.hypot(t.x-home.x, t.z-home.z) < 13
+                                    && Math.hypot(t.x-home.x, t.z-home.z) > 2.5);
+  for(let i=0;i<2;i++){
+    let dx, dz;
+    if(near.length){ const tg = near[Math.floor(calRand()*near.length)];
+      const a = calRand()*Math.PI*2, r = 0.7 + calRand()*1.3;
+      dx = tg.x + Math.cos(a)*r; dz = tg.z + Math.sin(a)*r; }
+    else { const a = calRand()*Math.PI*2, r = 4 + calRand()*7;
+      dx = home.x + Math.cos(a)*r; dz = home.z + Math.sin(a)*r; }
+    dx = clamp(dx, -halfW+3, halfW-3); dz = clamp(dz, -halfH+3, halfH-3);
+    if(Math.hypot(dx-home.x, dz-home.z) < 2.2) continue;    // not on top of the answer
+    const db = calMakeBody(dx, dz, Math.max(0.34, acc - (0.20 + calRand()*0.14)));
+    if(db) calBodyDecoys.push(+db.mq.toFixed(3));
+  }
+  /* a seeker's eye: up and away, looking down, the body off centre */
+  if(!calCam) calCam = new THREE.PerspectiveCamera(58, W/H, 0.1, 1200);
+  calCam.aspect = W/H;
+  let sx = 0, sy = 0, rad = 0, ok = false;
+  const eye = new THREE.Vector3(), look = new THREE.Vector3(), pv = new THREE.Vector3();
+  for(let t=0;t<22 && !ok;t++){
+    /* ⛔ TWO CAMERAS BEFORE THIS ONE. 12-21m up high made a landscape photo with
+       four-pixel people in it. Dropping to 24 degrees put the lens on the deck
+       staring at empty ground with the answer lost on the horizon. A hunter
+       looks DOWN from a saucer a short way off - and the frame is worthless if
+       the body is behind a wall, so check the line of sight and check that they
+       are actually big enough on screen to be tappable. */
+    const dist = 9 + calRand()*6, yaw = calRand()*Math.PI*2, pitch = 0.62 + calRand()*0.38;
+    eye.set(home.x + Math.cos(yaw)*dist*Math.cos(pitch), real.top + Math.sin(pitch)*dist,
+            home.z + Math.sin(yaw)*dist*Math.cos(pitch));
+    if(!hasLOS({x:eye.x,y:eye.y,z:eye.z}, {x:home.x, y:real.top+0.8, z:home.z})) continue;
+    const off = 0.8 + calRand()*2.2, oa = calRand()*Math.PI*2;
+    look.set(home.x + Math.cos(oa)*off, real.top + 0.5, home.z + Math.sin(oa)*off);
+    calCam.position.copy(eye); calCam.lookAt(look); calCam.updateMatrixWorld(true);
+    calCam.updateProjectionMatrix();
+    pv.set(home.x, real.top + 0.85, home.z).project(calCam);
+    if(Math.abs(pv.x) > 0.68 || Math.abs(pv.y) > 0.62 || pv.z >= 1) continue;
+    const hx = (pv.x*0.5 + 0.5) * W, hy = (1 - (pv.y*0.5 + 0.5)) * H;
+    pv.set(home.x, real.top, home.z).project(calCam);
+    const fy = (1 - (pv.y*0.5 + 0.5)) * H;
+    if(Math.abs(fy - hy) < 20) continue;                 // too small to be a fair tap
+    sx = hx; sy = (hy + fy)/2;
+    rad = clamp(Math.abs(fy - hy) * 1.2, 30, 0.11*W);
+    ok = true;
+  }
+  if(!ok){ calClearBodies(); return false; }
+  /* hide EVERY real rig for the one render */
+  const hidden = [];
+  const stash = o => { if(o && o.visible){ hidden.push(o); o.visible = false; } };
+  for(const p of players){ stash(p.group); stash(p.groundRing); if(p.decoyObj) stash(p.decoyObj.root); }
+  for(const b of practiceBodies) stash(b.root);
+  let got = null;
+  try{
+    if(!calRT){ calRT = new THREE.WebGLRenderTarget(W, H, { depthBuffer:true });
+                calRT.texture.colorSpace = THREE.SRGBColorSpace; }
+    renderer.setRenderTarget(calRT);
+    renderer.render(scene, calCam);
+    const buf = new Uint8Array(W*H*4);
+    renderer.readRenderTargetPixels(calRT, 0, 0, W, H, buf);
+    got = buf;
+  }catch(e){ got = null; }
+  renderer.setRenderTarget(null);
+  for(const o of hidden) o.visible = true;
+  calClearBodies();
+  if(!got) return false;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(W, H);
+  for(let y=0; y<H; y++){                       // GL reads bottom-up
+    const src = (H-1-y)*W*4, dst = y*W*4;
+    for(let i=0;i<W*4;i++) img.data[dst+i] = got[src+i];
+  }
+  ctx.putImageData(img, 0, 0);
+  calTarget = { x:sx, y:sy, r:rad, acc:+real.mq.toFixed(2), decoyAcc:calBodyDecoys, base:null, real3d:true };
+  document.getElementById('calRound').textContent = 'TARGET ' + (calRound+1) + ' OF ' + CAL_ROUNDS;
+  document.getElementById('calHint').textContent = Math.round(real.mq*100) + '% match · tap the body';
+  document.getElementById('calMsg').innerHTML = '&nbsp;';
+  return true;
+}
+function calDeal(){
+  calBodyDecoys = [];
+  let ok = false;
+  try{ ok = calDeal3D(); }
+  catch(e){ try{ calClearBodies(); renderer.setRenderTarget(null); }catch(_){} ok = false; }
+  /* ⛔ NEVER LEAVE THE SEEKER STARING AT A BLANK BOX. Before the map exists, on
+     a context loss, or in any browser where the readback fails, the composed
+     board still trains the same colour call. */
+  if(!ok) calDeal2D();
+}
+function calTap(ev){
+  if(calDone || !calTarget) return;
+  const cv = document.getElementById('calCv'), r = cv.getBoundingClientRect();
+  const x = (ev.clientX - r.left) * cv.width / r.width;
+  const y = (ev.clientY - r.top)  * cv.height / r.height;
+  const hit = Math.hypot(x - calTarget.x, y - calTarget.y) < calTarget.r;
+  const ctx = cv.getContext('2d');
+  ctx.strokeStyle = hit ? '#3FD0E0' : '#E0655E'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(calTarget.x, calTarget.y, calTarget.r, 0, Math.PI*2); ctx.stroke();
+  const msg = document.getElementById('calMsg');
+  if(hit){
+    SFX.blip();
+    const p = recoverPage('SPOTTED IT');
+    msg.textContent = p ? 'Found. Case file recovered.' : 'Found. Your archive is complete.';
+    calRound++;
+  }else{
+    SFX.lose && SFX.lose();
+    msg.textContent = 'That was them. Look for the shape whose colour is nearly right.';
+  }
+  calTarget = null;
+  if(calRound >= CAL_ROUNDS){
+    calDone = true;
+    setTimeout(()=>{ msg.textContent = 'Calibrated. Nothing more to gain until the next round.'; }, 900);
+    return;
+  }
+  setTimeout(calDeal, 1500);
+}
+function calReset(){ calRound = 0; calDone = false; calTarget = null; }
 function filesEnsure(){
   if(curFile) return;
   const own = filesOwned();
@@ -3062,8 +3423,51 @@ function filesEnsure(){
   filesIdx = Math.min(filesIdx, own.length-1);
   filesRender(own[filesIdx]);
 }
+/* tabs: the drill and the archive share the window */
+(function(){
+  const cal = document.getElementById('hwTabCal'), fil = document.getElementById('hwTabFile');
+  const hw = document.getElementById('hidewait'), cv = document.getElementById('calCv');
+  if(!cal || !fil || !hw) return;
+  function pick(which){
+    hw.classList.toggle('cal', which === 'cal');
+    cal.classList.toggle('on', which === 'cal');
+    fil.classList.toggle('on', which !== 'cal');
+    if(which === 'cal' && !calTarget && !calDone) calDeal(); else if(which !== 'cal') filesEnsure();
+    SFX.click();
+  }
+  cal.addEventListener('click', ()=> pick('cal'));
+  fil.addEventListener('click', ()=> pick('file'));
+  if(cv) cv.addEventListener('pointerdown', calTap);
+})();
+window.__aac3dCal = {
+  deal(){ calReset(); document.getElementById('hidewait').classList.add('cal'); calDeal();
+          return { ...calTarget, round: calRound }; },
+  tapTarget(){ const cv = document.getElementById('calCv'), r = cv.getBoundingClientRect();
+    if(!calTarget) return false;
+    calTap({ clientX: r.left + calTarget.x * r.width / cv.width,
+             clientY: r.top  + calTarget.y * r.height / cv.height }); return true; },
+  tapMiss(){ const cv = document.getElementById('calCv'), r = cv.getBoundingClientRect();
+    if(!calTarget) return false;
+    /* the far corner from the target, guaranteed outside its radius */
+    const fx = calTarget.x > cv.width/2 ? 10 : cv.width-10, fy = calTarget.y > cv.height/2 ? 10 : cv.height-10;
+    calTap({ clientX: r.left + fx * r.width / cv.width, clientY: r.top + fy * r.height / cv.height }); return true; },
+  state(){ return { round: calRound, done: calDone, live: !!calTarget,
+    acc: calTarget ? calTarget.acc : null, rounds: CAL_ROUNDS,
+    decoyAcc: calTarget ? calTarget.decoyAcc : null, base: calTarget ? calTarget.base : null,
+    real3d: !!(calTarget && calTarget.real3d),
+    msg: (document.getElementById('calMsg')||{}).textContent || '',
+    onTab: document.getElementById('hidewait').classList.contains('cal') }; },
+  /* prove the shade maths with the REAL scorer, not a re-implementation */
+  verify(base, acc){ const c = new THREE.Color(calShade(base, acc)); const t = new THREE.Color(base);
+    const _s = new THREE.Color(); c.getRGB(_s, THREE.SRGBColorSpace);
+    return matchColor({ r:_s.r*255, g:_s.g*255, b:_s.b*255 }, t); }
+};
 window.__aac3dFiles = {
-  open(){ filesDemo = true; document.getElementById('hidewait').classList.add('on'); filesEnsure(); },
+  open(){ filesDemo = true; const hw = document.getElementById('hidewait');
+          hw.classList.add('on'); hw.classList.remove('cal');
+          const c=document.getElementById('hwTabCal'), f=document.getElementById('hwTabFile');
+          if(c) c.classList.remove('on'); if(f) f.classList.add('on');
+          filesEnsure(); },
   close(){ filesDemo = false; document.getElementById('hidewait').classList.remove('on'); },
   next: filesNext, prev: filesPrev,
   recover: recoverPage,
@@ -5698,7 +6102,11 @@ function updateHUD(role, abd){
     const left=hideLeft(), on=filesDemo || (role==='seeker' && left>0 && !abd);
     const was = hw.classList.contains('on');
     hw.classList.toggle('on', on);
-    if(on && !was) filesEnsure();          // first page the moment the window opens
+    /* ⭐ The window opens on CALIBRATION, not on a case file. A page you are
+       handed the second you are blindfolded is a menu; a page you win by
+       spotting somebody is the reward the plan asked for. The reader is one
+       tap away and always was. */
+    if(on && !was){ calReset(); hw.classList.add('cal'); calDeal(); filesEnsure(); }
     // keep the number fresh whenever a head start is running, not only while the
     // blindfold happens to be up, so it can never be caught showing a stale value
     if(left>0){ const n=$('hidewaitNum'); if(n) n.textContent=String(Math.ceil(left)); }
