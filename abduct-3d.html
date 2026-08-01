@@ -1279,6 +1279,59 @@ async function init(){
 }
 
 /* ============================ Scene ============================ */
+/* ⭐⭐ EVERY MAP WAS THE SAME PURPLE NIGHT. The valley could have roads, water,
+   a town and a horizon and still feel like one place repainted, because the sky,
+   the fog and all three lights were hard-coded once in setupScene and never
+   changed again. A mood is the cheapest variety in the whole game: the same
+   geometry under a different hour reads as a different world.
+   ⚖ Camouflage is measured against TERRAIN[key], NOT against the lit pixel, and
+   your paint is lit by the same lights as the ground — so re-tinting the scene
+   never changes who wins. It changes how the place FEELS, which is the thing
+   that was missing. Fog far stays >= 520 in every mood or the horizon rings the
+   backdrop pass added would be fogged back out of existence. */
+const MOODS = [
+  { key:'deepnight', sky:['#0B0F2B','#241C55','#4A2A6B','#8A3F63','#C46A4E'],
+    fog:0x3B2A63, near:120, far:560, hemi:[0xBFD4FF,0x4A2F66,2.6], warm:[0xFFB77A,0.9], moon:[0xDCE8FF,1.9] },
+  { key:'moonrise',  sky:['#05070F','#0E1430','#1D2B52','#3A4E7A','#8FA6C8'],
+    fog:0x2A3A5C, near:130, far:600, hemi:[0xCFE0FF,0x2B3550,2.4], warm:[0x9FC0FF,0.6], moon:[0xF2F7FF,2.2] },
+  { key:'emberdusk', sky:['#160A14','#33122A','#6B2432','#B4482F','#E8894A'],
+    fog:0x5A2A2E, near:110, far:540, hemi:[0xFFD2B0,0x51222A,2.5], warm:[0xFF9A52,1.5], moon:[0xFFE2C0,1.2] },
+  { key:'auroral',   sky:['#04120F','#0A2A28','#12484A','#2C7A6A','#7FD8A8'],
+    fog:0x1E4A46, near:130, far:620, hemi:[0xC8FFE8,0x14403C,2.5], warm:[0x66E0B0,0.8], moon:[0xE6FFF4,1.8] },
+  { key:'fogbound',  sky:['#1A1B22','#2B2E38','#434752','#6A6E78','#9AA0A8'],
+    fog:0x5C616B, near:60,  far:520, hemi:[0xDDE2EA,0x4A4E58,2.8], warm:[0xC8CEDA,0.7], moon:[0xF0F4FA,1.5] },
+  { key:'bloodmoon', sky:['#12060C','#2C0A1A','#571228','#93253A','#D2543F'],
+    fog:0x4A1826, near:115, far:545, hemi:[0xFFC4C0,0x3E1220,2.4], warm:[0xFF7A66,1.2], moon:[0xFFD0C4,1.7] },
+];
+let skyDome = null, hemiLight = null, warmLight = null, moonLight = null, _mood = MOODS[0];
+function applyMood(m){
+  if(!m) return;
+  _mood = m;
+  if(skyDome){
+    const c = document.createElement('canvas'); c.width = 8; c.height = 256;
+    const x = c.getContext('2d'), g = x.createLinearGradient(0,0,0,256);
+    m.sky.forEach((stop,i)=> g.addColorStop(i/(m.sky.length-1), stop));
+    x.fillStyle = g; x.fillRect(0,0,8,256);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const old = skyDome.material.map;
+    skyDome.material.map = tex; skyDome.material.needsUpdate = true;
+    if(old) old.dispose();                       // a mood per map load leaks otherwise
+  }
+  if(scene){
+    scene.background = new THREE.Color(m.sky[0]);
+    if(scene.fog){ scene.fog.color.setHex(m.fog); scene.fog.near = m.near; scene.fog.far = m.far; }
+    else scene.fog = new THREE.Fog(m.fog, m.near, m.far);
+  }
+  if(hemiLight){ hemiLight.color.setHex(m.hemi[0]); hemiLight.groundColor.setHex(m.hemi[1]); hemiLight.intensity = m.hemi[2]; }
+  if(warmLight){ warmLight.color.setHex(m.warm[0]); warmLight.intensity = m.warm[1]; }
+  if(moonLight){ moonLight.color.setHex(m.moon[0]); moonLight.intensity = m.moon[1]; }
+}
+/* the same map name always gets the same weather, so a level you remember looks
+   the way you remember it, and two clients in one room never disagree */
+function moodForMap(name){
+  let h = 0; for(const ch of String(name||'world')) h = (h*31 + ch.charCodeAt(0)) >>> 0;
+  return MOODS[h % MOODS.length];
+}
 function setupScene(){
   scene = new THREE.Scene();
   /* the sky was one flat near-black colour, which is most of why the whole game
@@ -1289,22 +1342,11 @@ function setupScene(){
      been fogged to nothing — the backdrop has to be VISIBLE to stop the valley
      feeling like a box. Pushed out so distance reads as haze, not as deletion. */
   scene.fog = new THREE.Fog(0x3B2A63, 120, 560);
-  (function(){
-    const c=document.createElement('canvas'); c.width=8; c.height=256;
-    const g=c.getContext('2d').createLinearGradient(0,0,0,256);
-    g.addColorStop(0.00,'#0B0F2B');   // zenith
-    g.addColorStop(0.42,'#241C55');
-    g.addColorStop(0.72,'#4A2A6B');
-    g.addColorStop(0.88,'#8A3F63');   // the warm band the moon sits in
-    g.addColorStop(1.00,'#C46A4E');   // horizon glow
-    const x=c.getContext('2d'); x.fillStyle=g; x.fillRect(0,0,8,256);
-    const tex=new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const dome=new THREE.Mesh(new THREE.SphereGeometry(600,24,16),
-      new THREE.MeshBasicMaterial({ map:tex, side:THREE.BackSide, fog:false, depthWrite:false }));
-    dome.renderOrder=-1;
-    scene.add(dome);
-  })();
+  skyDome = new THREE.Mesh(new THREE.SphereGeometry(600,24,16),
+    new THREE.MeshBasicMaterial({ side:THREE.BackSide, fog:false, depthWrite:false }));
+  skyDome.renderOrder = -1;
+  scene.add(skyDome);
+  applyMood(MOODS[0]);
   /* ⭐ A NIGHT SKY WITH SOMETHING IN IT. The dome was a gradient and nothing
      else, so looking up gave you a flat wash. Stars give the sky depth and a
      moon gives it a subject — and the moon sits in the warm horizon band the
@@ -1361,13 +1403,15 @@ function setupScene(){
      entire decision the game is built on disappears. Lights lifted so the table
      colours actually reach the screen. Still night - the sky dome, the fog and
      the violet ground bounce are untouched - but a night you can see in. */
-  scene.add(new THREE.HemisphereLight(0xBFD4FF, 0x4A2F66, 2.6));
-  const warm = new THREE.DirectionalLight(0xFFB77A, 0.9);   // horizon glow, low and warm
-  warm.position.set(-60, 18, -40);
-  scene.add(warm);
-  const moon = new THREE.DirectionalLight(0xDCE8FF, 1.9);
-  moon.position.set(40, 80, 25);
-  scene.add(moon);
+  hemiLight = new THREE.HemisphereLight(0xBFD4FF, 0x4A2F66, 2.6);
+  scene.add(hemiLight);
+  warmLight = new THREE.DirectionalLight(0xFFB77A, 0.9);   // horizon glow, low and warm
+  warmLight.position.set(-60, 18, -40);
+  scene.add(warmLight);
+  moonLight = new THREE.DirectionalLight(0xDCE8FF, 1.9);
+  moonLight.position.set(40, 80, 25);
+  scene.add(moonLight);
+  applyMood(_mood);          // now that the lights exist, tint them
 
   addEventListener('resize', ()=>{
     camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -1730,7 +1774,8 @@ function terrainKeyAt(wx,wz){
 }
 
 function buildWorld(map){
-  MAP = map; mapCols = map.grid.cols; mapRows = map.grid.rows;
+  MAP = map;
+  applyMood(moodForMap(map && map.name)); mapCols = map.grid.cols; mapRows = map.grid.rows;
   halfW = mapCols*TILE/2; halfH = mapRows*TILE/2;
   while(worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
   cover = []; losMeshes = []; solids = []; paintTargets = []; platforms = []; markCount = 0; markQueue = [];
@@ -2835,6 +2880,9 @@ window.__aac3dFiles = {
    a map with no walls cannot tell you anything about wall marks. */
 /* seeded map generation + hot-swap, so a harness can measure the SAME generator
    the game ships instead of a copy of it */
+/* let a harness page through every mood without loading six maps */
+window.__aac3dMoods = function(){ return MOODS.map(m=>m.key); };
+window.__aac3dSetMood = function(i){ applyMood(MOODS[i|0] || MOODS[0]); return MOODS[i|0].key; };
 window.__aac3dMakeMap = function(seed){ return makeRandomMap(seed>>>0); };
 window.__aac3dSetMap = function(m){ loadMapFromDrop(m); return m.name; };
 window.__aac3dLoadMap = function(name){
