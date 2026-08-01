@@ -166,6 +166,15 @@
     padding:0 14px; border-radius:12px; cursor:pointer; touch-action:manipulation;
     background:rgba(63,208,224,.14); border:1.5px solid var(--cyan); color:var(--cyan);
     font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.12em }
+  /* 170, not 114 - #tStart already owns 114. They never show in the same
+     phase, but two fixed buttons sharing coordinates is a bug waiting for the
+     one state that proves them not exclusive. */
+  #tCal{ position:fixed; left:12px; top:170px; z-index:14; min-height:48px; min-width:118px;
+    padding:0 14px; border-radius:12px; cursor:pointer; touch-action:manipulation;
+    background:rgba(63,208,224,.14); border:1.5px solid var(--cyan); color:var(--cyan);
+    font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.12em }
+  #hwClose{ display:none }
+  #hidewait.spec #hwClose{ display:block }
   #tStart{ position:fixed; left:12px; top:114px; z-index:14; min-height:48px; min-width:132px;
     padding:0 14px; border-radius:12px; cursor:pointer; touch-action:manipulation;
     background:rgba(242,179,61,.16); border:1.5px solid var(--amber); color:var(--amber);
@@ -552,14 +561,14 @@
       <span class="num" id="hidewaitNum">20</span>
     </div>
     <div id="hwWhy">You are the hunter this round. Your saucer is blind while the chameleons paint
-      themselves and pick a spot. When the number hits zero you can fly and beam. Until then, the
-      Abduction Files are yours to read.</div>
+      themselves and pick a spot. When the number hits zero you can fly and beam.</div>
     <!-- ⭐ THE WAIT IS WHERE YOU LEARN THE JOB. Two minutes of blindfold was dead
          time; now it trains the one skill a hunter has - seeing the shape whose
          colour is slightly wrong - and pays a case file when you get it. -->
     <div id="hwTabs">
       <button id="hwTabCal" class="on" type="button">CALIBRATION</button>
       <button id="hwTabFile" type="button">CASE FILE</button>
+      <button id="hwClose" type="button">✕ BACK</button>
     </div>
     <div id="hwCal">
       <div id="calTop"><span id="calRound">TARGET 1 OF 3</span><span id="calHint">one of these is a painted body · tap it</span></div>
@@ -580,6 +589,10 @@
   <!-- solo only: the switch between hiding and hunting. Half this game was
        untestable alone because solo always made you the hider. -->
   <button id="tPractice" type="button" class="hidden">HUNT</button>
+  <!-- Caught, or between rounds: the drill is the third thing to do with dead
+       time. A BUTTON and not a takeover - watching the round finish from the
+       saucer's side is worth something too, so the panel never steals it. -->
+  <button id="tCal" type="button" class="hidden">CALIBRATE</button>
   <!-- A round is something you ASK FOR now. Before 2026-08-02 one started by
        itself the moment a second connection appeared, which put one of you in a
        UFO and both of you on a 120s clock nobody chose. -->
@@ -601,6 +614,14 @@
     scanners are still warming up. Colour is the whole game: the closer your paint
     is to the ground beneath you, the longer a hunter's eye slides straight past.
     Movement is what gives you away, so pick your spot and settle.</p>
+
+    <h3>While you wait</h3>
+    <p>A hunter's scanners are dark for the first two minutes, and a chameleon who gets
+    beamed up is out for the rest of the round. Both get the same thing to do:
+    <b>CALIBRATION</b>. You are shown a still frame of the valley with three painted
+    bodies hidden somewhere in it — tap the one whose colour is closest to the ground it
+    is standing on. Get it right and you recover a page of the <b>Abduction Files</b>,
+    which is the only way to read them. Three a wait, and no more.</p>
 
     <h3>The controls, on a phone</h3>
     <ul>
@@ -3251,18 +3272,35 @@ function calClearBodies(){
   for(const b of calBodies){ scene.remove(b.root); if(b.tex) b.tex.dispose(); }
   calBodies = [];
 }
-function calMakeBody(x, z, acc){
+/* ⛔ ASKING FOR A WORSE PAINT DOES NOT GUARANTEE A WORSE SCORE. A decoy asked
+   for 58% measured 90% because it was standing somewhere its own paint happened
+   to suit - and that board taught the player to tap the wrong body. So work out
+   what a paint job WOULD score before building the rig: the canvas is a flat
+   two-band fill, so the averages are just the two colours and effMatch is pure.
+   Cheap enough to search over, and it agrees with the measurement exactly. */
+function calPaintFor(x, z, acc){
   const tones = targetTonesAt(x, z);
   if(!tones || !tones.length) return null;
-  const hex0 = '#' + tones[0].color.getHexString();
-  const top = calShade(hex0, acc);
+  const top = calShade('#' + tones[0].color.getHexString(), acc);
   const bot = tones.length > 1 ? calShade('#' + tones[1].color.getHexString(), acc) : top;
+  const o1 = {r:0,g:0,b:0}, o2 = {r:0,g:0,b:0};
+  new THREE.Color(top).getRGB(o1, THREE.SRGBColorSpace);
+  new THREE.Color(bot).getRGB(o2, THREE.SRGBColorSpace);
+  const T = { r:o1.r*255, g:o1.g*255, b:o1.b*255 }, B = { r:o2.r*255, g:o2.g*255, b:o2.b*255 };
+  const all = { r:(T.r+B.r)/2, g:(T.g+B.g)/2, b:(T.b+B.b)/2 };
+  const sup = supportAt(x, z);
+  return { top, bot, sup, mq: effMatch(all, T, B, targetTonesAt(x, z, sup.plat)).mq };
+}
+function calMakeBody(x, z, acc, pre){
+  const paint = pre || calPaintFor(x, z, acc);
+  if(!paint) return null;
+  const top = paint.top, bot = paint.bot;
   const dg = charBase ? buildRealGuy(new THREE.Color(top)) : buildDoorGuy(new THREE.Color(top));
   dg.paint.ctx.fillStyle = bot; dg.paint.ctx.fillRect(0,0,128,128);
   dg.paint.ctx.fillStyle = top; dg.paint.ctx.fillRect(0,0,128,64);
   dg.paint.tex.needsUpdate = true;
   const root = new THREE.Group(); root.add(dg.root);
-  const sup = supportAt(x, z);
+  const sup = paint.sup;
   root.position.set(x, sup.top, z); root.rotation.y = calRand()*Math.PI*2;
   scene.add(root);
   const pose = POSE_KEYS[1 + Math.floor(calRand()*(POSE_KEYS.length-1))] || 'idle';
@@ -3283,7 +3321,11 @@ function calDeal3D(){
   const W = cv.width, H = cv.height;
   calClearBodies();
   const acc = CAL_ACC[Math.min(calRound, CAL_ACC.length-1)];
-  /* a spot with cover, and two decoys far enough away to be separate silhouettes */
+  /* ⛔ ONE SPOT, ONE CHANCE meant the render path won only 18 times in 24 - the
+     other quarter fell back to the composed board, so a player would see a photo
+     most rounds and an abstract puzzle the rest. If a spot cannot be framed
+     (nothing with line of sight, or the body lands too small), throw it away and
+     pick another one rather than giving up on the whole idea. */
   const spots = [];
   function pickSpot(minGap){
     for(let t=0;t<40;t++){
@@ -3295,8 +3337,30 @@ function calDeal3D(){
     }
     return null;
   }
+  for(let attempt = 0; attempt < 4; attempt++){
+    spots.length = 0; calBodyDecoys.length = 0; calClearBodies();
+    if(calFrame(acc, pickSpot, W, H, cv)) return true;
+  }
+  calClearBodies();
+  return false;
+}
+function calFrame(acc, pickSpot, W, H, cv){
   const home = pickSpot(0); if(!home) return false;
-  const real = calMakeBody(home.x, home.z, acc); if(!real) return false;
+  /* ⛔ THE RAMP HAS TO BE REAL. Painting toward tones[0] at 78% does not make the
+     BODY score 78% - effMatch weighs every tone at that spot, so round one came
+     out anywhere from 64% to 89% and "gets harder each time" was a fiction. Now
+     that a paint job can be scored without building a rig, search for the mix
+     that really lands on this round's number, and if this spot cannot produce
+     it, hand back and let the caller try another one. */
+  let bestQ = null, bestErr = 9;
+  for(let a = 0.30; a <= 0.995; a += 0.02){
+    const q = calPaintFor(home.x, home.z, a);
+    if(!q) return false;
+    const e = Math.abs(q.mq - acc);
+    if(e < bestErr){ bestErr = e; bestQ = q; }
+  }
+  if(!bestQ || bestErr > 0.05) return false;
+  const real = calMakeBody(home.x, home.z, 0, bestQ); if(!real) return false;
   /* ⛔ The decoys were drawn from the WHOLE map and then rejected if further
      than 16m from the answer - so most boards shipped with none at all and the
      drill quietly degraded to "find the only person". Draw them from cover
@@ -3312,7 +3376,15 @@ function calDeal3D(){
       dx = home.x + Math.cos(a)*r; dz = home.z + Math.sin(a)*r; }
     dx = clamp(dx, -halfW+3, halfW-3); dz = clamp(dz, -halfH+3, halfH-3);
     if(Math.hypot(dx-home.x, dz-home.z) < 2.2) continue;    // not on top of the answer
-    const db = calMakeBody(dx, dz, Math.max(0.34, acc - (0.20 + calRand()*0.14)));
+    /* search down until this decoy really would score a clear step worse than
+       the answer where IT is standing; give up rather than ship a liar board */
+    let pre = null;
+    for(let a = acc - 0.20; a >= 0.28; a -= 0.06){
+      const q = calPaintFor(dx, dz, Math.max(0.28, a));
+      if(q && q.mq <= real.mq - 0.08){ pre = q; break; }
+    }
+    if(!pre) continue;
+    const db = calMakeBody(dx, dz, 0, pre);
     if(db) calBodyDecoys.push(+db.mq.toFixed(3));
   }
   /* a seeker's eye: up and away, looking down, the body off centre */
@@ -3438,6 +3510,21 @@ function filesEnsure(){
   cal.addEventListener('click', ()=> pick('cal'));
   fil.addEventListener('click', ()=> pick('file'));
   if(cv) cv.addEventListener('pointerdown', calTap);
+})();
+let calSpecOpen = false;
+function calSpecSet(on){
+  calSpecOpen = !!on;
+  const hw = document.getElementById('hidewait'); if(!hw) return;
+  hw.classList.toggle('spec', calSpecOpen);
+  if(calSpecOpen){ calReset(); hw.classList.add('on','cal'); calDeal();
+    const c=document.getElementById('hwTabCal'), f=document.getElementById('hwTabFile');
+    if(c) c.classList.add('on'); if(f) f.classList.remove('on'); }
+  else hw.classList.remove('on');
+}
+(function(){
+  const b = document.getElementById('tCal'), x = document.getElementById('hwClose');
+  if(b) b.addEventListener('click', ()=>{ calSpecSet(true); SFX.click(); });
+  if(x) x.addEventListener('click', ()=>{ calSpecSet(false); SFX.click(); });
 })();
 window.__aac3dCal = {
   deal(){ calReset(); document.getElementById('hidewait').classList.add('cal'); calDeal();
@@ -3730,7 +3817,21 @@ window.__aac3dRoundSkip = function(what){
   if(what === 'round'){ setState('hideEnds', Date.now() - 1, true);
                         setState('roundEnds', Date.now() - 1, true); }
   if(what === 'inter')  setState('interEnds', Date.now() - 1, true);
+  /* ⛔ test-only: HOLD the intermission open. It is seven seconds, and a gate
+     that has to notice the phase change, click a button and read the result
+     inside seven seconds over synced state on a starved box is a coin flip, not
+     a test. This makes the dead time long enough to actually examine. */
+  if(what === 'holdInter') setState('interEnds', Date.now() + 120000, true);
+  if(what === 'holdHide')  setState('hideEnds',  Date.now() + 600000, true);
   return getState('phase') || 'waiting';
+};
+/* test-only: take the catch that a seeker would otherwise have to land, so the
+   caught-hider dead time (up to 150s of nothing) can be gated without driving a
+   whole beam sequence. It only ever hurts the caller. */
+window.__aac3dCatchMe = function(){
+  if(!me) return false;
+  me.setState('abducted', true, true);
+  return true;
 };
 window.__aac3dRound = function(){
   const phase = getState('phase') || 'waiting';
@@ -6099,7 +6200,13 @@ function updateHUD(role, abd){
   /* seeker blindfold + the hider's own countdown */
   (function(){
     const hw=$('hidewait'); if(!hw) return;
-    const left=hideLeft(), on=filesDemo || (role==='seeker' && left>0 && !abd);
+    const ph = getState('phase') || 'waiting';
+    /* the drill is offered to anyone with nothing to do: a caught hider for the
+       rest of the round, and everybody during the intermission */
+    const dead = (abd && ph==='playing') || ph==='intermission';
+    const cb = $('tCal'); if(cb) cb.classList.toggle('hidden', !dead || calSpecOpen);
+    if(calSpecOpen && !dead) calSpecSet(false);
+    const left=hideLeft(), on=filesDemo || calSpecOpen || (role==='seeker' && left>0 && !abd);
     const was = hw.classList.contains('on');
     hw.classList.toggle('on', on);
     /* ⭐ The window opens on CALIBRATION, not on a case file. A page you are
@@ -6107,6 +6214,20 @@ function updateHUD(role, abd){
        spotting somebody is the reward the plan asked for. The reader is one
        tap away and always was. */
     if(on && !was){ calReset(); hw.classList.add('cal'); calDeal(); filesEnsure(); }
+    /* ⚠ updateHUD runs every frame. Assigning textContent invalidates layout for
+       that node, so only write when the words actually change. */
+    if(on){
+      const lead = hw.querySelector('.lead'), why = $('hwWhy');
+      const want = calSpecOpen ? (ph==='intermission' ? 'BETWEEN ROUNDS' : 'TAKEN') : 'SCANNERS OFFLINE';
+      if(lead && lead.textContent !== want){
+        lead.textContent = want;
+        if(why) why.textContent = calSpecOpen
+          ? 'You are out of this round. Spotting a painted body recovers an Abduction File - up to '
+            + 'three - and BACK returns you to watching.'
+          : 'You are the hunter this round. Your saucer is blind while the chameleons paint '
+            + 'themselves and pick a spot. When the number hits zero you can fly and beam.';
+      }
+    }
     // keep the number fresh whenever a head start is running, not only while the
     // blindfold happens to be up, so it can never be caught showing a stale value
     if(left>0){ const n=$('hidewaitNum'); if(n) n.textContent=String(Math.ceil(left)); }

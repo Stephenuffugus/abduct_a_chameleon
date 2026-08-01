@@ -43,6 +43,10 @@ async function boot(url){
 const wait = ms => new Promise(r=>setTimeout(r,ms));
 const bad = [];
 
+/* ⛔ TWO CLIENTS. Three would let us catch a hider with the round still running
+   - the state this feature exists for - but three swiftshader contexts starve a
+   two core box and the third one times out the CDP connection. So the dead time
+   under test here is the INTERMISSION, which shares the same code path. */
 const A = await boot(base);
 const room = await A.p.evaluate(()=>location.hash||'');
 const B = await boot(base+room);
@@ -53,15 +57,23 @@ await wait(2500);
    for START to take passed alone and failed inside the suite - the same timing
    assumption that bit files3d. Both clients have to agree there are 2 players
    before START is even offered. */
-let roles = {};
+const ALL = [A,B];
+let roles = [];
 for(let t=0; t<40; t++){
-  for(const c of [A,B]) await c.p.evaluate(()=>{const e=document.getElementById('tStart'); if(e && !e.classList.contains('hidden')) e.click();});
-  roles = { A: await A.p.evaluate(()=>window.__aac3dRound().myRole),
-            B: await B.p.evaluate(()=>window.__aac3dRound().myRole) };
-  if(roles.A === 'seeker' || roles.B === 'seeker') break;
+  for(const c of ALL) await c.p.evaluate(()=>{const e=document.getElementById('tStart'); if(e && !e.classList.contains('hidden')) e.click();});
+  roles = [];
+  for(const c of ALL) roles.push(await c.p.evaluate(()=>window.__aac3dRound().myRole));
+  if(roles.some(r=> r==='seeker')) break;
   await wait(500);
 }
-const S = roles.A === 'seeker' ? A : roles.B === 'seeker' ? B : null;
+/* ⛔ HOLD THE HIDE WINDOW OPEN. It is 120 seconds and everything below runs
+   inside it: twelve board deals now each build three rigs and take a render, so
+   the blindfold was closing UNDER the test and hits two and three landed with no
+   panel up - which read as "the card is behind the blindfold" and "the archive
+   did not grow". The failure was the clock, not the game. */
+for(const c of ALL) await c.p.evaluate(()=>window.__aac3dRoundSkip('holdHide'));
+const S = ALL[roles.indexOf('seeker')] || null;
+const HIDERS = ALL.filter((c,i)=> roles[i] !== 'seeker');
 if(!S){ console.log('FAIL calib3d\n   - no seeker in a two player round, so the blindfold never opened'); await b.close(); srv.close(); process.exit(1); }
 
 // 1. the window opens on the drill
@@ -187,10 +199,59 @@ if(!hits.done) bad.push('the drill did not close after three targets');
 if(hits.live)  bad.push('a fourth target was dealt - the drill can be farmed');
 if(hits.total !== 3) bad.push(`three targets paid ${hits.total} pages, expected 3`);
 
+/* 7. THE THIRD PLACEMENT. The plan: "the same panel serves the 7s intermission
+   and a caught hider spectating. Both are dead time today." A hider taken at
+   second 5 of a 150s round has 145 seconds of nothing. It is a BUTTON and not a
+   takeover - watching the round finish is worth something too.
+   ⛔ GATE THE CAUGHT HIDER, NOT THE INTERMISSION. The first version drove the
+   intermission and failed on "the button came back" - because the intermission
+   is SEVEN SECONDS and it had simply ended mid-test. The caught hider is both
+   the stabler test and the hole that actually matters. */
+const H = HIDERS[0];
+for(const c of ALL) await c.p.evaluate(()=>window.__aac3dRoundSkip('round'));
+let ph = '';
+for(let t=0;t<20 && ph!=='intermission';t++){ await wait(300);
+  /* hold it open the moment it arrives - seven seconds is not enough to click a
+     button and read the answer over synced state on a two core box */
+  for(const c of ALL) await c.p.evaluate(()=>window.__aac3dRoundSkip('holdInter'));
+  ph = await H.p.evaluate(()=>window.__aac3dRound().phase); }
+for(const c of ALL) await c.p.evaluate(()=>window.__aac3dRoundSkip('holdInter'));
+await wait(600);
+const spec = await H.p.evaluate(async ()=>{
+  const nap = ms => new Promise(r=>setTimeout(r,ms));
+  const btn = document.getElementById('tCal'), hw = document.getElementById('hidewait');
+  const shown = !btn.classList.contains('hidden');
+  btn.click(); await nap(600);
+  const open = { on:hw.classList.contains('on'), cal:hw.classList.contains('cal'),
+                 spec:hw.classList.contains('spec'),
+                 closeVis:getComputedStyle(document.getElementById('hwClose')).display !== 'none',
+                 live:window.__aac3dCal.state().live,
+                 lead:(hw.querySelector('.lead')||{}).textContent||'' };
+  document.getElementById('hwClose').click(); await nap(600);
+  return { shown, open, closed: !hw.classList.contains('on'),
+           btnBack: !document.getElementById('tCal').classList.contains('hidden'),
+           /* ⛔ the intermission is SEVEN SECONDS. The first run of this failed
+              on "the button came back" because the dead time had simply ended
+              under it - so read the phase at the same instant and only hold the
+              button to account while there is still dead time to fill. */
+           stillDead: window.__aac3dRound().phase === 'intermission' };
+});
+console.log('7 dead time   ', JSON.stringify({phase:ph, ...spec}));
+if(ph !== 'intermission') bad.push(`could not reach the dead time (phase ${ph})`);
+else {
+  if(!spec.shown)          bad.push('nothing is offered in the dead time - it is still dead');
+  if(!spec.open.on || !spec.open.cal || !spec.open.spec) bad.push('the CALIBRATE button did not open the drill');
+  if(!spec.open.live)      bad.push('the drill opened with no target on the board');
+  if(!spec.open.closeVis)  bad.push('no way back out - the panel stole the map instead of offering itself');
+  if(!/TAKEN|BETWEEN ROUNDS/i.test(spec.open.lead)) bad.push(`the panel still calls you the hunter ("${spec.open.lead}")`);
+  if(!spec.closed)         bad.push('BACK did not return you to watching');
+  if(spec.stillDead && !spec.btnBack) bad.push('once closed there is no way to open it again');
+}
+
 const errs = [...A.errs, ...B.errs];
 if(errs.length) bad.push('JS errors: ' + errs.slice(0,2).join(' | '));
 console.log(bad.length ? '\nFAIL calib3d:\n  - ' + bad.join('\n  - ')
   : `\nok   calib3d  the wait opens on the drill, difficulty honest to ${(Math.abs(worst.got-worst.acc)*100).toFixed(1)}pp of the real scorer, ` +
-    `ramp ${ramp.join(' → ')}, 3 hits = 3 pages each with a card over the blindfold, a miss pays 0, a 4th tap pays 0`);
+    `ramp ${ramp.join(' → ')}, 3 hits = 3 pages each with a card over the blindfold, a miss pays 0, a 4th tap pays 0, and the dead time offers the same drill with a way back out`);
 await b.close(); srv.close();
 process.exit(bad.length ? 1 : 0);
