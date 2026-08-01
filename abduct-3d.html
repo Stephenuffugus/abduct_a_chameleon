@@ -1751,7 +1751,12 @@ function buildWorld(map){
   for(let y=1;y<mapRows-1 && filled<FILL_CAP;y++) for(let x=1;x<mapCols-1 && filled<FILL_CAP;x++){
     const t = map.terrain[y][x];
     if(SOLID_FILL[t]) continue;
-    const kinds = PAINTABLE[t] || PAINTABLE.grass;
+    /* ⛔ `|| PAINTABLE.grass` planted GRASS BUSHES AND MUSHROOMS ON MOLTEN LAVA.
+       lava is the one terrain with no PAINTABLE entry, and cinderfield.json ships
+       721 lava cells, so the fallback was firing on a real map. A terrain with no
+       cover grows nothing - it is not a licence to grow the default. */
+    const kinds = PAINTABLE[t];
+    if(!kinds) continue;
     const w = cellToWorld(x,y);
     let near = 0;
     for(const pt of paintTargets){ const dx=pt.x-w.x, dz=pt.z-w.z;
