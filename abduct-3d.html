@@ -1290,17 +1290,17 @@ async function init(){
    that was missing. Fog far stays >= 520 in every mood or the horizon rings the
    backdrop pass added would be fogged back out of existence. */
 const MOODS = [
-  { key:'deepnight', sky:['#0B0F2B','#241C55','#4A2A6B','#8A3F63','#C46A4E'],
+  { key:'deepnight', mote:0xC9B8FF, sky:['#0B0F2B','#241C55','#4A2A6B','#8A3F63','#C46A4E'],
     fog:0x3B2A63, near:120, far:560, hemi:[0xBFD4FF,0x4A2F66,2.6], warm:[0xFFB77A,0.9], moon:[0xDCE8FF,1.9] },
-  { key:'moonrise',  sky:['#05070F','#0E1430','#1D2B52','#3A4E7A','#8FA6C8'],
+  { key:'moonrise',  mote:0xCFE0FF, sky:['#05070F','#0E1430','#1D2B52','#3A4E7A','#8FA6C8'],
     fog:0x2A3A5C, near:130, far:600, hemi:[0xCFE0FF,0x2B3550,2.4], warm:[0x9FC0FF,0.6], moon:[0xF2F7FF,2.2] },
-  { key:'emberdusk', sky:['#160A14','#33122A','#6B2432','#B4482F','#E8894A'],
+  { key:'emberdusk', mote:0xFFC08A, sky:['#160A14','#33122A','#6B2432','#B4482F','#E8894A'],
     fog:0x5A2A2E, near:110, far:540, hemi:[0xFFD2B0,0x51222A,2.5], warm:[0xFF9A52,1.5], moon:[0xFFE2C0,1.2] },
-  { key:'auroral',   sky:['#04120F','#0A2A28','#12484A','#2C7A6A','#7FD8A8'],
+  { key:'auroral',   mote:0x9CF0C8, sky:['#04120F','#0A2A28','#12484A','#2C7A6A','#7FD8A8'],
     fog:0x1E4A46, near:130, far:620, hemi:[0xC8FFE8,0x14403C,2.5], warm:[0x66E0B0,0.8], moon:[0xE6FFF4,1.8] },
-  { key:'fogbound',  sky:['#1A1B22','#2B2E38','#434752','#6A6E78','#9AA0A8'],
+  { key:'fogbound',  mote:0xE6EAF2, sky:['#1A1B22','#2B2E38','#434752','#6A6E78','#9AA0A8'],
     fog:0x5C616B, near:60,  far:520, hemi:[0xDDE2EA,0x4A4E58,2.8], warm:[0xC8CEDA,0.7], moon:[0xF0F4FA,1.5] },
-  { key:'bloodmoon', sky:['#12060C','#2C0A1A','#571228','#93253A','#D2543F'],
+  { key:'bloodmoon', mote:0xFFA8A0, sky:['#12060C','#2C0A1A','#571228','#93253A','#D2543F'],
     fog:0x4A1826, near:115, far:545, hemi:[0xFFC4C0,0x3E1220,2.4], warm:[0xFF7A66,1.2], moon:[0xFFD0C4,1.7] },
 ];
 let skyDome = null, hemiLight = null, warmLight = null, moonLight = null, _mood = MOODS[0];
@@ -1325,9 +1325,60 @@ function applyMood(m){
   if(hemiLight){ hemiLight.color.setHex(m.hemi[0]); hemiLight.groundColor.setHex(m.hemi[1]); hemiLight.intensity = m.hemi[2]; }
   if(warmLight){ warmLight.color.setHex(m.warm[0]); warmLight.intensity = m.warm[1]; }
   if(moonLight){ moonLight.color.setHex(m.moon[0]); moonLight.intensity = m.moon[1]; }
+  if(motes && m.mote) motes.material.color.setHex(m.mote);
 }
 /* the same map name always gets the same weather, so a level you remember looks
    the way you remember it, and two clients in one room never disagree */
+/* ⭐ THE AIR WAS EMPTY. Nothing in the world moved except the water, so a still
+   frame read as a diorama rather than a place. Motes are the cheapest possible
+   life: 260 points drifting in a box that FOLLOWS the player and wraps, so the
+   air is always occupied wherever you walk and the count never grows.
+   ⚖ Points are not in `losMeshes`, `solids` or `paintTargets`, and Raycaster is
+   only ever given losMeshes, so they cannot hide anyone or block anything. They
+   are tinted per mood, which makes the weather read even when you are looking
+   at the ground. */
+const MOTE_N = 260, MOTE_BOX = 46;
+let motes = null;
+function buildMotes(){
+  const pos = new Float32Array(MOTE_N*3), vel = new Float32Array(MOTE_N*3);
+  let sd = 4242;
+  const rr = ()=> (sd = (sd*1664525 + 1013904223)>>>0) / 4294967296;
+  for(let i=0;i<MOTE_N;i++){
+    pos[i*3]   = (rr()-0.5)*MOTE_BOX;
+    pos[i*3+1] = rr()*14 + 0.6;
+    pos[i*3+2] = (rr()-0.5)*MOTE_BOX;
+    vel[i*3]   = (rr()-0.5)*0.5;
+    vel[i*3+1] = -0.06 - rr()*0.16;          // they settle, slowly
+    vel[i*3+2] = (rr()-0.5)*0.5;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  const m = new THREE.PointsMaterial({ color:(_mood && _mood.mote) || 0xC9B8FF, size:0.09,
+    transparent:true, opacity:0.5, depthWrite:false, sizeAttenuation:true, fog:true });
+  motes = new THREE.Points(g, m);
+  motes.frustumCulled = false;
+  motes.renderOrder = 2;
+  scene.add(motes);
+  motes.userData.vel = vel;
+}
+function motesTick(dt){
+  if(!motes) return;
+  const p = motes.geometry.attributes.position, v = motes.userData.vel;
+  const cx = localPos.x, cz = localPos.z, half = MOTE_BOX/2;
+  const t = performance.now()*0.0004;
+  for(let i=0;i<MOTE_N;i++){
+    let x = p.array[i*3] + (v[i*3] + Math.sin(t + i)*0.22)*dt;
+    let y = p.array[i*3+1] + v[i*3+1]*dt;
+    let z = p.array[i*3+2] + (v[i*3+2] + Math.cos(t*1.3 + i)*0.22)*dt;
+    /* wrap around the player, so the air is always occupied and we never spawn
+       or destroy a single particle */
+    if(x - cx >  half) x -= MOTE_BOX; else if(x - cx < -half) x += MOTE_BOX;
+    if(z - cz >  half) z -= MOTE_BOX; else if(z - cz < -half) z += MOTE_BOX;
+    if(y < 0.4) y = 14.6;
+    p.array[i*3] = x; p.array[i*3+1] = y; p.array[i*3+2] = z;
+  }
+  p.needsUpdate = true;
+}
 function moodForMap(name){
   let h = 0; for(const ch of String(name||'world')) h = (h*31 + ch.charCodeAt(0)) >>> 0;
   return MOODS[h % MOODS.length];
@@ -1412,6 +1463,7 @@ function setupScene(){
   moonLight.position.set(40, 80, 25);
   scene.add(moonLight);
   applyMood(_mood);          // now that the lights exist, tint them
+  buildMotes();
 
   addEventListener('resize', ()=>{
     camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -5107,6 +5159,7 @@ function clientTick(dt){
 
   skyTick(dt);
   waterTick(dt);
+  motesTick(dt);
 
   // publish my transform (+ camo / already-published beam)
   sendAccum += dt;
