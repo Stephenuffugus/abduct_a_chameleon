@@ -1393,7 +1393,8 @@ function buildWorld(map){
   MAP = map; mapCols = map.grid.cols; mapRows = map.grid.rows;
   halfW = mapCols*TILE/2; halfH = mapRows*TILE/2;
   while(worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
-  cover = []; losMeshes = []; solids = []; paintTargets = []; platforms = [];
+  cover = []; losMeshes = []; solids = []; paintTargets = []; platforms = []; markCount = 0; markQueue = [];
+  buildMarkAtlas(map && map.name || 'world');
   velY = 0; grounded = true; standingOn = null;
 
   // ---- terrain: one vertex-coloured ground mesh ----
@@ -1416,6 +1417,105 @@ function buildWorld(map){
   worldGroup.add(grid);
 
   for(const o of (map.objects||[])) addCover(o.type, o.x, o.y);
+
+  /* ── SPRAY TAGS ON OUTDOOR WALLS ─────────────────────────────────────
+     Only OUTWARD faces get marked. A tag on the inside of a party wall is a
+     tag nobody can ever stand against, and it would still cost a draw call. */
+  (function(){
+    if(!markAtlas.length) return;
+    const wallAt = new Set();
+    for(const o of (map.objects||[])) if(o.type==='wall') wallAt.add(o.x+','+o.y);
+    const FACES = [
+      { dx: 1, dy: 0, rotY: Math.PI/2,  ox: TILE/2, oz: 0 },
+      { dx:-1, dy: 0, rotY:-Math.PI/2,  ox:-TILE/2, oz: 0 },
+      { dx: 0, dy: 1, rotY: 0,          ox: 0, oz: TILE/2 },
+      { dx: 0, dy:-1, rotY: Math.PI,    ox: 0, oz:-TILE/2 },
+    ];
+    let placed = 0;
+    for(const o of (map.objects||[])){
+      if(o.type!=='wall' || placed >= 130) continue;
+      const h = hash2(o.x*41+7, o.y*43+13);
+      if(h % 100 >= 46) continue;                       // a bit under half of walls
+      const free = FACES.filter(f=> !wallAt.has((o.x+f.dx)+','+(o.y+f.dy)));
+      if(!free.length) continue;
+      const w = cellToWorld(o.x, o.y);
+      const n = 1 + ((h>>>7) % 2);                       // one or two marks per wall
+      for(let i=0;i<n && placed<130;i++){
+        const f = free[(h>>>(3+i*3)) % free.length];
+        const e = markAtlas[(h>>>(5+i*4)) % markAtlas.length];
+        const size = 1.05 + ((h>>>(9+i*5)) % 90)/100;     // 1.05 .. 1.95
+        const along = (((h>>>(11+i*6)) % 120)/100 - 0.6); // slide along the face
+        const yy = 0.75 + ((h>>>(13+i*7)) % 130)/100;     // 0.75 .. 2.05, body height
+        const px = w.x + f.ox + (f.dx ? Math.sign(f.dx)*0.04 : along*(TILE*0.42));
+        const pz = w.z + f.oz + (f.dy ? Math.sign(f.dy)*0.04 : along*(TILE*0.42));
+        // the target sits a step OUT from the wall, where a hider would stand
+        const tx = px + f.dx*0.55, tz = pz + f.dy*0.55;
+        const m = placeMark(px, yy, pz, f.rotY, 0, size, e, 1.15);
+        paintTargets[paintTargets.length-1].x = tx;
+        paintTargets[paintTargets.length-1].z = tz;
+        placed++;
+      }
+    }
+  })();
+
+  /* ── MARKS ON THE SURFACES THE HUNTER ACTUALLY SEES ──────────────────
+     The seeker flies and looks straight DOWN, so a tag on a vertical wall face
+     is edge-on and invisible to them: it changes the hider's maths without ever
+     changing the hunter's picture. Top faces are the ones in the hunter's view,
+     so wall tops and the tops of every perch get marked too. That also makes
+     the jump matter twice over - climb a crate with a stencil on it and the
+     stencil is now the thing you have to paint. */
+  (function(){
+    if(!markAtlas.length) return;
+    let placed = 0;
+    for(const o of (map.objects||[])){
+      if(o.type!=='wall' || placed >= 70) continue;
+      const h = hash2(o.x*67+29, o.y*71+31);
+      if(h % 100 >= 34) continue;
+      const e = markAtlas[(h>>>6) % markAtlas.length];
+      const w = cellToWorld(o.x, o.y);
+      const jx = ((h>>>9)%100)/100 - 0.5, jz = ((h>>>13)%100)/100 - 0.5;
+      placeMark(w.x + jx*TILE*0.5, 4.24, w.z + jz*TILE*0.5,
+        ((h>>>17)%628)/100, -Math.PI/2, 1.2 + ((h>>>19)%70)/100, e, 1.1);
+      placed++;
+    }
+    let pp = 0;
+    for(const pl of platforms){
+      if(pp >= 60) break;
+      const h = hash2(Math.round(pl.cx*10)+83, Math.round(pl.cz*10)+89);
+      if(h % 100 >= 38) continue;
+      const e = markAtlas[(h>>>6) % markAtlas.length];
+      if(e.kind === 'poster') continue;
+      const size = Math.min(1.5, Math.max(0.7, (pl.maxX-pl.minX) * 0.75));
+      placeMark(pl.cx, pl.top + 0.03, pl.cz, ((h>>>17)%628)/100, -Math.PI/2, size, e, 0.9);
+      pp++;
+    }
+  })();
+
+  /* ── MARKS ON HARD GROUND ────────────────────────────────────────────
+     Open ground was the flattest thing in the game: one colour for metres in
+     every direction. Scorches, stains and chalk break it into spots. */
+  (function(){
+    if(!markAtlas.length) return;
+    const HARD = { concrete:0.09, rock:0.06, metal:0.08, ash:0.09, dirt:0.05,
+                   sand:0.04, crystal:0.05, ice:0.04, mud:0.05 };
+    let placed = 0;
+    for(let y=0;y<mapRows && placed<110;y++) for(let x=0;x<mapCols && placed<110;x++){
+      const k = (MAP.terrain[y] && MAP.terrain[y][x]) || 'void';
+      const p2 = HARD[k]; if(!p2) continue;
+      const h = hash2(x*53+17, y*59+23);
+      if((h % 1000)/1000 >= p2) continue;
+      const e = markAtlas[(h>>>6) % markAtlas.length];
+      if(e.kind === 'poster') continue;                 // posters belong on walls
+      const w = cellToWorld(x, y);
+      const jx = ((h>>>9)%100)/100 - 0.5, jz = ((h>>>13)%100)/100 - 0.5;
+      const px = w.x + jx*TILE*0.6, pz = w.z + jz*TILE*0.6;
+      placeMark(px, 0.045, pz, ((h>>>17)%628)/100, -Math.PI/2, 1.3 + ((h>>>19)%80)/100, e, 1.05);
+      placed++;
+    }
+  })();
+
+  flushMarks();                       // one instanced draw per mark texture
 
   /* ── PAINTABLE GROUND COVER ──────────────────────────────────────────
      Penny's note on round one was that there was nothing to paint. She was
@@ -1546,6 +1646,172 @@ function patternTexture(c1, c2, kind){
   else if(kind===1){ for(let yy=0;yy<64;yy+=16) for(let xx=0;xx<64;xx+=16) if(((xx+yy)/16)%2===0) x.fillRect(xx,yy,16,16); }  // checker
   else { for(let yy=8;yy<64;yy+=16) for(let xx=8;xx<64;xx+=16){ x.beginPath(); x.arc(xx,yy,5.5,0,Math.PI*2); x.fill(); } }   // dots
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+/* ===== SURFACE MARKS ======================================================
+   Stephen 8/01: "have spray paint on some outdoor walls, have all kinds of
+   small details which would then make the player have to get good with the
+   paint or creative with the spot."
+
+   That is the whole lever. A blank wall is ONE colour and a single tap of MATCH
+   solves it, so every wall in the game is the same hiding place wearing a
+   different tint. Put a spray tag on it and the wall stops being uniform: stand
+   on the tag and the two-tone model gives you [tag, wall], so you either paint
+   the split properly or you shuffle along and take the clean stretch. The spot
+   becomes a decision instead of a location.
+
+   Six kinds, all drawn procedurally to a canvas - no external art, nothing to
+   download, and every mark registers its OWN dominant colour as a tight paint
+   target so where you stand along a surface matters, not just which prop you
+   picked. Deterministic end to end (mulberry32 seeded off the map name and the
+   cell), because a mark that renders differently on two clients would also
+   SCORE differently on two clients. */
+function mulberry32(a){
+  return function(){ a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+const MARK_KINDS = ['tag','tag','stencil','stain','scorch','chalk','poster'];
+const MARK_BRIGHT = [0xE0453C,0xF2B33D,0x3FD0E0,0x8E7FD6,0x7AB356,0xE8639B,0xEDEFF4];
+function markCanvas(kind, seed){
+  const R = mulberry32(seed), S = 96;
+  const cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const x = cv.getContext('2d');
+  const pick = arr => arr[Math.floor(R()*arr.length)];
+  const hex = n => '#' + new THREE.Color(n).getHexString();
+  if(kind === 'tag'){
+    // spray graffiti: fat strokes, a darker outline, and drips that run
+    const c = pick(MARK_BRIGHT), c2 = pick(MARK_BRIGHT);
+    x.lineCap = 'round'; x.lineJoin = 'round';
+    for(let pass=0; pass<2; pass++){
+      x.strokeStyle = pass ? hex(c) : '#0b0d16';
+      x.lineWidth = pass ? 9 + R()*7 : 15 + R()*7;
+      const n = 2 + Math.floor(R()*3);
+      for(let i=0;i<n;i++){
+        x.beginPath();
+        let px = 12 + R()*24, py = 24 + R()*48;
+        x.moveTo(px, py);
+        for(let k=0;k<3;k++){
+          const cx1 = px + 10 + R()*30, cy1 = py - 30 + R()*60;
+          px = Math.min(S-10, px + 18 + R()*24); py = 20 + R()*56;
+          x.quadraticCurveTo(cx1, cy1, px, py);
+        }
+        x.stroke();
+      }
+    }
+    x.globalAlpha = 0.85; x.fillStyle = hex(c2);
+    for(let i=0;i<3+R()*4;i++){                       // drips
+      const dx = 14 + R()*68, dy = 40 + R()*30, len = 8 + R()*26;
+      x.fillRect(dx, dy, 2 + R()*3, len);
+    }
+    x.globalAlpha = 0.16; x.fillStyle = hex(c);        // overspray haze
+    x.beginPath(); x.arc(S/2, S/2, 34, 0, Math.PI*2); x.fill();
+  }else if(kind === 'stencil'){
+    // crisp and geometric: the opposite problem to a tag, hard edges to line up
+    const c = pick(MARK_BRIGHT); x.fillStyle = hex(c);
+    const mode = Math.floor(R()*3);
+    if(mode === 0){ for(let i=0;i<3;i++){ x.save(); x.translate(20+i*22, 48); x.rotate(-0.5);
+      x.fillRect(-6,-26,12,52); x.restore(); } }                       // slashes
+    else if(mode === 1){ for(let i=0;i<3;i++){ x.beginPath();          // chevrons
+      const y0 = 18 + i*22; x.moveTo(16,y0); x.lineTo(48,y0+16); x.lineTo(80,y0);
+      x.lineTo(80,y0+10); x.lineTo(48,y0+26); x.lineTo(16,y0+10); x.closePath(); x.fill(); } }
+    else { x.lineWidth = 10; x.strokeStyle = hex(c);                   // ring + bar
+      x.beginPath(); x.arc(48,48,26,0,Math.PI*2); x.stroke();
+      x.fillRect(14,42,68,12); }
+  }else if(kind === 'stain'){
+    const c = R() < 0.5 ? 0x1b2430 : 0x2e2418;
+    x.fillStyle = hex(c);
+    for(let i=0;i<14;i++){
+      x.globalAlpha = 0.10 + R()*0.16;
+      x.beginPath(); x.ellipse(30+R()*36, 30+R()*36, 8+R()*26, 7+R()*22, R()*3.14, 0, Math.PI*2); x.fill();
+    }
+  }else if(kind === 'scorch'){
+    const g = x.createRadialGradient(48,48,3, 48,48,46);
+    g.addColorStop(0,'rgba(8,8,10,0.92)'); g.addColorStop(0.55,'rgba(24,18,16,0.55)');
+    g.addColorStop(1,'rgba(24,18,16,0)');
+    x.fillStyle = g; x.fillRect(0,0,S,S);
+    x.globalAlpha = 0.5; x.strokeStyle = '#0a0a0c'; x.lineWidth = 2;
+    for(let i=0;i<7;i++){ const a2 = R()*6.28; x.beginPath(); x.moveTo(48,48);
+      x.lineTo(48+Math.cos(a2)*(26+R()*20), 48+Math.sin(a2)*(26+R()*20)); x.stroke(); }
+  }else if(kind === 'chalk'){
+    x.strokeStyle = 'rgba(232,220,200,0.8)'; x.lineWidth = 3; x.lineCap = 'round';
+    const n = 3 + Math.floor(R()*5);
+    for(let i=0;i<n;i++){ const bx = 20 + i*12; x.beginPath();
+      x.moveTo(bx, 30 + R()*8); x.lineTo(bx + (R()*6-3), 66 - R()*8); x.stroke(); }
+    if(R() < 0.6){ x.beginPath(); x.moveTo(16, 62); x.lineTo(20+n*12, 34); x.stroke(); }  // the tally slash
+  }else{ // poster
+    const c = pick(MARK_BRIGHT), c2 = pick(MARK_BRIGHT);
+    x.fillStyle = hex(c); x.fillRect(12, 10, 72, 76);
+    x.fillStyle = hex(c2); x.fillRect(12, 30 + R()*26, 72, 12 + R()*10);
+    x.globalCompositeOperation = 'destination-out';    // torn corner
+    x.beginPath(); x.moveTo(84,10); x.lineTo(84,34); x.lineTo(62,10); x.closePath(); x.fill();
+    x.globalCompositeOperation = 'source-over';
+  }
+  // the colour a player standing here actually has to match: the mark's own ink,
+  // ignoring everything transparent
+  const d = x.getImageData(0,0,S,S).data;
+  let r=0,g2=0,b=0,n2=0;
+  for(let i=0;i<d.length;i+=4){ if(d[i+3] > 128){ r+=d[i]; g2+=d[i+1]; b+=d[i+2]; n2++; } }
+  const col = n2 ? ((Math.round(r/n2)<<16)|(Math.round(g2/n2)<<8)|Math.round(b/n2)) : 0x808080;
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  return { tex, hex:col, coverage:n2/(S*S) };
+}
+/* One small atlas per world, reused by every placement: a few hundred marks
+   must not mean a few hundred textures on a phone. */
+let markAtlas = [];
+function buildMarkAtlas(name){
+  markAtlas = [];
+  let seed = 0; for(let i=0;i<String(name).length;i++) seed = (seed*31 + String(name).charCodeAt(i))|0;
+  for(let i=0;i<14;i++){
+    const kind = MARK_KINDS[i % MARK_KINDS.length];
+    const m = markCanvas(kind, (seed ^ (i*2654435761))>>>0);
+    if(m.coverage < 0.04) continue;                  // too faint to be a hiding decision
+    m.mat = new THREE.MeshBasicMaterial({ map:m.tex, transparent:true, depthWrite:false,
+      polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2, side:THREE.DoubleSide });
+    m.kind = kind;
+    markAtlas.push(m);
+  }
+}
+const MARK_GEO = new THREE.PlaneGeometry(1,1);
+let markCount = 0, markQueue = [];
+const _mkE = new THREE.Euler(), _mkQ = new THREE.Quaternion(),
+      _mkP = new THREE.Vector3(), _mkS = new THREE.Vector3(), _mkM = new THREE.Matrix4();
+function placeMark(px, py, pz, rotY, rotX, size, entry, r){
+  // hash2 returns a UINT32 and `>>` coerces to int32, so a high hash once went
+  // negative, indexed the atlas out of range, and killed the whole world build
+  // mid-way (paint coverage fell to 55% because the gap-filler never ran). The
+  // shifts are unsigned now; this guard means a future slip degrades instead.
+  if(!entry || !entry.mat) return null;
+  markQueue.push({ e:entry, px, py, pz, rotY:rotY||0, rotX:rotX||0, size });
+  markCount++;
+  addTarget(px, pz, entry.hex, r || 1.15);           // TIGHT: a spot, not a zone
+  return true;
+}
+/* A few hundred marks must not be a few hundred draw calls on a phone, which is
+   the target device. One InstancedMesh per atlas entry turns ~340 draws into at
+   most 14, and the marks share a geometry anyway. */
+function flushMarks(){
+  const byEntry = new Map();
+  for(const q of markQueue){
+    if(!byEntry.has(q.e)) byEntry.set(q.e, []);
+    byEntry.get(q.e).push(q);
+  }
+  for(const [e, list] of byEntry){
+    const im = new THREE.InstancedMesh(MARK_GEO, e.mat, list.length);
+    im.frustumCulled = false;
+    for(let i=0;i<list.length;i++){
+      const q = list[i];
+      _mkE.set(q.rotX, q.rotY, 0);
+      _mkQ.setFromEuler(_mkE);
+      _mkP.set(q.px, q.py, q.pz);
+      _mkS.set(q.size, q.size, 1);
+      _mkM.compose(_mkP, _mkQ, _mkS);
+      im.setMatrixAt(i, _mkM);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    worldGroup.add(im);
+  }
+  markQueue = [];
 }
 function mixHex(a, b){ const A=new THREE.Color(a), B=new THREE.Color(b); return A.lerp(B, 0.5).getHex(); }
 // ~40% of crates (and some barrels/walls) are PATTERNED — matching them means actually painting
@@ -1763,6 +2029,16 @@ window.__aac3dFiles = {
 };
 
 /* read-only movement diagnostics, same family as __aac3dPaint/__aac3dCamo */
+/* load a specific shipped map on demand. The game already hot-loads a map from
+   a drag-drop, so this is that same door with a handle on it - without it every
+   test is at the mercy of whatever the random generator felt like building, and
+   a map with no walls cannot tell you anything about wall marks. */
+window.__aac3dLoadMap = function(name){
+  return fetch('maps/' + name + '.json').then(r=>r.json()).then(j=>{
+    loadMapFromDrop(j);
+    return { loaded: j.name || name, objects: (j.objects||[]).length };
+  });
+};
 window.__aac3dPlayer = function(){
   return { jumpInput:{ space:!!keys['Space'], gpAltUp:!!gp.altUp, touchJump:!!touch.jump },
     x:+localPos.x.toFixed(2), z:+localPos.z.toFixed(2), yaw:+yaw.toFixed(3),
@@ -1799,7 +2075,9 @@ window.__aac3dPaint = function(){
     if(n>=3) covered++; else if(n<worst) worst=n;
   }
   const _t0 = paintTargets[0] || null;
-  return { map: MAP.name||'?', targets: paintTargets.length, walkable,
+  return { map: MAP.name||'?', targets: paintTargets.length, walkable, marks: markCount,
+    markDraws: worldGroup.children.filter(c=>c.isInstancedMesh).length,
+    markKinds: markAtlas.map(m=>m.kind),
     sample: _t0 ? { x:_t0.x, z:_t0.z, r:_t0.r, hex:'#'+_t0.color.getHexString() } : null,
            coveredPct: Math.round(covered/Math.max(1,walkable)*100),
            worstCellTargets: worst===1e9?3:worst };
