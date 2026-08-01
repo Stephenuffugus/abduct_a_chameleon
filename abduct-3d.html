@@ -1528,9 +1528,53 @@ function makeRandomMap(seed){
     put(mx,my,'crate'); if(rnd()<0.7) put(mx+1,my,'barrel');
     if(rnd()<0.5) put(mx-1,my,'chest'); if(rnd()<0.5) put(mx,my+1,'table');
   }
-  for(const [type,on,density] of th.cover)
-    for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++)
-      if(t[y][x]===on && rnd()<density) put(x,y,type);
+  /* ⭐ COVER COMES IN STANDS, NOT SPRINKLES. Uniform density is the same mistake
+     the litter made: it fills a map evenly, which reads as noise and gives a
+     hider nowhere DISTINCT to be. The Director, on why the game he wants to beat
+     works: "there are lots and lots of places to hide that are all so unique and
+     players just keep getting more and more creative with them."
+     The best hiding place in a colour-matching game is a CROWD OF SIMILAR
+     OBJECTS — paint crate-brown, stand among five crates, and a hunter looking
+     straight down has to pick you out of six identical shapes. That spot type
+     cannot exist while every crate is on its own.
+     So: the same total amount of cover, gathered into stands with clear ground
+     between them. Clear ground is not wasted — it is the risk you cross, and it
+     is where the stars are (earnTick only pays while a hunter can SEE you). */
+  (function(){
+    const S = 3;                                   // stand grid, in cells
+    const standOf = (x,y)=> hash2(((x/S)|0)+7, ((y/S)|0)+11) % 100;
+    for(const [type,on,density] of th.cover){
+      /* a third of the stands hold this cover type; inside one it is dense, and
+         outside a stand it is rare rather than absent, so the world still breathes */
+      const share = 34, inside = Math.min(0.9, density*3.4), outside = density*0.18;
+      for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++){
+        if(t[y][x]!==on) continue;
+        const p = (standOf(x,y) < share) ? inside : outside;
+        if(rnd() < p) put(x,y,type);
+      }
+    }
+  })();
+  /* ⭐ SHELTER, PLACED BY COUNT AND IN ROWS. Density buried in the cover table
+     produced 1-7 canopies a map (measured) because the noise field, the blobs,
+     the roads and the water all overwrite the base key first, so "3% of base
+     cells" is 3% of an unpredictable remainder. A count is controllable; a ROW
+     is a place. Three or four in a line reads as a market street or a loading
+     bay, gives a hider a run of covered ground to move along, and leaves the
+     open ground between rows genuinely dangerous - which is where the stars are. */
+  (function(){
+    const rows_ = 17 + Math.floor(rnd()*7);
+    const bad = { water:1, lava:1, void:1 };
+    for(let r=0;r<rows_;r++){
+      const horiz = rnd() < 0.5;
+      const len = 3 + Math.floor(rnd()*3);
+      let x0 = 3 + Math.floor(rnd()*(cols-8)), y0 = 3 + Math.floor(rnd()*(rows-8));
+      for(let k=0;k<len;k++){
+        const x = horiz ? x0 + k*2 : x0, y = horiz ? y0 : y0 + k*2;
+        if(!inb(x,y) || bad[t[y][x]]) continue;
+        put(x, y, 'canopy');
+      }
+    }
+  })();
   // scattered unique landmarks — memorable hiding anchors between the buildings
   const extras=['pillar','chest','table','statue','statue','pillar'];
   for(let i=0;i<4+Math.floor(rnd()*5);i++)
@@ -2751,6 +2795,21 @@ window.__aac3dLevel = function(step){
     if(tones.length > 1 && tones[1].w > SPLIT_MIN_W) twoTone++;
     sampled++;
   }
+  /* ⭐ how much of the map actually HIDES you from a hunter who looks straight
+     down. Surfacing overhead cover as a mechanic is worthless if the world has
+     none, so this is the number that says whether the feature is real. */
+  let roofed = 0, roofSamples = 0;
+  const _up = new THREE.Raycaster();
+  /* ⛔ stride 6 on a 348x252 grid is ~2400 casts against a few thousand meshes —
+     millions of triangle tests, which took minutes per map under swiftshader.
+     18 gives ~270 samples, plenty for a percentage, and finishes in a second. */
+  for(let j=1;j<nz;j+=18) for(let i=1;i<nx;i+=18){
+    if(blocked[j*nx+i]) continue;
+    const p2 = at(i,j);
+    _up.set(new THREE.Vector3(p2.x, 1.5, p2.z), UP); _up.far = 60;
+    if(_up.intersectObjects(losMeshes, false).length) roofed++;
+    roofSamples++;
+  }
   dists.sort((a,b)=>a-b);
   const q = f => dists.length ? +dists[Math.floor(dists.length*f)].toFixed(2) : -1;
   const objs = {};
@@ -2762,7 +2821,16 @@ window.__aac3dLevel = function(step){
     hiderSpawns:spawnRegions.length, strandedSpawns:stranded,
     coverDist:{ p10:q(0.10), median:q(0.5), p90:q(0.90) },
     farFromCoverPct:+(far/Math.max(1,sampled)).toFixed(3),
-    twoToneOpportunity:+(twoTone/Math.max(1,sampled)).toFixed(3) };
+    twoToneOpportunity:+(twoTone/Math.max(1,sampled)).toFixed(3),
+    overheadCoverPct:+(roofed/Math.max(1,roofSamples)).toFixed(3),
+    /* hasLOS is linear in losMeshes and runs per seeker per hider per frame, so
+       this is the number that says whether a richer world costs a phone its
+       frame rate. Bounding-sphere rejection makes each one cheap, but count it. */
+    losMeshes:losMeshes.length, cover:cover.length,
+    losCastMs:(function(){ const t0=performance.now();
+      for(let k=0;k<200;k++) hasLOS({x:localPos.x+20,y:14,z:localPos.z+20},
+                                    {x:localPos.x,y:0,z:localPos.z});
+      return +((performance.now()-t0)/200).toFixed(3); })() };
 };
 window.__aac3dGround = function(){
   const hist = {}; let cells = 0;
@@ -2956,6 +3024,28 @@ function addCover(type, gx, gy){
     if(pr){ pr.node.rotation.y = ((hash2(gy,gx)>>2)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
     else{ const b = new THREE.Mesh(new THREE.BoxGeometry(2.0,1.2,1.0), tm); b.position.y=0.6; g.add(b); losMeshes.push(b); }
     addTarget(w.x, w.z, tm.color.getHex(), 2.4);
+  }else if(type==='canopy'){
+    /* ⭐⭐ THE THING THAT ACTUALLY BEATS A HUNTER WHO LOOKS STRAIGHT DOWN.
+       Measured 2026-08-02: overhead cover existed on 2-3% of a map, and on
+       EIGHT of the twelve authored maps it was exactly 0%. detectAbductions and
+       the training bot both gate on hasLOS, so a roof makes you unbeamable -
+       the strongest verb in the game had almost nowhere to happen.
+       A canopy is four posts and a slab at 2.35m: you walk under it freely
+       (a body is 2m), and the roof goes into losMeshes so the sky loses you.
+       ⚖ Deliberately NOT a perch — the slab sits above STAND_MAX_TOP so it can
+       never register, because a big flat roof is the easiest thing in the world
+       to colour-match and standing on one would be a free win. Duck under it or
+       go around it; you cannot own it. */
+    const cm = instMat(COVER_MAT.crate, WALL_HUES, gx+13, gy+17);
+    const post = new THREE.CylinderGeometry(0.11,0.13,2.3,6);
+    for(const [ox,oz] of [[-2.2,-2.2],[2.2,-2.2],[-2.2,2.2],[2.2,2.2]]){
+      const pst = new THREE.Mesh(post, COVER_MAT.dead);
+      pst.position.set(ox, 1.15, oz); g.add(pst);
+    }
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.24, 5.4), cm);
+    roof.position.y = 2.35; g.add(roof); losMeshes.push(roof);
+    /* the ground UNDER a canopy is its own tone - a shaded patch you can match */
+    addTarget(w.x, w.z, cm.color.getHex(), 3.4);
   }else if(type==='statue'){
     const sm = instMat(COVER_MAT.rock, WALL_HUES, gx+5, gy+9);
     const pr = propMesh('statue', sm, 3.0);

@@ -85,23 +85,24 @@ for (let i = 0; i < SEEDS; i++) {
 
 const f = (v, w) => String(v).padStart(w);
 console.log('\n' + 'map'.padEnd(16) + f('walls',6) + f('objs',6) + f('tgts',6) +
-  f('regions',8) + f('strand',7) + f('coverMed',9) + f('far>6m',8) + f('TWO-TONE',9));
-console.log('-'.repeat(76));
+  f('regions',8) + f('strand',7) + f('coverMed',9) + f('far>6m',8) + f('TWO-TONE',9) + f('ROOFED',8));
+console.log('-'.repeat(84));
 const show = r => console.log(String(r.map).slice(0,15).padEnd(16) + f(r.walls,6) + f(r.objects,6) +
   f(r.paintTargets,6) + f(r.regions,8) + f(r.strandedSpawns,7) + f(r.coverDist.median,9) +
-  f((r.farFromCoverPct*100).toFixed(0)+'%',8) + f((r.twoToneOpportunity*100).toFixed(0)+'%',9));
+  f((r.farFromCoverPct*100).toFixed(0)+'%',8) + f((r.twoToneOpportunity*100).toFixed(0)+'%',9) + f((r.overheadCoverPct*100).toFixed(0)+'%',8));
 for (const r of rows.filter(r => r.kind === 'authored')) show(r);
-console.log('-'.repeat(76));
+console.log('-'.repeat(84));
 for (const r of rows.filter(r => r.kind === 'random')) show(r);
 
 const avg = (rs, k) => rs.length ? (rs.reduce((a,b)=>a+k(b),0)/rs.length) : 0;
 const A = rows.filter(r=>r.kind==='authored'), R = rows.filter(r=>r.kind==='random');
-console.log('\nAVERAGES        walls  two-tone  far>6m  stranded');
+console.log('\nAVERAGES        walls  two-tone  far>6m  roofed  stranded');
 for (const [n, rs] of [['authored', A], ['random  ', R]]) {
   if (!rs.length) continue;
   console.log(`  ${n}      ${avg(rs,r=>r.walls).toFixed(0).padStart(5)}` +
     `   ${(avg(rs,r=>r.twoToneOpportunity)*100).toFixed(0).padStart(5)}%` +
     `   ${(avg(rs,r=>r.farFromCoverPct)*100).toFixed(0).padStart(4)}%` +
+    `   ${(avg(rs,r=>r.overheadCoverPct)*100).toFixed(0).padStart(4)}%` +
     `   ${avg(rs,r=>r.strandedSpawns).toFixed(2).padStart(5)}`);
 }
 if (errs.length) console.log('\nJS errors: ' + errs.slice(0,3).join(' | '));
