@@ -1558,9 +1558,12 @@ function buildWorld(map){
      Seeded off the cell, so every client in a multiplayer round grows the
      same garden without a byte crossing the wire. */
   const PAINTABLE = {
-    grass:  ['bush','bush_small','flower_y','flower_p','mushrooms','log','grass_big'],
-    moss:   ['bush','bush_big','mushroom','mushrooms','moss_hang','stone_a'],
-    foliage:['bush_big','bush','flower_p','flower_r','flower_y','mushroom','log_big'],
+    grass:  ['bush','bush_small','flower_y','flower_p','mushrooms','log','grass_big',
+             'flower_single_a','flower_single_b','flower_clump','bush_round','grass_tuft'],
+    moss:   ['bush','bush_big','mushroom','mushrooms','moss_hang','stone_a',
+             'plant_leafy_a','bush_berries','flower_single_c'],
+    foliage:['bush_big','bush','flower_p','flower_r','flower_y','mushroom','log_big',
+             'flower_single_d','flower_bed','bush_berries','plant_leafy_a'],
     dirt:   ['bush_small','log','log_big','mushroom','stone_a'],
     sand:   ['cactus_s','rock_a','bush_small','stone_a'],
     mud:    ['bush_small','mushrooms','log','log_big'],
@@ -1581,7 +1584,21 @@ function buildWorld(map){
     mushroom:0xb04038, mushrooms:0xc0a878, log:0x6b4b30,
     moss_hang:0x4a6b3a, lily:0x4e8f5a, lily_big:0x3f7d4c,
     cactus_s:0x3f7a45, rock_a:0x6a6f78,
-    log_big:0x5f4429, stone_a:0x777c85, rock_tall_b:0x6d7280, grass_big:0x4f7a3e };
+    log_big:0x5f4429, stone_a:0x777c85, rock_tall_b:0x6d7280, grass_big:0x4f7a3e,
+    can_crushed:0xb8b2a6, can_open:0xc0bcb2, can_red:0xb8433a, bottle_glass_brown:0x6b4a24,
+    bottle_glass_green:0x3f6b45, box_cardboard_open:0xa87f4e, box_cardboard_shut:0xb08a58,
+    bricks_loose:0x9a5a44, cone_traffic:0xd4682c, pallet:0x8a6a42, tyre:0x2c2c30,
+    rubble_pile:0x7d7972, rubble_small:0x878279, pipe_straight:0x7d8288, pipe_corner:0x7d8288,
+    tree_stump:0x6b4b30, hay_bale:0xc0a860, keg:0x8a7b4a, sack_open:0xa89468,
+    propane_tank:0xb0563f,
+    bin_street:0x3f5a4a, bin_small:0x47504a, bollard:0x8d8f8a, fence_low:0x8a6a42,
+    fence_panel:0x8a6a42, lamp_post:0x5a5f66, planter_potted:0x8a5a3f, sign_stop:0xb03a33,
+    sign_triangle:0xd8c34a, traffic_light:0x4a4f56,
+    flower_single_a:0xd05a8c, flower_single_b:0xe0b23c, flower_single_c:0x8a63c8,
+    flower_single_d:0xd8543f, flower_clump:0xc86a9e, flower_bed:0xb8544a,
+    bush_round:0x3f6d33, bush_berries:0x3a5f38, grass_tuft:0x527f3c, plant_leafy_a:0x3f7040,
+    bench_park:0x7a5f3c, gazebo:0x8a6a42, well_stone:0x8d8f8a, flag_pole:0x9aa2ad,
+    statue_plinth:0x8d8f8a, vault_box:0x9a8f7a };
   let paintDeco = 0, PAINT_CAP = 260;
   for(let y=0;y<mapRows && paintDeco<PAINT_CAP;y++) for(let x=0;x<mapCols && paintDeco<PAINT_CAP;x++){
     const kinds = PAINTABLE[map.terrain[y][x]]; if(!kinds) continue;
@@ -1602,6 +1619,49 @@ function buildWorld(map){
     worldGroup.add(pr.node);
     addTarget(wx, wz, hue, 2.2);      /* ← the whole point: now it is paintable */
     paintDeco++;
+  }
+
+  /* ── ANYTHING AND EVERYTHING LYING AROUND ────────────────────────────
+     Stephen 8/01: "think anything and everything that could be laying around on
+     the ground." The plant scatter above dresses NATURE; this dresses the
+     places people have been. Litter is small, so it registers a TIGHT target -
+     a crushed can is a spot you stand exactly on, not a zone you wander in. */
+  const LITTER = {
+    concrete:['can_crushed','can_open','can_red','bottle_glass_brown','box_cardboard_open',
+              'box_cardboard_shut','cone_traffic','pallet','bricks_loose','rubble_small',
+              'bin_small','bin_street','bollard','sign_triangle','planter_potted'],
+    metal:   ['pipe_straight','pipe_corner','propane_tank','keg','tyre','rubble_pile',
+              'can_crushed','barrel_metal','bin_small','sign_stop'],
+    ash:     ['rubble_pile','rubble_small','bricks_loose','tyre','propane_tank','tree_stump'],
+    dirt:    ['pallet','hay_bale','sack_open','tree_stump','tyre','bricks_loose','fence_low'],
+    sand:    ['bottle_glass_green','can_crushed','sack_open','tree_stump'],
+    rock:    ['rubble_small','rubble_pile','bricks_loose'],
+    mud:     ['tyre','pallet','sack_open','tree_stump'],
+    grass:   ['bottle_glass_green','can_open','fence_low','tree_stump','bench_park'],
+    moss:    ['tree_stump','bricks_loose','well_stone'],
+    snow:    ['tree_stump','rubble_small','fence_low']
+  };
+  let litterN = 0, LITTER_CAP = 190;
+  for(let y=0;y<mapRows && litterN<LITTER_CAP;y++) for(let x=0;x<mapCols && litterN<LITTER_CAP;x++){
+    const kinds = LITTER[map.terrain[y][x]]; if(!kinds) continue;
+    const h = hash2(x*23+19, y*29+7);
+    /* litter gathers where people were: clumped hard, empty in between */
+    const clump = hash2((x+1)>>1, (y+2)>>1) % 100 < 30;
+    if((h%1000)/1000 >= (clump ? 0.30 : 0.035)) continue;
+    const kind = kinds[(h>>>5)%kinds.length];
+    const hue = PAINT_HUE[kind] || 0x8a8578;
+    const m = new THREE.MeshLambertMaterial({ color: hue });
+    const big = /bench_park|well_stone|bin_street|planter_potted|traffic_light|lamp_post|fence_panel/.test(kind);
+    const pr = propMesh(kind, m, big ? (0.9 + ((h>>>3)%70)/100) : (0.28 + ((h>>>3)%42)/100));
+    if(!pr) continue;
+    const wx = (x+0.5-mapCols/2)*TILE + (((h>>>8)%100)/100-0.5)*TILE*0.62;
+    const wz = (y+0.5-mapRows/2)*TILE + (((h>>>12)%100)/100-0.5)*TILE*0.62;
+    const g3 = new THREE.Group(); g3.add(pr.node);
+    g3.position.set(wx, 0, wz); g3.rotation.y = ((h>>>16)%628)/100;
+    worldGroup.add(g3);
+    if(big) losMeshes.push(...pr.meshes);
+    addTarget(wx, wz, hue, big ? 1.5 : 0.95);
+    litterN++;
   }
 
   /* Second pass: the clumped scatter above is pretty but it leaves bare ground,
@@ -2357,6 +2417,7 @@ window.__aac3dPaint = function(){
   const _t0 = paintTargets[0] || null;
   return { map: MAP.name||'?', targets: paintTargets.length, walkable, marks: markCount,
     markDraws: worldGroup.children.filter(c=>c.isInstancedMesh).length,
+    props: Object.keys(propLib).length, propsWired: Object.keys(PROP_URLS).length,
     markKinds: markAtlas.map(m=>m.kind),
     sample: _t0 ? { x:_t0.x, z:_t0.z, r:_t0.r, hex:'#'+_t0.color.getHexString() } : null,
            coveredPct: Math.round(covered/Math.max(1,walkable)*100),
@@ -2609,7 +2670,61 @@ const PROP_URLS = { crate:'assets/props/crate.glb', crates:'assets/props/crates.
   log_big:'assets/nature/log_large.glb', stone_a:'assets/nature/stone_largeA.glb',
   rock_tall_b:'assets/nature/rock_tallB.glb', grass_big:'assets/nature/grass_large.glb',
   tree_dark:'assets/nature/tree_default_dark.glb', tree_pine_b:'assets/nature/tree_pineDefaultA.glb',
-  statue_head:'assets/nature/statue_head.glb', statue_obelisk:'assets/nature/statue_obelisk.glb' };
+  statue_head:'assets/nature/statue_head.glb', statue_obelisk:'assets/nature/statue_obelisk.glb',
+  /* ⛔ SOURCING PLAYBOOK UPDATE (8/01). BUILD_NOTES said Kenney's main library and
+     Quaternius were not curl-able. They are, through community GLB mirrors:
+       github.com/Kenney-CCO/Kenney-CCO.glb        366 flat single-file GLBs
+       github.com/trebeljahr/quaternius-showcase   all 33 Quaternius packs, public/glb/<pack>/
+     All CC0, licence text read rather than assumed. KayKit City-Builder /
+     Restaurant / Furniture / Halloween remain gltf+bin+shared-texture, no GLBs.
+     And there is NO CC0 playground equipment in GLB anywhere - no swing, no
+     see-saw, no slide - which is why ours are built from primitives. */
+  can_crushed:'assets/clutter/can_crushed.glb',
+  can_open:'assets/clutter/can_open.glb',
+  can_red:'assets/clutter/can_red.glb',
+  bottle_glass_brown:'assets/clutter/bottle_glass_brown.glb',
+  bottle_glass_green:'assets/clutter/bottle_glass_green.glb',
+  box_cardboard_open:'assets/clutter/box_cardboard_open.glb',
+  box_cardboard_shut:'assets/clutter/box_cardboard_shut.glb',
+  bricks_loose:'assets/clutter/bricks_loose.glb',
+  cone_traffic:'assets/clutter/cone_traffic.glb',
+  pallet:'assets/clutter/pallet.glb',
+  tyre:'assets/clutter/tyre.glb',
+  rubble_pile:'assets/clutter/rubble_pile.glb',
+  rubble_small:'assets/clutter/rubble_small.glb',
+  pipe_straight:'assets/clutter/pipe_straight.glb',
+  pipe_corner:'assets/clutter/pipe_corner.glb',
+  tree_stump:'assets/clutter/tree_stump.glb',
+  hay_bale:'assets/clutter/hay_bale.glb',
+  keg:'assets/clutter/keg.glb',
+  sack_open:'assets/clutter/sack_open.glb',
+  propane_tank:'assets/clutter/propane_tank.glb',
+  bin_street:'assets/street/bin_street.glb',
+  bin_small:'assets/street/bin_small.glb',
+  bollard:'assets/street/bollard.glb',
+  fence_low:'assets/street/fence_low.glb',
+  fence_panel:'assets/street/fence_panel.glb',
+  lamp_post:'assets/street/lamp_post.glb',
+  planter_potted:'assets/street/planter_potted.glb',
+  sign_stop:'assets/street/sign_stop.glb',
+  sign_triangle:'assets/street/sign_triangle.glb',
+  traffic_light:'assets/street/traffic_light.glb',
+  flower_single_a:'assets/flower/flower_single_a.glb',
+  flower_single_b:'assets/flower/flower_single_b.glb',
+  flower_single_c:'assets/flower/flower_single_c.glb',
+  flower_single_d:'assets/flower/flower_single_d.glb',
+  flower_clump:'assets/flower/flower_clump.glb',
+  flower_bed:'assets/flower/flower_bed.glb',
+  bush_round:'assets/flower/bush_round.glb',
+  bush_berries:'assets/flower/bush_berries.glb',
+  grass_tuft:'assets/flower/grass_tuft.glb',
+  plant_leafy_a:'assets/flower/plant_leafy_a.glb',
+  bench_park:'assets/playground/bench_park.glb',
+  gazebo:'assets/playground/gazebo.glb',
+  well_stone:'assets/playground/well_stone.glb',
+  flag_pole:'assets/playground/flag_pole.glb',
+  statue_plinth:'assets/playground/statue_plinth.glb',
+  vault_box:'assets/playground/vault_box.glb' };
 const DECO_KEEP_UV = new Set(['grass','grass_small']);   // deco keeps its baked colormap look
 const propLib = {};
 async function loadProps(){
