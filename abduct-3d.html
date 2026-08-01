@@ -324,6 +324,20 @@
      is open. It sits ABOVE the two invisible thumbsticks (z-index 8) so a drag
      orbits you instead of walking you into the open, and BELOW the action column
      (z-index 12) and the dock (25) so both stay tappable. */
+  #recov{ position:fixed; left:50%; top:16px; transform:translate(-50%,-140%); z-index:30;
+    width:min(92vw,560px); opacity:0; pointer-events:none;
+    transition:transform .5s cubic-bezier(.2,.9,.25,1), opacity .5s ease }
+  #recov.on{ transform:translate(-50%,0); opacity:1 }
+  body.recovering #banner{ opacity:0; transition:opacity .35s ease; pointer-events:none }
+  #recov .rc{ background:rgba(10,14,25,.93); border:1px solid var(--amber);
+    border-left:4px solid var(--amber); border-radius:12px; padding:11px 14px;
+    backdrop-filter:blur(8px); box-shadow:0 18px 50px -18px rgba(0,0,0,.9) }
+  #recov .why{ font-family:var(--mono); font-size:9.5px; letter-spacing:.22em; color:var(--amber) }
+  #recov .num{ font-family:var(--mono); font-size:9px; letter-spacing:.14em; color:var(--muted-2); margin-top:2px }
+  #recov .head{ font-size:14px; font-weight:800; color:var(--txt); margin:6px 0 4px; line-height:1.3 }
+  #recov .body{ font-size:11.5px; line-height:1.6; color:var(--muted) }
+  #recov .foot{ font-family:var(--mono); font-size:9px; color:var(--muted-2); margin-top:7px }
+  @media (max-height: 470px){ #recov{ width:min(70vw,440px) } #recov .body{ font-size:10.5px } }
   #paintStage{ position:fixed; inset:0; z-index:9; touch-action:none; display:none }
   #paintStage.on{ display:block }
   .pview{ background:rgba(10,14,25,.86); border:1.5px solid var(--line); border-radius:11px;
@@ -652,6 +666,14 @@
   <div id="dropzone">Release to load map</div>
 
   <!-- ============ P30: PAINT STUDIO — draw on your own body ============ -->
+  <!-- the arrival moment. A page is only worth having if getting it was an event. -->
+  <div id="recov"><div class="rc">
+    <div id="recovWhy" class="why">RECOVERED</div>
+    <div id="recovNum" class="num">—</div>
+    <div id="recovHead" class="head">—</div>
+    <div id="recovBody" class="body">—</div>
+    <div class="foot">kept in your case file · read it in the hunter's window</div>
+  </div></div>
   <div id="paintStage"></div>
   <div id="paintTeach">drag your body to paint it · drag the empty space to turn · pinch to zoom</div>
   <div id="paint" class="hidden" style="position:fixed;right:14px;top:50%;transform:translateY(-50%);z-index:25;
@@ -923,6 +945,7 @@ let paintTargets = [];          // {x,z,color:THREE.Color,r} — every landmark 
 const worldGroup = new THREE.Group();
 let cover = [], losMeshes = [], solids = [];   // cover meshes / raycast targets / wall AABBs
 let waterMesh = null;                          // rippling skin laid over the water cells
+let wrecks = [];                               // downed panels that carry a case file
 let platforms = [];             // standable tops: {minX,maxX,minZ,maxZ,top,colorHex,cx,cz,name}
 let velY = 0, grounded = true, standingOn = null, jumpQueued = false, _posInit = false;
 let _lastTargetHex = 0x808080;  // colour of the most recent addTarget, for perches
@@ -1783,6 +1806,20 @@ function makeRandomMap(seed){
       }
     }
   })();
+  /* ⭐ THE FILES LIVE OUT HERE, NOT IN A MENU. Three to five wrecks a map, never
+     near the edge, never in water or lava. Few enough that finding one is worth
+     something; enough that a session yields a handful of pages. */
+  (function(){
+    const bad = { water:1, lava:1, void:1 };
+    let placed = 0, guard = 0;
+    const want = 3 + Math.floor(rnd()*3);
+    while(placed < want && guard++ < 300){
+      const x = 4 + Math.floor(rnd()*(cols-8)), y = 4 + Math.floor(rnd()*(rows-8));
+      if(bad[t[y][x]] || seen.has(x+','+y)) continue;
+      put(x, y, 'wreck'); placed++;
+    }
+  })();
+
   /* ⭐ SHELTER, PLACED BY COUNT AND IN ROWS. Density buried in the cover table
      produced 1-7 canopies a map (measured) because the noise field, the blobs,
      the roads and the water all overwrite the base key first, so "3% of base
@@ -1880,7 +1917,7 @@ function buildWorld(map){
   applyMood(moodForMap(map && map.name)); mapCols = map.grid.cols; mapRows = map.grid.rows;
   halfW = mapCols*TILE/2; halfH = mapRows*TILE/2;
   while(worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
-  cover = []; losMeshes = []; solids = []; paintTargets = []; platforms = []; markCount = 0; markQueue = [];
+  cover = []; losMeshes = []; solids = []; paintTargets = []; platforms = []; wrecks = []; markCount = 0; markQueue = [];
   buildMarkAtlas(map && map.name || 'world');
   velY = 0; grounded = true; standingOn = null;
 
@@ -2870,6 +2907,7 @@ function practiceTick(dt){
           if(practiceFound >= practiceBodies.length){
             SFX.win();
             practiceLast = Math.round((performance.now()-practiceStart)/1000);
+            recoverPage('RANGE CLEARED');
             setTimeout(()=>{ if(practiceOn) spawnPractice(); }, 2200);
           }
         }
@@ -2906,43 +2944,91 @@ window.__aac3dPractice = { toggle: togglePractice,
    exactly what a two minute wait needs. Recovered pages persist, so the archive
    fills in across sessions instead of resetting every round. */
 const FILES_TOTAL = 1000;
-const FILES_KEY = 'aac3d_files_read';
-let filesRead = (function(){
-  try{ const a = JSON.parse(localStorage.getItem(FILES_KEY) || '[]');
-    return new Set(Array.isArray(a) ? a.slice(0, FILES_TOTAL) : []); }catch(e){ return new Set(); }
+/* ⭐⭐ THE FILES ARE FOUND, NOT BROWSED. This shipped as a LIBRARY: filesNext()
+   picked a random unread page out of all 1000 and a NEXT button walked the lot.
+   Stephen: "i like the story notes but they need to be earned. starting with all
+   1000 is just dumb and id never want to read them but if i found them each game
+   id read them if displayed as they came."
+   He is right, and the general rule is worth keeping: GIVING A PLAYER THE WHOLE
+   ARCHIVE DESTROYS IT. The same words handed over one at a time, as a reward for
+   something you did, are the thing people actually want.
+   So: you OWN pages. The reader shows only what you own. New pages arrive by
+   walking into a wreck out in the valley, by surviving a round, by taking
+   somebody, or by clearing the practice range — and each one arrives as an
+   EVENT, with a card, because a page is only worth having if getting it was. */
+const FILES_KEY = 'aac3d_files_found';
+const FILES_KEY_OLD = 'aac3d_files_read';
+let filesFound = (function(){
+  const read = k => { try{ const a = JSON.parse(localStorage.getItem(k) || '[]');
+    return Array.isArray(a) ? a : []; }catch(e){ return []; } };
+  /* silent migration: anyone who "read" pages under the old model keeps them as
+     found. Losing somebody's archive to a refactor would be unforgivable. */
+  const cur = read(FILES_KEY), old = read(FILES_KEY_OLD);
+  return new Set(cur.concat(old).slice(0, FILES_TOTAL));
 })();
-let curFile = null, filesHist = [], filesHistIdx = -1;
+let curFile = null, filesIdx = 0;
 /* the HUD re-decides the blindfold every frame, so a test or a preview that
    just adds the class gets it removed again on the next tick. This pins it. */
-let filesDemo = false;
+let filesDemo = false, _lastPhase = null;
 function filesBank(){ return (window.AAC_FILES && window.AAC_FILES.length) ? window.AAC_FILES : []; }
-function filesMarkRead(n){
-  if(filesRead.has(n)) return;
-  filesRead.add(n);
+/* your archive, in page order — a codex, not the order you happened to find them,
+   because 880 unordered cards is unusable the moment there are more than a few */
+function filesOwned(){
+  return filesBank().filter(p=> filesFound.has(p.n)).sort((a,b)=> a.n - b.n);
+}
+function filesSave(){
   // read-modify-write against fresh disk: two tabs must not erase each other
   try{
     const disk = JSON.parse(localStorage.getItem(FILES_KEY) || '[]');
     const merged = new Set(Array.isArray(disk) ? disk : []);
-    filesRead.forEach(v=> merged.add(v));
-    filesRead = merged;
+    filesFound.forEach(v=> merged.add(v));
+    filesFound = merged;
     localStorage.setItem(FILES_KEY, JSON.stringify([...merged]));
   }catch(e){}
 }
-function filesPick(){
+/* grant exactly one new page and make arriving at it an event. Returns the page,
+   or null when the archive is complete. */
+function recoverPage(reason){
   const bank = filesBank();
   if(!bank.length) return null;
-  // prefer something you have not recovered yet, so the archive actually grows
-  const fresh = bank.filter(p=> !filesRead.has(p.n));
-  const pool = fresh.length ? fresh : bank;
-  return pool[Math.floor(Math.random()*pool.length)];
+  const fresh = bank.filter(p=> !filesFound.has(p.n));
+  if(!fresh.length) return null;
+  const p = fresh[Math.floor(Math.random()*fresh.length)];
+  filesFound.add(p.n); filesSave();
+  showRecovery(p, reason);
+  return p;
+}
+function showRecovery(p, reason){
+  const el = document.getElementById('recov'); if(!el) return;
+  document.getElementById('recovWhy').textContent = reason || 'RECOVERED';
+  document.getElementById('recovNum').textContent = 'PAGE ' + p.n + ' OF ' + FILES_TOTAL
+    + '  ·  ' + filesFound.size + ' RECOVERED';
+  document.getElementById('recovHead').textContent = p.h || '';
+  document.getElementById('recovBody').textContent = (p.b || '').slice(0, 260)
+    + ((p.b||'').length > 260 ? '…' : '');
+  el.classList.add('on');
+  /* ⛔ the card and the free-play banner both sit at the top centre, so the page
+     you just found landed on top of the instructions. The banner is always
+     available; the card is a moment. The moment wins, briefly. */
+  document.body.classList.add('recovering');
+  tone(660, 0.16, 'sine', 0.16, 990); setTimeout(()=>tone(990,0.22,'sine',0.13,1320), 130);
+  clearTimeout(showRecovery._t);
+  showRecovery._t = setTimeout(()=>{ el.classList.remove('on');
+    document.body.classList.remove('recovering'); }, 7000);
 }
 function filesRender(p){
   const $$ = id => document.getElementById(id);
   if(!$$('hwBody')) return;
   if(!p){
-    $$('hwHeading').textContent = 'ARCHIVE UNAVAILABLE';
-    $$('hwBody').textContent = 'The case files did not load. The hunt still works.';
+    const none = !filesOwned().length;
+    $$('hwHeading').textContent = none ? 'NOTHING RECOVERED YET' : 'ARCHIVE UNAVAILABLE';
+    $$('hwBody').textContent = none
+      ? 'The Abduction Files are out there in the valley, not in here. Walk into a wreck and you '
+        + 'keep the page you find. Survive a round, or take somebody, and another comes back with you.'
+      : 'The case files did not load. The hunt still works.';
     $$('hwNum').textContent = ''; $$('hwThread').textContent = '—';
+    $$('hwCount').textContent = filesFound.size + ' of ' + FILES_TOTAL + ' recovered';
+    curFile = null;
     return;
   }
   curFile = p;
@@ -2951,28 +3037,34 @@ function filesRender(p){
   $$('hwHeading').textContent = p.h || '';
   $$('hwBody').textContent = p.b || '';
   $$('hwCard').scrollTop = 0;
-  filesMarkRead(p.n);
-  $$('hwCount').textContent = filesRead.size + ' of ' + FILES_TOTAL + ' recovered';
+  const own = filesOwned();
+  $$('hwCount').textContent = (filesIdx+1) + ' of ' + own.length + ' yours  ·  '
+    + filesFound.size + ' of ' + FILES_TOTAL + ' recovered';
 }
+/* NEXT and BACK page through YOUR archive now, not through the bank */
 function filesNext(){
-  const p = filesPick(); if(!p) return filesRender(null);
-  filesHist = filesHist.slice(0, filesHistIdx+1); filesHist.push(p);
-  if(filesHist.length > 40) filesHist.shift();
-  filesHistIdx = filesHist.length-1;
-  filesRender(p);
+  const own = filesOwned(); if(!own.length) return filesRender(null);
+  filesIdx = (filesIdx + 1) % own.length; filesRender(own[filesIdx]);
 }
 function filesPrev(){
-  if(filesHistIdx <= 0) return;
-  filesHistIdx--; filesRender(filesHist[filesHistIdx]);
+  const own = filesOwned(); if(!own.length) return filesRender(null);
+  filesIdx = (filesIdx - 1 + own.length) % own.length; filesRender(own[filesIdx]);
 }
-function filesEnsure(){ if(!curFile) filesNext(); }
+function filesEnsure(){
+  if(curFile) return;
+  const own = filesOwned();
+  if(!own.length) return filesRender(null);
+  filesIdx = Math.min(filesIdx, own.length-1);
+  filesRender(own[filesIdx]);
+}
 window.__aac3dFiles = {
   open(){ filesDemo = true; document.getElementById('hidewait').classList.add('on'); filesEnsure(); },
   close(){ filesDemo = false; document.getElementById('hidewait').classList.remove('on'); },
   next: filesNext, prev: filesPrev,
-  state(){ return { bank: filesBank().length, read: filesRead.size,
+  recover: recoverPage,
+  state(){ return { bank: filesBank().length, found: filesFound.size, owned: filesOwned().length,
     cur: curFile ? { n:curFile.n, t:curFile.t, h:curFile.h, words:(curFile.b||'').split(/\s+/).length } : null,
-    histIdx: filesHistIdx }; }
+    idx: filesIdx }; }
 };
 
 /* read-only movement diagnostics, same family as __aac3dPaint/__aac3dCamo */
@@ -2989,6 +3081,15 @@ window.__aac3dAudio = function(){
     gain: ambGain ? +ambGain.gain.value.toFixed(4) : -1,
     cutoff: ambFilter ? Math.round(ambFilter.frequency.value) : -1,
     mood: _mood ? _mood.key : 'none' };
+};
+/* where the case files are, and a way to stand on one — a harness cannot walk */
+window.__aac3dWrecks = function(){
+  return { list: wrecks.map(w=>({ x:+w.x.toFixed(2), z:+w.z.toFixed(2), taken:w.taken })) };
+};
+window.__aac3dTeleport = function(x, z){
+  localPos.x = x; localPos.z = z;
+  const sup = supportAt(x, z); localPos.y = sup.top; grounded = true; standingOn = sup.plat;
+  return { x, z };
 };
 window.__aac3dMoods = function(){ return MOODS.map(m=>m.key); };
 window.__aac3dSetMood = function(i){ applyMood(MOODS[i|0] || MOODS[0]); return MOODS[i|0].key; };
@@ -3378,6 +3479,26 @@ function addCover(type, gx, gy){
     if(pr){ pr.node.rotation.y = ((hash2(gy,gx)>>2)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
     else{ const b = new THREE.Mesh(new THREE.BoxGeometry(2.0,1.2,1.0), tm); b.position.y=0.6; g.add(b); losMeshes.push(b); }
     addTarget(w.x, w.z, tm.color.getHex(), 2.4);
+  }else if(type==='wreck'){
+    /* ⭐ A REASON TO WALK SOMEWHERE. Wrecks are where the Files come from: a
+       downed panel half-buried in the ground with a light still blinking on it,
+       readable from a distance so it pulls you across open ground.
+       ⚖ It IS ordinary cover as well — it carries a paint target and its 0.5m
+       hull registers as a low perch, which jump3d confirms. That is deliberate:
+       a landmark you cannot also use would be a dead spot on the map, and a
+       destination that doubles as a hiding place is a better destination. */
+    const wm = new THREE.MeshStandardMaterial({ color:0x6E7C93, roughness:.5, metalness:.35 });
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(2.6,0.5,1.7), wm);
+    hull.position.y = 0.25; hull.rotation.z = 0.22; hull.rotation.y = 0.4;
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.18,1.5,1.1), wm);
+    fin.position.set(0.9, 0.75, -0.2); fin.rotation.z = -0.3;
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2,10,8),
+      new THREE.MeshBasicMaterial({ color:0xF2B33D }));
+    lamp.position.set(-0.9, 0.62, 0.3);
+    g.add(hull, fin, lamp);
+    losMeshes.push(hull, fin);
+    wrecks.push({ x:w.x, z:w.z, lamp, taken:false });
+    addTarget(w.x, w.z, 0x6E7C93, 2.2);
   }else if(type==='roof'){
     /* one interior tile of a building's roof. No posts — the walls hold it up —
        and it sits higher than a canopy so the two read as different shelter.
@@ -4974,6 +5095,28 @@ function overheadCover(){
   _skyRay.far = 60;
   return _skyRay.intersectObjects(losMeshes, false).length > 0;
 }
+/* walk into a wreck and the page is yours. Hiders only: a seeker is flying, and
+   a saucer scooping up the archive it came here to protect makes no sense. */
+let _wkT = 0;
+function wreckTick(dt){
+  if(!wrecks.length) return;
+  const t = performance.now()*0.004;
+  for(const w of wrecks){
+    if(w.lamp) w.lamp.material.color.setHex(w.taken ? 0x3A4353
+      : (Math.sin(t + w.x) > 0 ? 0xF2B33D : 0x6B5320));   // a light still blinking on it
+  }
+  _wkT -= dt; if(_wkT > 0) return;
+  _wkT = 0.25;
+  if(myRole() === 'seeker' || amAbducted()) return;
+  for(const w of wrecks){
+    if(w.taken) continue;
+    const dx = w.x - localPos.x, dz = w.z - localPos.z;
+    if(dx*dx + dz*dz > 6.25) continue;                    // 2.5m: you have to arrive
+    w.taken = true;
+    if(!recoverPage('CASE FILE RECOVERED')) w.taken = true;
+    break;
+  }
+}
 function skyTick(dt){
   _skyT -= dt;
   if(_skyT > 0) return;
@@ -5104,6 +5247,14 @@ function startRound(){
   setState('roundId', rid, true);
   setState('phase', 'playing', true);
 }
+/* ⭐ A ROUND SHOULD PAY A PAGE. Wrecks reward exploring; this rewards playing.
+   Fires once per round on the client it happened to, never on the host's behalf
+   of everyone, so nobody collects for a round they were not in. */
+function filesRoundReward(winner){
+  if(amAbducted() && winner === 'seekers') return;              // caught pays nothing
+  if(myRole() === 'hider' && winner === 'hiders') recoverPage('YOU SURVIVED');
+  else if(myRole() === 'seeker' && winner === 'seekers') recoverPage('THE VALLEY IS CLEAR');
+}
 function endRound(winner){
   if(winner==='hiders'){
     for(const p of players) if(p.state.getState('role')==='hider' && !p.state.getState('abducted'))
@@ -5227,6 +5378,7 @@ function clientTick(dt){
     }
   }
 
+  wreckTick(dt);
   skyTick(dt);
   waterTick(dt);
   motesTick(dt);
@@ -5547,6 +5699,9 @@ function updateHUD(role, abd){
     if(left>0){ const n=$('hidewaitNum'); if(n) n.textContent=String(Math.ceil(left)); }
   })();
   const phase = getState('phase') || 'waiting';
+  /* claim the round's page exactly once, on the edge into intermission */
+  if(phase === 'intermission' && _lastPhase !== 'intermission') filesRoundReward(getState('winner'));
+  _lastPhase = phase;
   const hiders = players.filter(p=> p.state.getState('role')==='hider');
   const alive  = hiders.filter(p=> !p.state.getState('abducted')).length;
   const seekers = players.filter(p=> p.state.getState('role')==='seeker').length;
