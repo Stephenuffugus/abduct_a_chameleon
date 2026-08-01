@@ -3736,9 +3736,18 @@ const SOLO_GRACE_FIRST = 45;    // never seen the studio: find a spot, open it, 
 const SOLO_GRACE = 25;          // after that. The measured first catch was 20.4s.
 const SOLO_WARMUP = 40;         // seconds after grace before the bot is at full sight
 let botGraceEnds = 0, botLiveAt = 0, botTier = 0, botWarnT = 0, botEjectUntil = 0;
+/* ⛔ TIER SIGHT AND TIER SPEED ARE NOT THE SAME DIAL, and the first pass moved
+   them together and broke the round the other way. At spd 0.72 a rookie chase
+   runs 18*0.8*0.72 = 10.4 m/s against HIDER_SPEED 10 — a 4% edge, so a chase
+   could never actually close and a walking player was NEVER caught in 90s at
+   full warm-up (measured, 0 catches). A hunter you can stroll away from is not
+   a difficulty setting, it is a broken one.
+   SIGHT is the fair dial: being hard to SEE is what your paint earns you.
+   SPEED must always beat 10 or the pursuit has no terminator. Floor is 0.80 =
+   11.5 m/s, a 15% edge — enough to close, slow enough to round a corner on. */
 const BOT_TIERS = [
-  { name:'rookie',  see:0.70, spd:0.72, gate:0.45 },
-  { name:'veteran', see:0.85, spd:0.86, gate:0.38 },
+  { name:'rookie',  see:0.80, spd:0.80, gate:0.45 },
+  { name:'veteran', see:0.90, spd:0.90, gate:0.38 },
   { name:'hunter',  see:1.00, spd:1.00, gate:0.30 },   // gate 0.30 = the original
 ];
 function botTierNow(){ return BOT_TIERS[Math.min(BOT_TIERS.length-1, botTier)]; }
@@ -3850,7 +3859,10 @@ function botTick(dt){
   if(!solo){ killBotUfo(); return; }
   if(!bot){ bot = makeBotUfo(); armBotGrace(!paintTaught && botCatches===0); }
   const b = bot, pos = b.g.position;
-  if(!pos.lengthSq()) pos.set(localPos.x + 30, b.alt, localPos.z + 30);
+  /* spawn AT the stand-off altitude, not at hunting height climbing towards it:
+     for the first couple of seconds of a fresh round it was at 18m and dropping
+     a shadow like it meant business, which is the opposite of the message */
+  if(!pos.lengthSq()) pos.set(localPos.x + 30, soloGraceLeft() > 0 ? 26 : b.alt, localPos.z + 30);
   const dx = localPos.x - pos.x, dz = localPos.z - pos.z;
   const dist = Math.hypot(dx, dz);
   const T = botTierNow();
@@ -3884,15 +3896,25 @@ function botTick(dt){
   const seen = dist < seeR && hasLOS({x:pos.x,y:b.alt,z:pos.z}, {x:localPos.x,y:0,z:localPos.z});
   if(b.state==='patrol'){
     b.wpT -= dt;
+    /* ⛔ THE SEARCH HAS TO CONVERGE. Waypoints were scattered +/-35m around the
+       player forever, so with the tiers narrowing sight the bot could quarter
+       empty ground for the whole round and never arrive. A hunter that might
+       never turn up is not tension, it is nothing happening. b.hunt grows while
+       it has no contact and tightens the search ring 35m -> 12m over ~35s, so
+       pressure always builds - but WHETHER IT SEES YOU when it gets there is
+       still entirely your paint. Contact resets it. */
+    b.hunt = Math.min(35, (b.hunt||0) + dt);
+    const ring = 35 - 23*(b.hunt/35);
     if(b.wpT <= 0 || pos.distanceTo(b.wp) < 4){
       b.wpT = 6 + Math.random()*5;
-      b.wp.set(localPos.x + (Math.random()*70-35), b.alt, localPos.z + (Math.random()*70-35));
+      b.wp.set(localPos.x + (Math.random()*2-1)*ring, b.alt, localPos.z + (Math.random()*2-1)*ring);
       b.wp.x = clamp(b.wp.x, -halfW+4, halfW-4); b.wp.z = clamp(b.wp.z, -halfH+4, halfH-4);
     }
     _a.copy(b.wp).sub(pos); _a.y = 0;
     if(_a.lengthSq() > 0.1){ _a.normalize(); pos.addScaledVector(_a, UFO_SPEED*0.55*T.spd*dt); }
-    if(seen && visibility > 0.25) b.state = 'chase';
+    if(seen && visibility > 0.25){ b.state = 'chase'; b.hunt = 0; }
   } else {
+    b.hunt = 0;
     _a.set(dx, 0, dz);
     if(dist > 0.5){ _a.normalize(); pos.addScaledVector(_a, UFO_SPEED*0.8*T.spd*dt); }
     if(!seen && dist > 6) { b.state = 'patrol'; b.wpT = 0; }
