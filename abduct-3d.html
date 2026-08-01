@@ -3209,6 +3209,19 @@ window.__aac3dGround = function(){
     tableSRGB:[Math.round(_s.r*255),Math.round(_s.g*255),Math.round(_s.b*255)],
     rendered:[px[0],px[1],px[2]] };
 };
+/* test-only: fast-forward the round clocks. A full round is HIDE_SECONDS 120 +
+   ROUND_SECONDS 150 = four and a half minutes, which no harness should sit
+   through — and the phase machine was rewired the day free play landed, so a
+   round completing end to end needs proving, not assuming. Host only, because
+   only the host advances phases. */
+window.__aac3dRoundSkip = function(what){
+  if(!isHost()) return 'not host';
+  if(what === 'hide')  setState('hideEnds', Date.now() - 1, true);
+  if(what === 'round'){ setState('hideEnds', Date.now() - 1, true);
+                        setState('roundEnds', Date.now() - 1, true); }
+  if(what === 'inter')  setState('interEnds', Date.now() - 1, true);
+  return getState('phase') || 'waiting';
+};
 window.__aac3dRound = function(){
   const phase = getState('phase') || 'waiting';
   return { phase, hideLeft:+hideLeft().toFixed(1), players:players.length,
