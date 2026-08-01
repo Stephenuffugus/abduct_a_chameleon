@@ -1,9 +1,14 @@
 # BUILD NOTES — the 3D game (read this first when resuming)
 
-Last updated: **2026-07-20, end of session** (tip commit `cc35026`). This is the living record of
-what we're building, how it works, and where every external thing comes from. The older
-`HANDOFF-3d.md` is a predecessor document and partially stale; trust this file first, then
-`HANDOFF-v02.md` for the 2D game's history.
+Last updated: **2026-08-01**. This is the living record of what we're building, how it works, and
+where every external thing comes from. The older `HANDOFF-3d.md` is a predecessor document and
+partially stale; trust this file first, then `HANDOFF-v02.md` for the 2D game's history.
+
+> **Shipped since the 7/20 body of this doc** (read the commit messages, they carry the detail):
+> per-terrain speed/settle effects (`TERRAIN_FX`), the Kenney nature scatter that made every
+> walkable cell have something to paint, a settings panel (sensitivity / invert Y / volume), a
+> persisted career (`aac3d_career`), and on **8/01** the paint-studio softlock + the colour-space
+> bug below. There is now ONE automated test for this file: `test/paint3d.mjs` (`npm run paint3d`).
 
 ---
 
@@ -61,7 +66,19 @@ anyway (see invariant below).
    (untested on a real screen; no browser in this sandbox).
 6. **Editing ritual**: python3 heredoc patch with `assert old in s` + uniqueness guards, then
    regex-extract the `<script type="module">` body → `node --input-type=module --check`.
-   There are NO automated tests for the 3D file (WebGL); the 15 jsdom suites cover the 2D game.
+   The 15 jsdom suites cover the 2D game and cannot touch this file (WebGL). The one 3D test is
+   `test/paint3d.mjs` — headless Chrome + swiftshader. **Run it after any UI change here.**
+7. ⛔ **Colour space.** `THREE.Color` stores **linear-sRGB**; a 2D canvas gives you **sRGB bytes**.
+   Never compare them directly. `matchFor` did for months, so a *perfect* paint scored 65% and
+   `camoLevel = stillness × match` could never pass the bot's 0.70/0.75 gates — the reward for
+   painting well was unreachable dead code. Convert with `t.getRGB(out, THREE.SRGBColorSpace)`.
+   Symptom to watch for: a number that should be 100 sitting stubbornly in the 60s.
+8. ⛔ **This game is played on a landscape phone, so every panel must FIT ~430px of height.**
+   The paint studio was anchored `top:50%` + `translateY(-50%)` at its natural 703px and put both
+   of its exits off-screen; a phone has no `E` key, so the only escape was a reload. Any panel with
+   an exit gets its header/footer **pinned** (grid areas) and scrolls its middle. Breakpoints go on
+   the panel's real measured height, not a guessed phone width. And measure at **more than one**
+   height — the `?`-over-🎨 collision only reproduces at 390 and 375, not 430.
 
 ## 4. The mechanics stack (all shipped, all live)
 
@@ -106,7 +123,37 @@ Owner's last playtest: "kind of working" — movement fix + rich default world +
 props + decoy all shipped SINCE then and are awaiting their next test. Watch for feedback on:
 character facing (flip `CHAR_FACING` if backwards), character scale/read, prop scale, decoy feel.
 
-Priority queue (owner-aligned):
+### Ranked queue as of 8/01 (surveyed against the live file, all solo-testable on a phone)
+
+The constraint that outranks everything: **Stephen and Penny test this themselves, usually ALONE,
+usually on a phone.** A feature that needs a lobby of strangers cannot be judged by them, so it
+delivers nothing this week. That is why the studio softlock jumped the queue on 8/01.
+
+1. **Two-tone match** — score head/torso against the nearest prop and legs against the ground, so
+   one flood-fill stops being a perfect disguise. This is the first real *decision* the paint
+   system would have, and the 2D game already ships the same idea (`test/twotone.mjs`, "P8 Split
+   Camo") so there is an oracle to port. ⚠ `pavg` is on the wire and decoys + remote camo read it,
+   so it needs a second field with a fallback, plus a bot retune.
+2. **A real solo round** — the solo branch is literally one line (`players.length < 2` → stay in
+   `waiting`, return), so alone there is no clock, no goal and no end: an endless sandbox whose own
+   banner says "Second player = real rounds". `botTick` is already fully local (it self-disables at
+   2+ players), so a run — prep window, clock, star target, escalating bot tier, end card banking
+   to `careerRound()` — can be built **local-only with zero `setState`** and cannot touch a real
+   lobby. Do NOT route it through the shared `phase`/`active` machinery; that is the one change in
+   this file that can genuinely desync multiplayer.
+3. **The seeker's blindfold.** `HIDE_SECONDS = 120` is Stephen's own ruling (7/29: "minimum 2
+   minute window") and should NOT be shortened — but `#hidewait` is an opaque `#04070f` panel over
+   the whole screen, so in a 1v1 the hunter stares at black for two solid minutes every round.
+   Fix the *experience*, not his number: let them fly for recon with hiders un-rendered, or give
+   the wait a terrain-only map view. ⚠ Whatever you do must leak nothing about hider positions —
+   wet-paint drips and snow tracks are world decals and would give spots away.
+4. Unlocks — `careerRound()` is one call away from a `checkUnlocks3D()`, and `CAREER.{caught,
+   rounds,bestHidden}` mirror the 2D ladder almost field-for-field. Nothing is gated behind the
+   career today; it is five read-only numbers.
+5. Portal earn-bridge — the 2D posts `{sws:'earn',game:'abduct',event,value}` on `daily_streak` /
+   `first_blend` / `round_win`; the 3D posts nothing at all.
+
+Older queue (still valid, lower priority now):
 1. **Game modes** — Infection (caught hiders become seekers), Double, Reverse Chicken Race —
    host round logic in `hostTick`; the reference's fan favorites.
 2. **Room-scale interior maps** — MECCHA's maps are furnished rooms; our building system +

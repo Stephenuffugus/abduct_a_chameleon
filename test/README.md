@@ -21,7 +21,29 @@ npm run maps                  # P11: every manifest level boots into PLAYING in 
 npm run capture               # P23: a fleeing runner IS catchable, re-hide still breaks the beam, riverline bridges shelter, tongue+burrow work
 npm run tour                  # P14: the guided First Flight advances by doing and persists tourDone
 npm run shots                 # render PNG/JPEG screenshots of each screen to test/shots/
+npm run paint3d               # 3D ONLY: the paint studio fits a landscape phone and both exits work
 ```
+
+## The one 3D test (`paint3d.mjs`)
+
+Everything above loads the **2D** `../index.html` in jsdom. The 3D file cannot be tested that way
+— it needs real WebGL — so `paint3d.mjs` drives `../abduct-3d.html` in **headless Chrome with
+swiftshader** instead. It needs `puppeteer` (in devDependencies) and **skips with exit 0** if that
+is not installed, so the suite still runs on a machine without it.
+
+It guards the three things that broke on 2026-08-01, at 932x430, 844x390 and 667x375:
+
+1. **The softlock.** The studio was anchored `top:50%` + `translateY(-50%)` and rendered 703px
+   tall inside a 430px viewport, so `#paintClose` sat at y=-123 and `#paintDone` at y=506. Both
+   exits off-screen, and a phone has no `E` key — opening the studio, which is the whole game,
+   could only be escaped by reloading. The test fails loudly if either exit leaves the screen.
+2. **The touch law.** 30 of 34 controls measured under 44px. Now 0, asserted in RENDERED px.
+3. **MATCH GROUND must actually match.** `matchFor` compared three.js LINEAR colour against sRGB
+   canvas bytes, so a *perfect* paint scored 65% and camo could never pass the hunter's 0.70/0.75
+   gates. The test fails below 95%.
+
+⚠ Run it at more than one viewport height. The `?` button covering the 🎨 toggle only reproduces
+at 390 and 375 tall — 430 alone looks clean, which is how that one got missed the first time.
 
 Notes: the harnesses pre-seed `localStorage` (tutorialSeen) to skip the first-run How-to.
 `@napi-rs/canvas` occasionally hangs encoding a HUNT frame for certain seeds (a headless quirk —

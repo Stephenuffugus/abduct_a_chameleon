@@ -245,6 +245,22 @@
   #dropzone{position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;
     background:rgba(63,208,224,.10);border:3px dashed var(--cyan);font-family:var(--mono);color:var(--cyan);font-size:18px}
 
+  /* ===== the touch column vs the ? button (8/01) ============================
+     The column is anchored bottom:14px and grows UPWARD: five 62px buttons plus
+     four 10px gaps is 350px, so its top sits at viewportHeight-364. At 430 tall
+     that is y=66, safely under #howtoBtn (which ends at y=60). At 390 it is 26
+     and at 375 it is 11 - the ? button then covers the TOP HALF of 🎨, so the
+     tap that opens the paint studio opens the help overlay instead. Measured on
+     all three; only the tallest was clear, which is exactly why a spot-check on
+     one phone was not enough. Shorter buttons on short screens keep the stack
+     below the ? button and still clear the 48px touch law by 4px.
+     Max five are ever visible at once - the hider set and the seeker set are
+     mutually exclusive - so 5x52+4x8 = 292px is the real worst case. */
+  @media (max-height: 470px){
+    #tbtns{ top:68px; justify-content:flex-end; gap:8px }
+    #tbtns .tbtn{ width:52px !important; height:52px !important }
+  }
+
   /* ===== the paint studio on a short screen (8/01) ==========================
      Measured, not guessed: on a 932x430 landscape phone the studio rendered
      703px tall and was anchored top:50% + translateY(-50%), so it hung 137px
@@ -572,7 +588,7 @@
   <div id="touchUI" class="hidden">
     <div id="stickL" style="position:fixed;left:0;bottom:0;width:46vw;height:52vh;z-index:8;touch-action:none"></div>
     <div id="stickR" style="position:fixed;right:0;bottom:0;width:52vw;height:52vh;z-index:8;touch-action:none"></div>
-    <div style="position:fixed;right:12px;bottom:14px;z-index:12;display:flex;flex-direction:column;gap:10px">
+    <div id="tbtns" style="position:fixed;right:12px;bottom:14px;z-index:12;display:flex;flex-direction:column;gap:10px">
       <button id="tPaint" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:rgba(242,179,61,.16);
         border:1.5px solid var(--amber);color:var(--amber);font-size:22px">🎨</button>
       <button id="tView" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:var(--panel);
