@@ -310,6 +310,7 @@
        with the terrain swatches. The colour wheel is the slow path, below. */
     #paintTarget{ order:0; margin:0 !important }
     #paintActions{ order:1; margin-bottom:0 !important }
+    #matchCoverBtn{ order:1; margin-bottom:0 !important }
     /* 17 swatches at a 44px thumb size wrap to three rows and push the colour
        wheel 215px below the fold. One horizontal strip that scrolls sideways
        keeps chip, MATCH GROUND, swatches and the wheel all on screen at once. */
@@ -550,14 +551,25 @@
     <div id="swatches" style="display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin:8px 0 6px"></div>
     <!-- what the camo maths is actually comparing you to. Without this the
          match % is a number with no subject. -->
-    <div id="paintTarget" style="display:flex;align-items:center;gap:8px;margin:0 0 8px">
-      <span id="ptSwatch" style="width:32px;height:32px;border-radius:8px;border:1.5px solid var(--line);
-        background:#4E8C4A;flex:0 0 auto"></span>
-      <div style="min-width:0">
-        <div style="font-family:var(--mono);font-size:8.5px;letter-spacing:.16em;color:var(--muted-2)">MATCHING AGAINST</div>
+    <div id="paintTarget" style="margin:0 0 8px">
+      <div style="font-family:var(--mono);font-size:8.5px;letter-spacing:.16em;color:var(--muted-2);margin-bottom:3px">MATCHING AGAINST</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="ptSwatch" style="width:32px;height:32px;border-radius:8px;border:1.5px solid var(--line);
+          background:#4E8C4A;flex:0 0 auto"></span>
         <div id="ptName" style="font-family:var(--mono);font-size:11px;color:var(--txt);white-space:nowrap;
-          overflow:hidden;text-overflow:ellipsis">—</div>
+          overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1">—</div>
       </div>
+      <!-- second tone: only appears when you are close enough to cover that a
+           seeker sees you against BOTH it and the ground -->
+      <div id="ptRow2" style="display:none;align-items:center;gap:8px;margin-top:5px">
+        <span id="ptSwatch2" style="width:32px;height:32px;border-radius:8px;border:1.5px solid var(--line);
+          background:#4E8C4A;flex:0 0 auto"></span>
+        <div id="ptName2" style="font-family:var(--mono);font-size:11px;color:var(--txt);white-space:nowrap;
+          overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1">—</div>
+      </div>
+      <div id="ptSplitTip" style="display:none;font-family:var(--mono);font-size:9px;line-height:1.45;
+        color:var(--amber);margin-top:5px">Two things to hide against. One colour caps out — paint your
+        top half and your legs differently to cover both.</div>
     </div>
     <div id="paintActions" style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
       <button id="matchBtn" style="flex:1;background:rgba(63,208,224,.14);border:1px solid var(--cyan);border-radius:8px;
@@ -567,6 +579,11 @@
       <button id="clearBtn" style="background:#0A0E19;border:1px solid var(--line);border-radius:8px;color:var(--muted);
         padding:7px 9px;font-size:11px;cursor:pointer">reset</button>
     </div>
+    <!-- appears only when two tones are live: the second tap that solves the
+         split without asking a thumb to paint a straight line on a phone -->
+    <button id="matchCoverBtn" style="display:none;width:100%;min-height:44px;margin-bottom:8px;
+      background:rgba(63,208,224,.10);border:1px solid var(--cyan);border-radius:8px;color:var(--cyan);
+      font-weight:700;font-size:12px;cursor:pointer">MATCH COVER · TOP HALF</button>
     <div id="paintBrush" style="display:flex;gap:6px;align-items:center">
       <span style="font-family:var(--mono);font-size:9.5px;color:var(--muted);letter-spacing:.12em">BRUSH</span>
       <button class="bsz" data-s="7"  style="background:#0A0E19;border:1px solid var(--line);border-radius:6px;color:var(--txt);width:26px;height:26px;cursor:pointer">·</button>
@@ -718,6 +735,10 @@ let curSurf = 'grass';          // terrain key under the local hider, for the HU
 let stillness = 0;              // builds while motionless — melting in is stillness × paint match
 let myMatch = 0;                // 0..1 — how well my body paint matches what I'm hiding against
 let myAvg = { r:237, g:239, b:244 };   // average of my body paint (published so others can judge me)
+// two-tone: the same paint split at the waist. Recomputed only when the paint
+// changes, never per frame — the camo tick reuses these.
+let myAvgTop = { r:237, g:239, b:244 }, myAvgBot = { r:237, g:239, b:244 };
+let mySplitOn = false;                 // is a second tone actually in play right now
 let paintOpen = false, paintDirty = false, paintSendT = 0;
 const touch = { on:false, mvx:0, mvy:0, altUp:false, altDown:false };   // virtual sticks
 let myBody = null;              // my player entry (owns the canvas the studio paints)
@@ -1453,6 +1474,22 @@ function addTarget(x, z, colorHex, r){ paintTargets.push({ x, z, color:new THREE
 /* measurement hook: how much of the walkable map is actually within reach of
    something to paint. Penny's round-one note was that there was nothing, and
    an assertion beats an opinion. Reports the worst case, not the average. */
+/* Oracle for the two-tone model, mirroring test/twotone.mjs in the 2D game.
+   Pure: computes what a hypothetical paint job would score at a point, so the
+   rules can be asserted without walking a character across a map. */
+window.__aac3dCamo = function(x, z, topHex, botHex){
+  const _c = new THREE.Color(), _d = new THREE.Color();
+  const rgb255 = hex => { const c=new THREE.Color(hex), o={r:0,g:0,b:0};
+    c.getRGB(o, THREE.SRGBColorSpace); return { r:o.r*255, g:o.g*255, b:o.b*255 }; };
+  const tones = targetTonesAt(x, z);
+  const top = rgb255(topHex), bot = rgb255(botHex);
+  const all = { r:(top.r+bot.r)/2, g:(top.g+bot.g)/2, b:(top.b+bot.b)/2 };
+  const em = effMatch(all, top, bot, tones);
+  return { tones: tones.map(t=>({ kind:t.kind, name:t.name, w:+t.w.toFixed(3),
+             hex:'#'+t.color.getHexString() })),
+           single:+em.single.toFixed(4), two:+em.two.toFixed(4),
+           mq:+em.mq.toFixed(4), split:em.split };
+};
 window.__aac3dPaint = function(){
   if(!MAP || !MAP.terrain) return null;
   const SOLID = { void:1, wall:1 };
@@ -1468,7 +1505,9 @@ window.__aac3dPaint = function(){
     }
     if(n>=3) covered++; else if(n<worst) worst=n;
   }
+  const _t0 = paintTargets[0] || null;
   return { map: MAP.name||'?', targets: paintTargets.length, walkable,
+    sample: _t0 ? { x:_t0.x, z:_t0.z, r:_t0.r, hex:'#'+_t0.color.getHexString() } : null,
            coveredPct: Math.round(covered/Math.max(1,walkable)*100),
            worstCellTargets: worst===1e9?3:worst };
 };
@@ -2073,19 +2112,78 @@ function targetInfoAt(x, z){
    ⚠ This changes difficulty: hiding well now actually turns the hunter's eyes
    off, which it never did before. Retune here, not in the bot. */
 const _mfc = { r:0, g:0, b:0 };
-function matchFor(avg, x, z){                    // 0..1 — perceptual-ish distance of body paint vs target
-  const t = targetColorAt(x, z);
-  t.getRGB(_mfc, THREE.SRGBColorSpace);          // back into the space the canvas is in
+function matchColor(avg, col){                   // 0..1 — one body colour vs one thing
+  col.getRGB(_mfc, THREE.SRGBColorSpace);        // back into the space the canvas is in
   const dr = avg.r - _mfc.r*255, dg = avg.g - _mfc.g*255, db = avg.b - _mfc.b*255;
   const dist = Math.sqrt(0.4*dr*dr + 0.5*dg*dg + 0.3*db*db);
   return clamp(1 - dist/150, 0, 1);
 }
-function canvasAvg(cv){
-  const c = document.createElement('canvas'); c.width=6; c.height=6;
-  const x = c.getContext('2d'); x.drawImage(cv, 0, 0, 6, 6);
-  const d = x.getImageData(0,0,6,6).data; let r=0,g=0,b=0;
+
+/* ===== TWO-TONE CAMO ====================================================
+   Ported from the 2D game's P8 Split Camo, which Stephen already approved and
+   playtested (test/twotone.mjs is its oracle). Same shape, different tones.
+
+   Before this, standing beside a boulder made the BOULDER your whole target and
+   the ground stopped existing, so one flood-fill was a perfect disguise
+   everywhere and paint had no decision in it. But a seeker looking down sees
+   you against both the thing you are next to AND the ground you are on. Those
+   are the two tones, weighted by how close the cover is: right against it, it
+   is most of what you are seen against; at the edge of its radius, none of it.
+
+   Two rules carried over from 2D because they are what keep it fair:
+     - a SINGLE tone means split does nothing, so open ground is scored exactly
+       as it was yesterday and the calibration is untouched;
+     - two colours can NEVER score worse than one (Math.max), so experimenting
+       cannot punish you.
+   Each tone is matched by whichever half of your body is closer to it, so the
+   player is never asked to work out which half maps to what. */
+const SPLIT_MIN_W = 0.18;        // 2nd tone must be this much of the view to engage
+const _tcTone = new THREE.Color();
+function targetTonesAt(x, z){
+  let best=null, bd=1e9;
+  for(const t of paintTargets){ const dx=t.x-x, dz=t.z-z, d=dx*dx+dz*dz; if(d<t.r*t.r && d<bd){ bd=d; best=t; } }
+  const key = terrainKeyAt(x,z);
+  const ground = _tcTone.set(TERRAIN[key] || TERRAIN.grass);
+  if(!best) return [{ color:ground, w:1, kind:'ground', name:(key||'ground').toUpperCase() }];
+  const w = clamp(0.65 * (1 - Math.sqrt(bd)/best.r), 0, 0.65);
+  const tones = [{ color:best.color, w:w, kind:'cover', name:'NEARBY COVER' },
+                 { color:ground, w:1-w, kind:'ground', name:(key||'ground').toUpperCase() }];
+  tones.sort((a,b)=> b.w - a.w);
+  return tones;
+}
+function matchTones(avg, tones){                 // one body colour across every tone
+  let s=0, w=0;
+  for(const t of tones){ s += t.w*matchColor(avg, t.color); w += t.w; }
+  return w>0 ? s/w : 0;
+}
+function effMatch(all, top, bot, tones){
+  const single = matchTones(all, tones);
+  if(top && bot && tones.length>1 && tones[1].w > SPLIT_MIN_W){
+    let s=0, w=0;
+    for(const t of tones){ s += t.w*Math.max(matchColor(top,t.color), matchColor(bot,t.color)); w += t.w; }
+    const two = w>0 ? s/w : 0;
+    return { mq:Math.max(single, two), two:two, single:single, split:true };
+  }
+  return { mq:single, two:0, single:single, split:false };
+}
+// single-colour path, kept for decoys and anything that only has one average
+function matchFor(avg, x, z){ return matchTones(avg, targetTonesAt(x, z)); }
+function canvasAvg(cv){ return _cvAvg(cv, 0, 1); }
+/* Average a horizontal BAND of the paint canvas. loadCharacter re-projects the
+   rig's UVs as a front box projection with canvas top = head, so rows 0-0.5 are
+   roughly head and torso and 0.5-1 is legs. That is what makes a two-tone body
+   physically meaningful rather than an arbitrary number split. */
+function _cvAvg(cv, y0, y1){
+  const H = Math.max(1, Math.round(6*(y1-y0)));
+  const c = document.createElement('canvas'); c.width=6; c.height=H;
+  const x = c.getContext('2d');
+  x.drawImage(cv, 0, y0*cv.height, cv.width, (y1-y0)*cv.height, 0, 0, 6, H);
+  const d = x.getImageData(0,0,6,H).data; let r=0,g=0,b=0;
   for(let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; }
   const n=d.length/4; return { r:r/n, g:g/n, b:b/n };
+}
+function canvasAvgSplit(cv){
+  return { all:_cvAvg(cv,0,1), top:_cvAvg(cv,0,0.5), bot:_cvAvg(cv,0.5,1) };
 }
 let brushColor = '#4E8C4A', brushSize = 16, drawing = false;
 let hsv = { h:110, s:0.47, v:0.55 };
@@ -2157,7 +2255,8 @@ function publishPaint(force){
   _ptexLastSend = now;
   paintDirty = false;
   wetUntil = performance.now() + 15000;                          // P34: fresh coat = wet coat
-  myAvg = canvasAvg(myBody.paint.cv);
+  (function(){ const sp = canvasAvgSplit(myBody.paint.cv);
+    myAvg = sp.all; myAvgTop = sp.top; myAvgBot = sp.bot; })();
   try{ me.setState('ptex', myBody.paint.cv.toDataURL('image/png')); }catch(_){}
   me.setState('pavg', { r:Math.round(myAvg.r), g:Math.round(myAvg.g), b:Math.round(myAvg.b) }, true);
 }
@@ -2166,22 +2265,52 @@ function publishPaint(force){
    the two side by side. Cheap enough to run every frame the studio is open,
    which it has to be: you can walk while it is open and the target changes
    under your feet. */
-let _chipHex = '', _chipTxt = '';
+let _chipHex = '', _chipTxt = '', _chipHex2 = '', _chipTxt2 = '', _chipSplit = null;
 function updateTargetChip(){
   const sw = document.getElementById('ptSwatch'), nm = document.getElementById('ptName');
   if(!sw || !nm) return;
-  const ti = targetInfoAt(localPos.x, localPos.z);
-  const hex = ti.color.getHexString(), txt = ti.name + (ti.tip ? ' · ' + ti.tip : '');
+  const tones = targetTonesAt(localPos.x, localPos.z);
+  const t0 = tones[0];
+  const tip0 = t0.kind==='ground' ? terrainFx(terrainKeyAt(localPos.x, localPos.z)).tip : 'stand against it';
+  const hex = t0.color.getHexString(), txt = t0.name + (tip0 ? ' · ' + tip0 : '');
   // this runs every frame the studio is open; a phone should not pay a style
-  // recalc for writing the same two strings sixty times a second
+  // recalc for writing the same strings sixty times a second
   if(hex !== _chipHex){ _chipHex = hex; sw.style.background = '#' + hex; }
   if(txt !== _chipTxt){ _chipTxt = txt; nm.textContent = txt;
-    nm.style.color = ti.kind==='cover' ? 'var(--cyan)' : 'var(--txt)'; }
+    nm.style.color = t0.kind==='cover' ? 'var(--cyan)' : 'var(--txt)'; }
+
+  // the second tone only exists when cover is close enough to matter
+  const on = tones.length>1 && tones[1].w > SPLIT_MIN_W;
+  const row2 = document.getElementById('ptRow2'), tipEl = document.getElementById('ptSplitTip');
+  if(_chipSplit !== on){
+    _chipSplit = on;
+    if(row2) row2.style.display = on ? 'flex' : 'none';
+    if(tipEl) tipEl.style.display = on ? 'block' : 'none';
+    const mc = document.getElementById('matchCoverBtn');
+    if(mc) mc.style.display = on ? 'block' : 'none';
+  }
+  const mb = document.getElementById('matchBtn');
+  if(mb){ const lbl = 'MATCH ' + (t0.kind==='cover' ? 'COVER' : 'GROUND');
+    if(mb.textContent !== lbl) mb.textContent = lbl; }
+  if(on){
+    const t1 = tones[1];
+    const mc2 = document.getElementById('matchCoverBtn');
+    const lbl2 = 'SPLIT · TOP HALF = ' + (t1.kind==='cover' ? 'COVER' : t1.name);
+    if(mc2 && mc2.textContent !== lbl2) mc2.textContent = lbl2;
+    const tip1 = t1.kind==='ground' ? terrainFx(terrainKeyAt(localPos.x, localPos.z)).tip : 'stand against it';
+    const h2 = t1.color.getHexString(), x2 = t1.name + (tip1 ? ' · ' + tip1 : '');
+    const sw2 = document.getElementById('ptSwatch2'), nm2 = document.getElementById('ptName2');
+    if(sw2 && h2 !== _chipHex2){ _chipHex2 = h2; sw2.style.background = '#' + h2; }
+    if(nm2 && x2 !== _chipTxt2){ _chipTxt2 = x2; nm2.textContent = x2;
+      nm2.style.color = t1.kind==='cover' ? 'var(--cyan)' : 'var(--txt)'; }
+  }
 }
 function updateMatchLabel(){
   if(!myBody) return;
-  myAvg = canvasAvg(myBody.paint.cv);
-  myMatch = matchFor(myAvg, localPos.x, localPos.z);
+  (function(){ const sp = canvasAvgSplit(myBody.paint.cv);
+    myAvg = sp.all; myAvgTop = sp.top; myAvgBot = sp.bot; })();
+  const _em = effMatch(myAvg, myAvgTop, myAvgBot, targetTonesAt(localPos.x, localPos.z));
+  myMatch = _em.mq; mySplitOn = _em.split;
   const el = document.getElementById('matchPct');
   if(el){ el.textContent = Math.round(myMatch*100)+'%'; el.style.color = myMatch>0.8 ? 'var(--cyan)' : 'var(--amber)'; }
   updateTargetChip();
@@ -2218,11 +2347,24 @@ function setupPaintUI(){
     pp.appendChild(b);
   });
   document.getElementById('matchBtn').onclick = ()=>{
-    const t = targetColorAt(localPos.x, localPos.z);
+    /* the DOMINANT tone, not targetColorAt. Beside cover targetColorAt already
+       returns the cover colour, so MATCH and MATCH COVER were painting the same
+       colour twice and the split could never form - measured 71% then 71%.
+       Dominant keeps one tap the best single-colour answer anywhere. */
+    const t = targetTonesAt(localPos.x, localPos.z)[0].color;
     setBrush('#'+t.getHexString()); SFX.blip();
     // MATCH also base-coats you in one tap — kids first, purists can repaint over it
     if(myBody){ myBody.paint.ctx.fillStyle=brushColor; myBody.paint.ctx.fillRect(0,0,128,128);
       myBody.paint.tex.needsUpdate=true; paintDirty=true; refreshBodyPreview(); publishPaint(); }
+  };
+  document.getElementById('matchCoverBtn').onclick = ()=>{
+    const tones = targetTonesAt(localPos.x, localPos.z);
+    const other = tones[1] || tones[0];        // whatever MATCH did not cover
+    setBrush('#'+other.color.getHexString());
+    // rows 0-64 of the 128px canvas = head and torso under the front box
+    // projection, so this is "your top half", not an arbitrary band
+    if(myBody){ myBody.paint.ctx.fillStyle=brushColor; myBody.paint.ctx.fillRect(0,0,128,64);
+      myBody.paint.tex.needsUpdate=true; paintDirty=true; refreshBodyPreview(); publishPaint(); SFX.blip(); }
   };
   document.getElementById('fillBtn').onclick = ()=>{
     if(myBody){ myBody.paint.ctx.fillStyle=brushColor; myBody.paint.ctx.fillRect(0,0,128,128);
@@ -2279,8 +2421,11 @@ function dropDecoy(){
   const t = performance.now();
   if(t < decoyCdUntil){ SFX.lose(); return; }
   decoyCdUntil = t + DECOY_CD*1000;
+  const _rnd = c => ({ r:Math.round(c.r), g:Math.round(c.g), b:Math.round(c.b) });
+  // avgT/avgB are ADDITIVE: a peer that only knows avg still scores the decoy the
+  // old single-tone way instead of breaking, and makeDecoyRig falls back too.
   me.setState('decoy', { x:localPos.x, z:localPos.z, yaw:localYaw, pose:myPose,
-    avg:{ r:Math.round(myAvg.r), g:Math.round(myAvg.g), b:Math.round(myAvg.b) }, t:Date.now() }, true);
+    avg:_rnd(myAvg), avgT:_rnd(myAvgTop), avgB:_rnd(myAvgBot), t:Date.now() }, true);
   tone(700, 0.1, 'triangle', 0.2, 460); SFX.blip();
 }
 function makeDecoyRig(p, d){
@@ -2292,7 +2437,8 @@ function makeDecoyRig(p, d){
   scene.add(root);
   if(dg.mixer){ const a = dg.actions[POSE_CLIP[d.pose]] || dg.actions.Idle; if(a){ a.play(); dg.mixer.update(0.1); } }
   else if(dg.joints) applyPose(dg.joints, d.pose);
-  return { root, skin:dg.skin, avg:d.avg, x:d.x, z:d.z, lockT:0 };
+  return { root, skin:dg.skin, avg:d.avg, avgT:d.avgT||d.avg, avgB:d.avgB||d.avg,
+           x:d.x, z:d.z, lockT:0 };
 }
 function earnTick(dt){
   if(myRole()!=='hider' || amAbducted()) { earnRate = 0; return; }
@@ -2728,7 +2874,8 @@ function clientTick(dt){
     sendAccum = 0;
     me.setState('xf', { x:localPos.x, y:localPos.y, z:localPos.z, yaw:localYaw });
     if(role==='hider'){
-      myMatch = matchFor(myAvg, localPos.x, localPos.z);
+      const em = effMatch(myAvg, myAvgTop, myAvgBot, targetTonesAt(localPos.x, localPos.z));
+      myMatch = em.mq; mySplitOn = em.split;
       camoLevel = stillness * myMatch;                       // the melt: stillness × how well your PAINT matches
       me.setState('camo', camoLevel);
     }
@@ -2761,7 +2908,8 @@ function clientTick(dt){
         p.decoyT = dct;
       }
       if(p.decoyObj){
-        const dm = matchFor(p.decoyObj.avg, p.decoyObj.x, p.decoyObj.z);
+        const dm = effMatch(p.decoyObj.avg, p.decoyObj.avgT, p.decoyObj.avgB,
+          targetTonesAt(p.decoyObj.x, p.decoyObj.z)).mq;
         const dop = 1 - dm*(1-CAMO_MIN_OPACITY);
         for(const mm of p.decoyObj.skin) mm.opacity = dop;
         if(myRole()==='seeker' && !amAbducted() && p.state!==me){    // am I being baited right now?
@@ -3025,7 +3173,8 @@ function updateHUD(role, abd){
     else{ const mp=Math.round(myMatch*100), hp=Math.round(camoLevel*100);
       const wet = performance.now()<wetUntil ? '  ·  💧 wet paint' : '';
       const earning = (earnRate>0 ? ('  ·  ⭐ EARNING'+(performance.now()<tauntUntil?' ×3':'')) : '') + wet;
-      $('meterLabel').textContent = 'paint match '+mp+'% · hidden '+hp+'%' + (myMatch<0.5?' — 🎨 paint to match!':earning);
+      $('meterLabel').textContent = 'paint match '+mp+'% · hidden '+hp+'%'
+        + (mySplitOn ? ' · ✂ two-tone' : '') + (myMatch<0.5?' — 🎨 paint to match!':earning);
       fill.style.width=(camoLevel*100)+'%';
       fill.style.background = earnRate>0 ? 'var(--cyan)' : (camoLevel>0.8 ? 'var(--cyan)' : 'var(--amber)'); }
     /* name the ground and what it costs you. cls marks the two extremes so a

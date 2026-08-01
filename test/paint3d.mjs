@@ -91,6 +91,15 @@ const MEASURE = () => {
 
   out.matchBefore = pct();
   $('matchBtn').click();
+  out.matchAfterGround = pct();
+  /* Two-tone (2026-08-02): beside cover a single flood-fill is TAXED on purpose
+     - it measured 0.68, just under the bot's 0.70 gate - so MATCH GROUND alone
+     no longer reaches 100 there and asserting it would be asserting the bug we
+     deliberately removed. When the second tone is live the studio offers
+     MATCH COVER, and the two together must still get you home. */
+  const mc = $('matchCoverBtn');
+  out.splitOffered = !!(mc && getComputedStyle(mc).display !== 'none');
+  if (out.splitOffered) { mc.click(); }
   out.matchAfter = pct();
 
   $('paintDone').click();  out.doneCloses = p.classList.contains('hidden');
@@ -138,7 +147,9 @@ for (const [w, h] of VIEWPORTS) {
     if (!m.doneReachable) bad.push('DONE is off-screen or not clickable - THIS IS THE SOFTLOCK');
     if (!m.toggleStillReachable) bad.push('the panel buries the 🎨 toggle');
     if (m.under44.length) bad.push(`under the 48px touch law: ${m.under44.join(', ')}`);
-    if (m.matchAfter < 95) bad.push(`MATCH GROUND reached only ${m.matchAfter}% (a perfect paint must read ~100 - check the sRGB/linear conversion in matchFor)`);
+    if (m.matchAfter < 95) bad.push(`match reached only ${m.matchAfter}% after MATCH GROUND` +
+      (m.splitOffered ? ' + MATCH COVER' : '') +
+      ` (a perfect paint must read ~100 - check the sRGB/linear conversion in matchFor, or the two-tone weights)`);
     if (!m.doneCloses) bad.push('DONE did not close the studio');
     if (!m.closeCloses) bad.push('✕ did not close the studio');
     if (!/[A-Z]{3,}/.test(m.chip.name)) bad.push('the MATCHING AGAINST chip names nothing');
@@ -147,7 +158,8 @@ for (const [w, h] of VIEWPORTS) {
 
   if (bad.length) { failures++; console.log(`FAIL ${w}x${h}`); bad.forEach(b => console.log('   - ' + b)); }
   else console.log(`ok   ${w}x${h}  panel ${m.panel.w}x${m.panel.h} fits, both exits reachable, ` +
-    `0 under 44px, MATCH GROUND ${m.matchBefore}% → ${m.matchAfter}%, chip "${m.chip.name}"`);
+    `0 under 44px, match ${m.matchBefore}% → ${m.matchAfterGround}%` +
+    (m.splitOffered ? ` → ${m.matchAfter}% (two-tone)` : '') + `, chip "${m.chip.name}"`);
 
   await browser.close();
 }

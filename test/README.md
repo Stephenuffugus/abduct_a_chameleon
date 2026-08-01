@@ -22,9 +22,10 @@ npm run capture               # P23: a fleeing runner IS catchable, re-hide stil
 npm run tour                  # P14: the guided First Flight advances by doing and persists tourDone
 npm run shots                 # render PNG/JPEG screenshots of each screen to test/shots/
 npm run paint3d               # 3D ONLY: the paint studio fits a landscape phone and both exits work
+npm run twotone3d             # 3D ONLY: the two-tone camo model (the 3D sibling of twotone)
 ```
 
-## The one 3D test (`paint3d.mjs`)
+## The two 3D tests (`paint3d.mjs`, `twotone3d.mjs`)
 
 Everything above loads the **2D** `../index.html` in jsdom. The 3D file cannot be tested that way
 — it needs real WebGL — so `paint3d.mjs` drives `../abduct-3d.html` in **headless Chrome with
@@ -42,7 +43,13 @@ It guards the three things that broke on 2026-08-01, at 932x430, 844x390 and 667
    canvas bytes, so a *perfect* paint scored 65% and camo could never pass the hunter's 0.70/0.75
    gates. The test fails below 95%.
 
-⚠ Run it at more than one viewport height. The `?` button covering the 🎨 toggle only reproduces
+`twotone3d.mjs` is the oracle for **two-tone camo** — the 3D port of the 2D game's P8 Split Camo,
+checked through `window.__aac3dCamo` so the rules are asserted without walking a character across a
+map. It fails if a single colour stops being taxed beside cover (that tax IS the decision), if a
+two-tone coat ever scores worse than one colour, or if a split starts helping on open ground where
+it must stay inert.
+
+⚠ Run paint3d at more than one viewport height. The `?` button covering the 🎨 toggle only reproduces
 at 390 and 375 tall — 430 alone looks clean, which is how that one got missed the first time.
 
 Notes: the harnesses pre-seed `localStorage` (tutorialSeen) to skip the first-run How-to.
