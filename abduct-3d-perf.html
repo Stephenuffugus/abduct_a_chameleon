@@ -58,7 +58,7 @@
     transition:opacity .2s ease }
   #surfLine .bad{ color:var(--danger) }
   #surfLine .good{ color:var(--cyan) }
-  #meter{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:10;width:min(340px,70vw);
+  #meter{position:fixed;bottom:66px;left:50%;transform:translateX(-50%);z-index:10;width:min(340px,70vw);
     pointer-events:none}
   #meterLabel{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
     text-align:center;margin-bottom:5px;color:var(--muted)}
@@ -131,17 +131,12 @@
   body.touch #role { margin-bottom:0; font-size:11.5px }
   body.touch #timer { top:8px; padding:4px 13px; font-size:15px }
   body.touch #banner { align-items:flex-start }
-  /* ⛔ THE SIGHT LINE IS THE GAME. At 52px down and 88vw wide this sat squarely
-     in the middle of a 375px-tall phone. Chrome clips the edges; it never sits
-     in the middle. Two lines maximum, and it ends above the play area. */
-  body.touch #banner .inner { margin-top:4px; padding:4px 12px; max-width:64vw; border-radius:9px }
-  body.touch #bannerSub { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
-    overflow:hidden; max-height:2.8em }
+  body.touch #banner .inner { margin-top:52px; padding:7px 13px; max-width:88vw; border-radius:10px }
   body.touch #bannerTitle { font-size:12.5px; margin:0 0 2px }
   body.touch #bannerSub { font-size:10px; line-height:1.35 }
   /* on a phone the career strip is the first thing that should give up room */
   body.touch #bannerCareer { font-size:9px; margin-top:5px; padding-top:5px; line-height:1.5 }
-  body.touch #meter { bottom:6px; width:min(300px,54vw) }
+  body.touch #meter { bottom:92px; width:min(300px,54vw) }
   body.touch #paint { right:8px; transform:translateY(-50%) scale(.92); transform-origin:right center }
   #mapsToggle{ position:fixed; top:14px; left:50%; transform:translateX(calc(-50% - 110px)); z-index:12;
     background:var(--panel); border:1px solid var(--line); border-radius:10px; color:var(--txt);
@@ -3270,6 +3265,9 @@ function calDeal2D(){
    ourselves. A seeker can stare at it for the whole window and learn nothing
    about where anybody actually is. */
 let calRT = null, calBodies = [], calCam = null, calBodyDecoys = [];
+window.__P = { reset(){ this.d={attempts:0,ramp:0,rampN:0,make:0,makeN:0,rigClone:0,cvAvg:0,cam:0,camN:0,los:0,stash:0,render:0,read:0,flip:0,put:0,total:0,fallback2d:0}; },
+  d:{attempts:0,ramp:0,rampN:0,make:0,makeN:0,rigClone:0,cvAvg:0,cam:0,camN:0,los:0,stash:0,render:0,read:0,flip:0,put:0,total:0,fallback2d:0} };
+
 /* ⚠ the practice range leaks the same way, but it spawns six bodies once a
    session; calibration spawns three EVERY deal, several times a round, so the
    paint canvas texture has to go back or a long session grows a heap of them. */
@@ -3297,10 +3295,13 @@ function calPaintFor(x, z, acc){
   return { top, bot, sup, mq: effMatch(all, T, B, targetTonesAt(x, z, sup.plat)).mq };
 }
 function calMakeBody(x, z, acc, pre){
+  const __t0 = performance.now();
   const paint = pre || calPaintFor(x, z, acc);
   if(!paint) return null;
   const top = paint.top, bot = paint.bot;
+  const __r0 = performance.now();
   const dg = charBase ? buildRealGuy(new THREE.Color(top)) : buildDoorGuy(new THREE.Color(top));
+  window.__P.d.rigClone += performance.now() - __r0;
   dg.paint.ctx.fillStyle = bot; dg.paint.ctx.fillRect(0,0,128,128);
   dg.paint.ctx.fillStyle = top; dg.paint.ctx.fillRect(0,0,128,64);
   dg.paint.tex.needsUpdate = true;
@@ -3311,14 +3312,18 @@ function calMakeBody(x, z, acc, pre){
   const pose = POSE_KEYS[1 + Math.floor(calRand()*(POSE_KEYS.length-1))] || 'idle';
   if(dg.mixer){ const a2 = dg.actions[POSE_CLIP[pose]] || dg.actions.Idle; if(a2){ a2.play(); dg.mixer.update(0.1); } }
   else if(dg.joints) applyPose(dg.joints, pose);
+  const __a0 = performance.now();
   const av = _cvAvg(dg.paint.cv,0,1), avT = _cvAvg(dg.paint.cv,0,0.5), avB = _cvAvg(dg.paint.cv,0.5,1);
+  window.__P.d.cvAvg += performance.now() - __a0;
   /* the number we SHOW is the one the game's own scorer gives this body where
      it is standing - not the number we asked for. Measured beats promised. */
   const mq = effMatch(av, avT, avB, targetTonesAt(x, z, sup.plat)).mq;
   const op = 1 - mq*(1 - CAMO_MIN_OPACITY);          // exactly what a seeker sees
   for(const mm of dg.skin) mm.opacity = op;
   const b = { root, x, z, top:sup.top, mq, tex:dg.paint.tex };
-  calBodies.push(b); return b;
+  calBodies.push(b);
+  window.__P.d.make += performance.now() - __t0; window.__P.d.makeN++;
+  return b;
 }
 function calDeal3D(){
   const cv = document.getElementById('calCv'); if(!cv || !renderer || !scene) return false;
@@ -3344,6 +3349,7 @@ function calDeal3D(){
   }
   for(let attempt = 0; attempt < 4; attempt++){
     spots.length = 0; calBodyDecoys.length = 0; calClearBodies();
+    window.__P.d.attempts++;
     if(calFrame(acc, pickSpot, W, H, cv)) return true;
   }
   calClearBodies();
@@ -3358,12 +3364,15 @@ function calFrame(acc, pickSpot, W, H, cv){
      that really lands on this round's number, and if this spot cannot produce
      it, hand back and let the caller try another one. */
   let bestQ = null, bestErr = 9;
+  const __rp0 = performance.now();
   for(let a = 0.30; a <= 0.995; a += 0.02){
     const q = calPaintFor(home.x, home.z, a);
-    if(!q) return false;
+    window.__P.d.rampN++;
+    if(!q){ window.__P.d.ramp += performance.now()-__rp0; return false; }
     const e = Math.abs(q.mq - acc);
     if(e < bestErr){ bestErr = e; bestQ = q; }
   }
+  window.__P.d.ramp += performance.now() - __rp0;
   if(!bestQ || bestErr > 0.05) return false;
   const real = calMakeBody(home.x, home.z, 0, bestQ); if(!real) return false;
   /* ⛔ The decoys were drawn from the WHOLE map and then rejected if further
@@ -3397,7 +3406,9 @@ function calFrame(acc, pickSpot, W, H, cv){
   calCam.aspect = W/H;
   let sx = 0, sy = 0, rad = 0, ok = false;
   const eye = new THREE.Vector3(), look = new THREE.Vector3(), pv = new THREE.Vector3();
+  const __cm0 = performance.now();
   for(let t=0;t<22 && !ok;t++){
+    window.__P.d.camN++;
     /* ⛔ TWO CAMERAS BEFORE THIS ONE. 12-21m up high made a landscape photo with
        four-pixel people in it. Dropping to 24 degrees put the lens on the deck
        staring at empty ground with the answer lost on the horizon. A hunter
@@ -3422,6 +3433,7 @@ function calFrame(acc, pickSpot, W, H, cv){
     rad = clamp(Math.abs(fy - hy) * 1.2, 30, 0.11*W);
     ok = true;
   }
+  window.__P.d.cam += performance.now() - __cm0;
   if(!ok){ calClearBodies(); return false; }
   /* hide EVERY real rig for the one render */
   const hidden = [];
@@ -3433,9 +3445,13 @@ function calFrame(acc, pickSpot, W, H, cv){
     if(!calRT){ calRT = new THREE.WebGLRenderTarget(W, H, { depthBuffer:true });
                 calRT.texture.colorSpace = THREE.SRGBColorSpace; }
     renderer.setRenderTarget(calRT);
+    const __g0 = performance.now();
     renderer.render(scene, calCam);
+    window.__P.d.render += performance.now() - __g0;
     const buf = new Uint8Array(W*H*4);
+    const __g1 = performance.now();
     renderer.readRenderTargetPixels(calRT, 0, 0, W, H, buf);
+    window.__P.d.read += performance.now() - __g1;
     got = buf;
   }catch(e){ got = null; }
   renderer.setRenderTarget(null);
@@ -3443,12 +3459,16 @@ function calFrame(acc, pickSpot, W, H, cv){
   calClearBodies();
   if(!got) return false;
   const ctx = cv.getContext('2d');
+  const __f0 = performance.now();
   const img = ctx.createImageData(W, H);
   for(let y=0; y<H; y++){                       // GL reads bottom-up
     const src = (H-1-y)*W*4, dst = y*W*4;
     for(let i=0;i<W*4;i++) img.data[dst+i] = got[src+i];
   }
+  window.__P.d.flip += performance.now() - __f0;
+  const __p0 = performance.now();
   ctx.putImageData(img, 0, 0);
+  window.__P.d.put += performance.now() - __p0;
   calTarget = { x:sx, y:sy, r:rad, acc:+real.mq.toFixed(2), decoyAcc:calBodyDecoys, base:null, real3d:true };
   document.getElementById('calRound').textContent = 'TARGET ' + (calRound+1) + ' OF ' + CAL_ROUNDS;
   document.getElementById('calHint').textContent = Math.round(real.mq*100) + '% match · tap the body';
@@ -3456,6 +3476,7 @@ function calFrame(acc, pickSpot, W, H, cv){
   return true;
 }
 function calDeal(){
+  const __d0 = performance.now();
   calBodyDecoys = [];
   let ok = false;
   try{ ok = calDeal3D(); }
@@ -3463,7 +3484,8 @@ function calDeal(){
   /* ⛔ NEVER LEAVE THE SEEKER STARING AT A BLANK BOX. Before the map exists, on
      a context loss, or in any browser where the readback fails, the composed
      board still trains the same colour call. */
-  if(!ok) calDeal2D();
+  if(!ok){ window.__P.d.fallback2d++; calDeal2D(); }
+  window.__P.d.total += performance.now() - __d0;
 }
 function calTap(ev){
   if(calDone || !calTarget) return;
@@ -4769,11 +4791,17 @@ function canvasAvg(cv){ return _cvAvg(cv, 0, 1); }
    roughly head and torso and 0.5-1 is legs. That is what makes a two-tone body
    physically meaningful rather than an arbitrary number split. */
 function _cvAvg(cv, y0, y1){
+  const _q = window.__Q || (window.__Q = {mk:0,ctx:0,draw:0,gid:0,n:0});
+  const _t0 = performance.now();
   const H = Math.max(1, Math.round(6*(y1-y0)));
   const c = document.createElement('canvas'); c.width=6; c.height=H;
+  const _t1 = performance.now(); _q.mk += _t1-_t0;
   const x = c.getContext('2d');
+  const _t2 = performance.now(); _q.ctx += _t2-_t1;
   x.drawImage(cv, 0, y0*cv.height, cv.width, (y1-y0)*cv.height, 0, 0, 6, H);
+  const _t3 = performance.now(); _q.draw += _t3-_t2;
   const d = x.getImageData(0,0,6,H).data; let r=0,g=0,b=0;
+  _q.gid += performance.now()-_t3; _q.n++;
   for(let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; }
   const n=d.length/4; return { r:r/n, g:g/n, b:b/n };
 }
@@ -5152,7 +5180,6 @@ function setupPaintUI(){
 // matches (visibility = 1 - camoLevel), beams you like a real seeker, and catching
 // you respawns you with a sting — the full loop, no second player required.
 let bot = null, botLock = 0, botCatches = 0;
-let _surfWas = '', _surfUntil = 0;   // the ground names itself when it CHANGES, then gets out of the way
 /* ⛔⛔ 2026-08-02 — SOLO WAS UNWINNABLE FROM THE FIRST SECOND, AND THAT KILLED
    THE TEST LOOP. The Director: "when i go to play as a hider with just an AI i
    literally start off being abducted so i can[t] even try the paint which is
@@ -5299,13 +5326,7 @@ function botTick(dt){
   /* ⛔ was `players.length === 1`, so a second tab or a stale peer deleted the
      training hunter along with the head start. It belongs to the free-play
      phase, which is now where you spend your time until someone starts a round. */
-  /* ⛔⛔ AND `players.length < 2`. Stephen and Jessie joined the same room and
-     were hunted by this thing - two hiders, an alien chasing them that could not
-     catch anybody, and neither of them a seeker. A TRAINING bot exists because
-     solo has nobody to hide from. The moment a second real person is here it is
-     not training, it is a lie with a saucer on it. */
   const solo = (getState('phase') || 'waiting') !== 'playing'
-    && players.length < 2
     && myRole() !== 'seeker' && !amAbducted() && !practiceOn;
   if(!solo){ killBotUfo(); return; }
   if(!bot){ bot = makeBotUfo(); armBotGrace(!paintTaught && botCatches===0); }
@@ -6312,17 +6333,14 @@ function updateHUD(role, abd){
     else{ const mp=Math.round(myMatch*100), hp=Math.round(camoLevel*100);
       const wet = performance.now()<wetUntil ? '  ·  💧 wet paint' : '';
       const earning = (earnRate>0 ? ('  ·  ⭐ EARNING'+(performance.now()<tauntUntil?' ×3':'')) : '') + wet;
-      /* a bar with a number on it, not a sentence across the play area */
-      $('meterLabel').textContent = mp+'% MATCH · '+hp+'% HIDDEN'
-        + (mySplitOn ? ' · ✂' : '') + (earnRate>0 ? '  ⭐' : '')
-        + (performance.now()<wetUntil ? '  💧' : '');
+      $('meterLabel').textContent = 'paint match '+mp+'% · hidden '+hp+'%'
+        + (mySplitOn ? ' · ✂ two-tone' : '') + (myMatch<0.5?' — 🎨 paint to match!':earning);
       fill.style.width=(camoLevel*100)+'%';
       fill.style.background = earnRate>0 ? 'var(--cyan)' : (camoLevel>0.8 ? 'var(--cyan)' : 'var(--amber)'); }
     /* name the ground and what it costs you. cls marks the two extremes so a
        player learns "red means I cannot settle here" without reading anything. */
     const sf = terrainFx(curSurf);
     const cls = sf.c <= 0 ? 'bad' : (sf.c >= 1.25 ? 'good' : '');
-    if(curSurf !== _surfWas){ _surfWas = curSurf; _surfUntil = performance.now() + 2600; }
     /* ⭐ the single most useful thing a hider can be told, and it was never told:
        is anything between me and the sky. The hunter looks STRAIGHT DOWN, so
        this is the difference between being findable and not. */
@@ -6330,16 +6348,12 @@ function updateHUD(role, abd){
        on you and fails to notice (watchers>0 && camo>CAMO_HIGH), so cover is
        safe and worth nothing, and the open is where the points are. That risk
        dial is the actual game and no player could ever have guessed it. */
-    /* ⛔ TWO LINES OF PROSE, PERMANENTLY, ACROSS THE MIDDLE. The terrain tip and
-       the cover explanation were 19,000px of text between them. Both are things
-       you need to learn ONCE and then only need reminding of when they CHANGE,
-       so the tip now rides along only for a moment after you step onto new
-       ground, and the cover state is two words. */
-    const roof = underCover() ? '<span class="good">🌳 HIDDEN</span>' : '<span>☁ SEEN</span>';
-    const fresh = performance.now() < _surfUntil;
+    const roof = underCover()
+      ? '<span class="good">🌳 OUT OF SIGHT</span><span>  ·  safe here, but stars only come from being LOOKED AT and missed</span>'
+      : '<span>☁ IN THE OPEN  ·  ' + (earnRate>0 ? 'they are looking straight at you and cannot tell' : 'match the ground and hold still to earn while they watch') + '</span>';
     $('surfLine').innerHTML = (curSurf==='void' ? '' :
-      (curSurf.toUpperCase() + (fresh && sf.tip ? '<span class="'+cls+'">  ·  '+sf.tip+'</span>' : '')))
-      + '  ·  ' + roof;
+      (curSurf.toUpperCase() + (sf.tip ? '<span class="'+cls+'">  ·  '+sf.tip+'</span>' : '')))
+      + '<br>' + roof;
   }else if(!abd && phase==='playing' && role==='seeker'){
     mEl.classList.remove('hidden');
     const maxLock = hiders.reduce((m,h)=> Math.max(m, h.state.getState('lock')||0), 0);
@@ -6373,20 +6387,24 @@ function updateHUD(role, abd){
        happening" — his words, and he was right. Every waiting state now answers
        the same three questions in order: WHAT IS THIS, WHAT DO I DO NEXT, WHAT
        HAPPENS WHEN I DO IT. No jargon, no emoji-only instructions. */
-    /* ⛔⛔ THIS BANNER IS WHAT BLINDED THEM. Answering "nothing tells you what is
-       happening" with a ninety word paragraph, parked in the middle of the
-       screen and left there, covered 35% of the dead centre - measured by
-       test/hud3d.mjs. The rules live in HOW TO PLAY, which now exists and opens
-       itself. A banner gets ONE line.
-       ⛔ AND NO COUNTDOWN. "nothing can catch you for 38s" was the bot's grace
-       timer, and Stephen read it as a hide clock - "its sayign we only have 22
-       seconds to hide. thats wrong." A number ticking down promises something is
-       about to happen. In free play nothing is. */
-    else if(players.length > 1) showBanner('','Free play — press START ROUND',
-      'One of you flies the saucer, everyone else hides. Nobody can be caught until then.');
-    else if(bot) showBanner('','Free play — practice saucer',
-      'Paint yourself to match the ground, then hold still.');
-    else showBanner('','Free play', 'Tap 🎨 to paint yourself. Share the link to bring somebody in.');
+    else if(bot && soloGraceLeft() > 0) showBanner('','Free play · nothing can catch you for '+Math.ceil(soloGraceLeft())+'s',
+      (players.length > 1 ? 'Somebody else is in this room. Nothing starts until one of you presses '
+        + 'START ROUND, so take your time. ' : '')
+      + 'You are the chameleon. 1) Tap 🎨 and MATCH GROUND to paint yourself. 2) Hold still — '
+      + 'camouflage is your paint match TIMES how still you are. 3) Anything overhead blocks the '
+      + 'saucer completely, so a tree is a safe spot. But stars only come from standing where it '
+      + 'CAN see you and getting away with it. Safe is worth nothing. That is the whole game.',
+      careerLine());
+    else if(bot) showBanner('','Free play · the saucer is hunting ('+botTierNow().name+')',
+      'It finds you by how badly your paint matches, so a good coat plus standing still makes it '
+      + 'lose you. Move and it sees you. ⭐ '+soloStars+' this run, caught '+botCatches+'×. '
+      + '🎨 repaint · 👁 see yourself from its view · 📣 taunt it · HUNT to swap sides and practise spotting.'
+      + (players.length > 1 ? '  ·  '+(players.length-1)+' other player here — press START ROUND when you both want a real one.' : ''),
+      careerLine());
+    else showBanner('','Free play · alone in the valley',
+      'You are the chameleon and nothing is hunting you yet. Walk around, then tap 🎨 to paint '
+      + 'yourself to match the ground. Share this page\'s link to bring somebody in; a real round '
+      + 'only begins when one of you presses START ROUND.');
   }
   else if(phase==='intermission'){
     const w=getState('winner'), left=((getState('interEnds')||0)-Date.now())/1000;
