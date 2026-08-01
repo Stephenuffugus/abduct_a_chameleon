@@ -2605,6 +2605,10 @@ window.__aac3dFiles = {
    a drag-drop, so this is that same door with a handle on it - without it every
    test is at the mercy of whatever the random generator felt like building, and
    a map with no walls cannot tell you anything about wall marks. */
+/* seeded map generation + hot-swap, so a harness can measure the SAME generator
+   the game ships instead of a copy of it */
+window.__aac3dMakeMap = function(seed){ return makeRandomMap(seed>>>0); };
+window.__aac3dSetMap = function(m){ loadMapFromDrop(m); return m.name; };
 window.__aac3dLoadMap = function(name){
   return fetch('maps/' + name + '.json').then(r=>r.json()).then(j=>{
     loadMapFromDrop(j);
@@ -2675,6 +2679,91 @@ window.__aac3dStudio = {
    names a swatch, the maths scores against that swatch, and the player judges
    with their eyes - if those three disagree the whole game lies. Renders one
    straight-down frame and reads the centre pixel back off the GPU. */
+/* ═══ LEVEL ANALYSER — the measuring stick for level design ═══════════════
+   Runs against the REAL built world (the `solids` array buildWorld produced, the
+   real targetTonesAt), never a copy of the rules, because the last time a map
+   generator was judged by a re-implementation of its own predicate it shipped a
+   version that sealed 91% of maps.
+   The number that matters most is twoToneOpportunity: the fraction of walkable
+   ground where a hider is beside cover whose colour DIFFERS from the ground, ie
+   the fraction of the map on which the game's central decision exists at all.
+   Everywhere else, one tap of MATCH GROUND is a perfect answer and there is no
+   game. */
+window.__aac3dLevel = function(step){
+  step = step || 0.5;
+  const W = halfW*2, H = halfH*2;
+  const nx = Math.floor(W/step), nz = Math.floor(H/step);
+  const at = (i,j)=>({ x:-halfW + (i+0.5)*step, z:-halfH + (j+0.5)*step });
+  const blocked = new Uint8Array(nx*nz);
+  for(let j=0;j<nz;j++) for(let i=0;i<nx;i++){
+    const p = at(i,j);
+    let b = 0;
+    for(const s of solids){
+      if(p.x > s.minX-PLAYER_RADIUS && p.x < s.maxX+PLAYER_RADIUS &&
+         p.z > s.minZ-PLAYER_RADIUS && p.z < s.maxZ+PLAYER_RADIUS){ b = 1; break; }
+    }
+    if(!b){ const t = terrainKeyAt(p.x,p.z); if(t==='void') b = 1; }
+    blocked[j*nx+i] = b;
+  }
+  // flood fill every free region
+  const region = new Int32Array(nx*nz).fill(-1);
+  const sizes = [];
+  for(let s0=0;s0<nx*nz;s0++){
+    if(blocked[s0] || region[s0] >= 0) continue;
+    const id = sizes.length; let n = 0; const st = [s0]; region[s0] = id;
+    while(st.length){
+      const c = st.pop(); n++;
+      const ci = c%nx, cj = (c/nx)|0;
+      const nb = [[1,0],[-1,0],[0,1],[0,-1]];
+      for(const [dx,dz] of nb){
+        const i2 = ci+dx, j2 = cj+dz;
+        if(i2<0||j2<0||i2>=nx||j2>=nz) continue;
+        const c2 = j2*nx+i2;
+        if(blocked[c2] || region[c2] >= 0) continue;
+        region[c2] = id; st.push(c2);
+      }
+    }
+    sizes.push(n);
+  }
+  const free = sizes.reduce((a,b)=>a+b,0);
+  const biggest = sizes.length ? Math.max(...sizes) : 0;
+  // are all hider spawns in the SAME region as each other
+  const spawnRegions = [];
+  for(const sp of (MAP.spawns||[])){
+    if(sp.role !== 'hider') continue;
+    const w = cellToWorld(sp.x, sp.y);
+    const i = Math.min(nx-1, Math.max(0, Math.floor((w.x+halfW)/step)));
+    const j = Math.min(nz-1, Math.max(0, Math.floor((w.z+halfH)/step)));
+    spawnRegions.push(region[j*nx+i]);
+  }
+  const mainId = sizes.indexOf(biggest);
+  const stranded = spawnRegions.filter(r=> r < 0 || r !== mainId).length;
+  // cover distance + the two-tone decision, sampled on the free cells
+  let far = 0, twoTone = 0, sampled = 0;
+  const dists = [];
+  for(let j=0;j<nz;j+=2) for(let i=0;i<nx;i+=2){
+    if(blocked[j*nx+i]) continue;
+    const p = at(i,j);
+    let best = 1e9;
+    for(const t of paintTargets){ const dx=t.x-p.x, dz=t.z-p.z; const d=Math.hypot(dx,dz); if(d<best) best=d; }
+    dists.push(best); if(best > 6) far++;
+    const tones = targetTonesAt(p.x, p.z, null);
+    if(tones.length > 1 && tones[1].w > SPLIT_MIN_W) twoTone++;
+    sampled++;
+  }
+  dists.sort((a,b)=>a-b);
+  const q = f => dists.length ? +dists[Math.floor(dists.length*f)].toFixed(2) : -1;
+  const objs = {};
+  for(const o of (MAP.objects||[])) objs[o.type] = (objs[o.type]||0)+1;
+  return { map:MAP.name, grid:[mapCols,mapRows],
+    objects:(MAP.objects||[]).length, walls:objs.wall||0, byType:objs,
+    solids:solids.length, paintTargets:paintTargets.length, platforms:platforms.length,
+    freeCells:free, regions:sizes.length, biggestRegionPct:+(biggest/Math.max(1,free)).toFixed(3),
+    hiderSpawns:spawnRegions.length, strandedSpawns:stranded,
+    coverDist:{ p10:q(0.10), median:q(0.5), p90:q(0.90) },
+    farFromCoverPct:+(far/Math.max(1,sampled)).toFixed(3),
+    twoToneOpportunity:+(twoTone/Math.max(1,sampled)).toFixed(3) };
+};
 window.__aac3dGround = function(){
   const hist = {}; let cells = 0;
   for(const row of MAP.terrain) for(const k of row){ hist[k]=(hist[k]||0)+1; cells++; }
@@ -3513,6 +3602,29 @@ const _tcTone = new THREE.Color();
    CRATE is the ground you are judged against, not the dirt underneath it — that
    is what makes "sit on top of an object and paint yourself" mean something.
    Left optional so the oracle can still ask about a plain point on the map. */
+/* ⭐⭐ THE EDGE IS A TONE. Measured 2026-08-02 across every authored map and the
+   generator: the two-tone DECISION existed on only 16-23% of walkable ground.
+   Everywhere else one tap of MATCH GROUND was a perfect answer and the game had
+   nothing to ask. The reason was here: the second tone came ONLY from
+   paintTargets (props), so a player standing with one foot on a road and one on
+   grass was scored as if they were entirely on whichever cell their centre sat
+   in - while the hunter, looking straight down, plainly sees them against BOTH.
+   Now a terrain boundary inside the body's own footprint counts, which turns
+   every road edge, every shoreline and every noise-field seam into a place that
+   asks a question. Still at most TWO tones, so twotone3d's rules are untouched:
+   one tone means the split is inert, and two colours can never score worse. */
+const _edgeOff = [[0.55,0],[-0.55,0],[0,0.55],[0,-0.55],[0.95,0],[-0.95,0],[0,0.95],[0,-0.95]];
+function edgeToneAt(x, z){
+  const home = terrainKeyAt(x,z);
+  let hits = 0, other = null;
+  for(const [ox,oz] of _edgeOff){
+    const k = terrainKeyAt(x+ox, z+oz);
+    if(k !== home && k !== 'void'){ hits++; if(!other) other = k; }
+  }
+  if(!hits || !other) return null;
+  // how much of you is over the far side, capped like cover so neither dominates
+  return { key: other, w: clamp(0.65 * (hits/_edgeOff.length) * 1.6, 0, 0.65) };
+}
 function targetTonesAt(x, z, plat){
   let best=null, bd=1e9;
   for(const t of paintTargets){
@@ -3523,8 +3635,19 @@ function targetTonesAt(x, z, plat){
   const key = terrainKeyAt(x,z);
   const gname = plat ? plat.name : (key||'ground').toUpperCase();
   const ground = plat ? _tcTone.set(plat.colorHex) : _tcTone.set(TERRAIN[key] || TERRAIN.grass);
+  /* standing ON something replaces the ground entirely, so a perch has no edge */
+  const edge = plat ? null : edgeToneAt(x, z);
+  const coverW = best ? clamp(0.65 * (1 - Math.sqrt(bd)/best.r), 0, 0.65) : 0;
+  // whichever of {the far side of a boundary, the nearest prop} the hunter sees more of
+  if(edge && edge.w > coverW && edge.w > SPLIT_MIN_W){
+    const ec = new THREE.Color(TERRAIN[edge.key] || TERRAIN.grass);
+    const tones = [{ color:ec, w:edge.w, kind:'ground', name:edge.key.toUpperCase() },
+                   { color:ground, w:1-edge.w, kind:'ground', name:gname }];
+    tones.sort((a,b)=> b.w - a.w);
+    return tones;
+  }
   if(!best) return [{ color:ground, w:1, kind:'ground', name:gname }];
-  const w = clamp(0.65 * (1 - Math.sqrt(bd)/best.r), 0, 0.65);
+  const w = coverW;
   /* ⛔ Never tax a player for something they have no tool to fix. Below
      SPLIT_MIN_W the second tone is too light to unlock the SPLIT button, but it
      was still dragging the score down: measured MATCH capping at 89% at the
@@ -4384,6 +4507,35 @@ function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 function angleDelta(from,to){ let d=(to-from)%(Math.PI*2); if(d>Math.PI)d-=Math.PI*2; if(d<-Math.PI)d+=Math.PI*2; return d; }
 function posOf(p){ if(p.state===me) return {x:localPos.x,y:localPos.y,z:localPos.z};
   const xf=p.state.getState('xf'); return xf?{x:xf.x,y:xf.y,z:xf.z}:{x:p.group.position.x,y:p.group.position.y,z:p.group.position.z}; }
+/* ⭐ THE MECHANIC THAT ALREADY WORKED AND NEVER SAID SO.
+   Tree canopies, awnings and big litter all go into losMeshes, and both
+   detectAbductions and the training bot gate on hasLOS - so standing under a
+   tree ALREADY makes you impossible to beam. Nothing ever told the player, so
+   nobody could learn it, and the one genuinely hide-and-seek decision in the
+   game (move between covered spots) may as well not have existed.
+   This is deliberately LOCAL information: it asks "is there something directly
+   above me", which a player could answer by looking up. It leaks nothing about
+   where the hunter is, so it can never be used as a detector. */
+let _skyT = 0, _skyHidden = false;
+const _skyRay = new THREE.Raycaster();
+function overheadCover(){
+  _skyRay.set(new THREE.Vector3(localPos.x, localPos.y + 1.5, localPos.z), UP);
+  _skyRay.far = 60;
+  return _skyRay.intersectObjects(losMeshes, false).length > 0;
+}
+function skyTick(dt){
+  _skyT -= dt;
+  if(_skyT > 0) return;
+  _skyT = 0.18;                                  // 5-6 casts a second is plenty
+  const now = (myRole()==='hider' && !amAbducted()) ? overheadCover() : false;
+  if(now !== _skyHidden){
+    _skyHidden = now;
+    /* a state change you can hear: ducking under a canopy should feel like
+       stepping into shadow, and stepping out should feel like exposure */
+    if(now) tone(320, 0.16, 'sine', 0.12, 210); else tone(210, 0.14, 'sine', 0.10, 320);
+  }
+}
+function underCover(){ return _skyHidden; }
 function hasLOS(from, to){
   _a.set(from.x, from.y, from.z); _b.set(to.x, to.y+1.3, to.z);
   const dir=_b.clone().sub(_a); const dist=dir.length(); if(dist<0.001) return true; dir.normalize();
@@ -4536,7 +4688,10 @@ function clientTick(dt){
     const sp = me.getState('spawn');
     // `sp.alt || 1.1` read a hider's legitimate alt of 0 as "missing" and spawned
     // them 1.1m in the air every round. Harmless while y was pinned; not now.
-    if(sp) localPos.set(sp.x, (typeof sp.alt === 'number' ? sp.alt : 1.1), sp.z);
+    if(sp){ localPos.set(sp.x, (typeof sp.alt === 'number' ? sp.alt : 1.1), sp.z);
+      /* same for a round respawn: rest on what is there rather than fall onto it */
+      if(myRole() !== 'seeker'){ const su = supportAt(sp.x, sp.z);
+        localPos.y = su.top; velY = 0; grounded = true; standingOn = su.plat; } }
     camoLevel = 0; stillness = 0; setBeam(false); setPaintOpen(false); hiderView = 'third';
     beamEnergy = 1; overheat = 0;
     /* the roundId guard above already fires exactly once per round, which is the
@@ -4561,7 +4716,16 @@ function clientTick(dt){
      invisible only because moveLocal pinned localPos.y to 0 and erased the lift
      in the same frame; adding gravity turned a latent bug into a permanent bob.
      A one-shot flag says what was actually meant. */
-  if(!_posInit){ _posInit = true; if(!localPos.lengthSq()) localPos.set(0,1.1,0); }
+  /* ⛔ Start RESTING on whatever is actually underneath, ground or crate. The
+     spawn writes y=0, then supportAt lifts you onto any prop occupying that
+     cell, so you began a round hanging half a metre in the air and falling -
+     and hider spawns are chosen in makeRandomMap, which cannot know about the
+     litter and gap-fill props buildWorld adds later from hashes. Caught by
+     jump3d ("a hider starts ON the ground -- y=0.55 grounded=false"). */
+  if(!_posInit){ _posInit = true;
+    if(!localPos.lengthSq()) localPos.set(0,1.1,0);
+    const sup0 = supportAt(localPos.x, localPos.z);
+    localPos.y = sup0.top; velY = 0; grounded = true; standingOn = sup0.plat; }
 
   gatherGamepad(role, abd);
   botTick(dt);                                                   // P32 training UFO when you're alone
@@ -4596,6 +4760,8 @@ function clientTick(dt){
       else stillness = Math.min(1, stillness + (dt*pf.c)/CAMO_RAMP);
     }
   }
+
+  skyTick(dt);
 
   // publish my transform (+ camo / already-published beam)
   sendAccum += dt;
@@ -4984,8 +5150,19 @@ function updateHUD(role, abd){
        player learns "red means I cannot settle here" without reading anything. */
     const sf = terrainFx(curSurf);
     const cls = sf.c <= 0 ? 'bad' : (sf.c >= 1.25 ? 'good' : '');
-    $('surfLine').innerHTML = curSurf==='void' ? '' :
-      (curSurf.toUpperCase() + (sf.tip ? '<span class="'+cls+'">  ·  '+sf.tip+'</span>' : ''));
+    /* ⭐ the single most useful thing a hider can be told, and it was never told:
+       is anything between me and the sky. The hunter looks STRAIGHT DOWN, so
+       this is the difference between being findable and not. */
+    /* ⭐ AND NAME THE PRICE. earnTick only pays while a hunter HAS LINE OF SIGHT
+       on you and fails to notice (watchers>0 && camo>CAMO_HIGH), so cover is
+       safe and worth nothing, and the open is where the points are. That risk
+       dial is the actual game and no player could ever have guessed it. */
+    const roof = underCover()
+      ? '<span class="good">🌳 OUT OF SIGHT</span><span>  ·  safe here, but stars only come from being LOOKED AT and missed</span>'
+      : '<span>☁ IN THE OPEN  ·  ' + (earnRate>0 ? 'they are looking straight at you and cannot tell' : 'match the ground and hold still to earn while they watch') + '</span>';
+    $('surfLine').innerHTML = (curSurf==='void' ? '' :
+      (curSurf.toUpperCase() + (sf.tip ? '<span class="'+cls+'">  ·  '+sf.tip+'</span>' : '')))
+      + '<br>' + roof;
   }else if(!abd && phase==='playing' && role==='seeker'){
     mEl.classList.remove('hidden');
     const maxLock = hiders.reduce((m,h)=> Math.max(m, h.state.getState('lock')||0), 0);
@@ -5022,10 +5199,10 @@ function updateHUD(role, abd){
     else if(bot && soloGraceLeft() > 0) showBanner('','Free play · nothing can catch you for '+Math.ceil(soloGraceLeft())+'s',
       (players.length > 1 ? 'Somebody else is in this room. Nothing starts until one of you presses '
         + 'START ROUND, so take your time. ' : '')
-      + 'You are the chameleon. The idea: PAINT YOUR BODY to match whatever you are standing on or '
-      + 'hiding beside, then hold still and the hunter loses you. Tap the 🎨 button (right side) to '
-      + 'open the paint studio, then tap MATCH GROUND. When this clock hits zero the saucer drops '
-      + 'and starts looking. Nothing here is scored and you can reopen the paint at any time.',
+      + 'You are the chameleon. 1) Tap 🎨 and MATCH GROUND to paint yourself. 2) Hold still — '
+      + 'camouflage is your paint match TIMES how still you are. 3) Anything overhead blocks the '
+      + 'saucer completely, so a tree is a safe spot. But stars only come from standing where it '
+      + 'CAN see you and getting away with it. Safe is worth nothing. That is the whole game.',
       careerLine());
     else if(bot) showBanner('','Free play · the saucer is hunting ('+botTierNow().name+')',
       'It finds you by how badly your paint matches, so a good coat plus standing still makes it '
