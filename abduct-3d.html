@@ -162,6 +162,11 @@
   #hidewait .eye{ font-size:40px; opacity:.85 }
   #hidewait .lead{ font-size:19px; font-weight:800; letter-spacing:.06em; color:var(--amber) }
   #hidewait .sub{ color:var(--muted); font-size:13px; max-width:280px; line-height:1.5 }
+  #tPractice{ position:fixed; left:12px; top:58px; z-index:14; min-height:48px; min-width:92px;
+    padding:0 14px; border-radius:12px; cursor:pointer; touch-action:manipulation;
+    background:rgba(63,208,224,.14); border:1.5px solid var(--cyan); color:var(--cyan);
+    font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.12em }
+  @media (max-height: 470px){ #tPractice{ top:52px; min-height:44px; font-size:11px } }
   #hidewait .num{ font-size:26px; font-weight:900; color:var(--txt); font-variant-numeric:tabular-nums }
   #hidewait.on{ display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:10px;
     align-items:stretch; justify-items:stretch; padding:12px 14px }
@@ -387,7 +392,7 @@
   <div id="reticle"><div class="ring"></div></div>
 
   <div id="controls">
-    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump (get on top of things and paint up there) · <kbd>V</kbd> sky view · <kbd>E</kbd> paint (wet paint DRIPS if you run) · <kbd>T</kbd> taunt · <kbd>F</kbd> decoy — EARN while they look and see nothing</div>
+    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump (get on top of things and paint up there) · <kbd>V</kbd> sky view · <kbd>E</kbd> paint (wet paint DRIPS if you run) · <kbd>T</kbd> taunt · <kbd>F</kbd> decoy · <kbd>H</kbd> switch to HUNTING (solo practice) — EARN while they look and see nothing</div>
     <div id="ctrlSeeker" class="hidden"><b>Seeker (UFO)</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd>/<kbd>Shift</kbd> altitude · hold <kbd>Mouse</kbd> beam (drains) · <kbd>G</kbd> echo scan (pings anything that moves) · <kbd>V</kbd> view</div>
     <div id="ctrlSpec" class="hidden"><b>Spectating</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · mouse look · back next round</div>
     <div id="ctrlPad" style="margin-top:5px;opacity:.72"><b>Controller</b> — sticks move/look · RT beam · A camo · B decoy · X pose · Y view · RB/LB altitude</div>
@@ -443,6 +448,9 @@
       <button id="hwNext" type="button">NEXT PAGE ▶</button>
     </div>
   </div>
+  <!-- solo only: the switch between hiding and hunting. Half this game was
+       untestable alone because solo always made you the hider. -->
+  <button id="tPractice" type="button" class="hidden">HUNT</button>
   <div id="tapStart"><div class="big">▶ TAP TO PLAY</div><div class="sm">goes fullscreen · sound on</div></div>
 
   <div id="howto"><div class="in">
@@ -1571,6 +1579,114 @@ window.__aac3dCamo = function(x, z, topHex, botHex){
            single:+em.single.toFixed(4), two:+em.two.toFixed(4),
            mq:+em.mq.toFixed(4), split:em.split };
 };
+/* ===== PRACTICE RANGE ====================================================
+   Stephen 8/01: "maybe you can just practice or something switching between a
+   hider and seeker so you can get better."
+   Solo has only ever let you be the hider, so half the game - flying, spotting,
+   the beam - was untestable without a second person. Switch to HUNT and the
+   range seeds painted bodies at real hiding spots with VARYING accuracy: some
+   are nearly perfect and some are sloppy, because the skill being trained is
+   spotting a body that is 90% right, not finding a white man in a field.
+   Entirely local: no round, no phase, nothing on the wire but my own role. */
+const PRACTICE_N = 6;
+let practiceBodies = [], practiceOn = false, practiceFound = 0, practiceStart = 0, practiceLast = 0;
+function clearPractice(){
+  for(const b of practiceBodies){ scene.remove(b.root); }
+  practiceBodies = []; practiceFound = 0;
+}
+function makePracticeBody(x, z, err){
+  const col = new THREE.Color().setHSL(Math.random(), 0.5, 0.6);
+  const dg = charBase ? buildRealGuy(col) : buildDoorGuy(col);
+  // paint it toward what it is hiding against, then miss by `err`
+  const tones = targetTonesAt(x, z);
+  const t = tones[0].color.clone();
+  const jitter = v => clamp(v + (Math.random()*2-1)*err, 0, 1);
+  t.setRGB(jitter(t.r), jitter(t.g), jitter(t.b));
+  const hex = '#' + t.getHexString();
+  dg.paint.ctx.fillStyle = hex; dg.paint.ctx.fillRect(0,0,128,128);
+  // a second tone on the top half when there is real cover, same as a player would
+  if(tones.length > 1){
+    const t2 = tones[1].color.clone();
+    t2.setRGB(jitter(t2.r), jitter(t2.g), jitter(t2.b));
+    dg.paint.ctx.fillStyle = '#' + t2.getHexString(); dg.paint.ctx.fillRect(0,0,128,64);
+  }
+  dg.paint.tex.needsUpdate = true;
+  const root = new THREE.Group(); root.add(dg.root);
+  const sup = supportAt(x, z);
+  root.position.set(x, sup.top, z); root.rotation.y = Math.random()*Math.PI*2;
+  scene.add(root);
+  const pose = POSE_KEYS[1 + Math.floor(Math.random()*(POSE_KEYS.length-1))] || 'idle';
+  if(dg.mixer){ const a2 = dg.actions[POSE_CLIP[pose]] || dg.actions.Idle; if(a2){ a2.play(); dg.mixer.update(0.1); } }
+  else if(dg.joints) applyPose(dg.joints, pose);
+  const av = _cvAvg(dg.paint.cv, 0, 1), avT = _cvAvg(dg.paint.cv, 0, 0.5), avB = _cvAvg(dg.paint.cv, 0.5, 1);
+  return { root, skin:dg.skin, x, z, plat:sup.plat, avg:av, avgT:avT, avgB:avB, lockT:0, found:false };
+}
+function spawnPractice(){
+  clearPractice();
+  if(!paintTargets.length) return;
+  const picked = [];
+  for(let i=0; i<PRACTICE_N && paintTargets.length; i++){
+    const t = paintTargets[Math.floor(Math.random()*paintTargets.length)];
+    const ang = Math.random()*Math.PI*2, rad = 0.6 + Math.random()*1.4;
+    const x = clamp(t.x + Math.cos(ang)*rad, -halfW+2, halfW-2);
+    const z = clamp(t.z + Math.sin(ang)*rad, -halfH+2, halfH-2);
+    if(picked.some(q => Math.hypot(q.x-x, q.z-z) < 8)) { i--; continue; }
+    picked.push({x,z});
+    // a spread of skill: two sloppy, two decent, two very good
+    const err = [0.28,0.20,0.12,0.08,0.04,0.02][i % 6];
+    practiceBodies.push(makePracticeBody(x, z, err));
+  }
+  practiceStart = performance.now();
+}
+function practiceTick(dt){
+  if(!practiceOn) return;
+  for(const b of practiceBodies){
+    if(b.found) continue;
+    // the same camo maths a real hider gets: a well painted body nearly vanishes
+    const m = effMatch(b.avg, b.avgT, b.avgB, targetTonesAt(b.x, b.z, b.plat)).mq;
+    const op = 1 - m*(1-CAMO_MIN_OPACITY);
+    for(const mm of b.skin) mm.opacity = op;
+    if(myRole()==='seeker' && beamOn){
+      const dx = b.x-localPos.x, dz = b.z-localPos.z;
+      if(dx*dx+dz*dz < BEAM_RADIUS*BEAM_RADIUS && hasLOS({x:localPos.x,y:localPos.y,z:localPos.z},{x:b.x,y:0,z:b.z})){
+        b.lockT += dt;
+        if(b.lockT >= LOCK_TIME){
+          b.found = true; practiceFound++;
+          for(const mm of b.skin) mm.opacity = 0;
+            b.root.visible = false; SFX.abduct();
+          if(practiceFound >= practiceBodies.length){
+            SFX.win();
+            practiceLast = Math.round((performance.now()-practiceStart)/1000);
+            setTimeout(()=>{ if(practiceOn) spawnPractice(); }, 2200);
+          }
+        }
+      } else b.lockT = Math.max(0, b.lockT - dt*2);
+    }
+  }
+}
+function togglePractice(){
+  if(players.length > 1) return;                 // the range is solo only
+  practiceOn = !practiceOn;
+  if(practiceOn){
+    setPaintOpen(false);
+    me.setState('role', 'seeker', true);
+    localPos.y = UFO_MIN_ALT + 4; velY = 0;
+    spawnPractice();
+    SFX.roundStart();
+  }else{
+    clearPractice();
+    me.setState('role', 'hider', true);
+    localPos.y = 0; velY = 0; grounded = true;
+    SFX.blip();
+  }
+  const b = document.getElementById('tPractice');
+  if(b) b.textContent = practiceOn ? 'HIDE' : 'HUNT';
+}
+window.__aac3dPractice = { toggle: togglePractice,
+  state(){ return { on:practiceOn, bodies:practiceBodies.length, found:practiceFound,
+    role:myRole(), y:+localPos.y.toFixed(2),
+    opacities:practiceBodies.map(b=> b.skin && b.skin[0] ? +b.skin[0].opacity.toFixed(3) : null) }; } };
+
 /* ===== THE ABDUCTION FILES, in the hunter's window =======================
    880 pages already existed in pages/files-*.js and this game never touched
    them. Pages are written to be read OUT OF ORDER and self contained, which is
@@ -2220,6 +2336,7 @@ function setupInput(){
     if(e.code==='KeyT') tauntWhistle();                          // P33: bait them closer
     if(e.code==='KeyF') dropDecoy();                             // P37: leave a lie behind
     if(e.code==='KeyG') fireEchoScan();                          // P34: interrogate a zone for movers
+    if(e.code==='KeyH') togglePractice();                        // solo: swap hiding for hunting
     if(e.code==='KeyQ' || e.code==='BracketRight') cyclePose(1);
     if(e.code==='BracketLeft') cyclePose(-1);
   });
@@ -2537,6 +2654,8 @@ function setupPaintUI(){
   bc.addEventListener('pointerdown', e=>{ e.preventDefault(); drawing=true; const p=pos(e); paintStroke(p.x,p.y); });
   bc.addEventListener('pointermove', e=>{ if(!drawing) return; e.preventDefault(); const p=pos(e); paintStroke(p.x,p.y); });
   addEventListener('pointerup', ()=>{ if(drawing){ drawing=false; publishPaint(); } });
+  const _tp = document.getElementById('tPractice');
+  if(_tp) _tp.onclick = ()=> togglePractice();
   const _hn = document.getElementById('hwNext'), _hp = document.getElementById('hwPrev');
   if(_hn) _hn.onclick = ()=>{ filesNext(); SFX.click(); };
   if(_hp) _hp.onclick = ()=>{ filesPrev(); SFX.click(); };
@@ -2702,7 +2821,7 @@ function makeBotUfo(){
 }
 function killBotUfo(){ if(bot){ scene.remove(bot.g); bot=null; botLock=0; } }
 function botTick(dt){
-  const solo = players.length === 1 && myRole() !== 'seeker' && !amAbducted();
+  const solo = players.length === 1 && myRole() !== 'seeker' && !amAbducted() && !practiceOn;
   if(!solo){ killBotUfo(); return; }
   if(!bot) bot = makeBotUfo();
   const b = bot, pos = b.g.position;
@@ -3070,6 +3189,7 @@ function clientTick(dt){
 
   gatherGamepad(role, abd);
   botTick(dt);                                                   // P32 training UFO when you're alone
+  practiceTick(dt);                                              // solo hunt range
   earnTick(dt);                                                  // P33 nerve scoring — earn while watched
   careerTick(dt);                                                // roll this session into the lifetime profile
   const _mvd = Math.hypot(localPos.x-(clientTick._px||localPos.x), localPos.z-(clientTick._pz||localPos.z));
@@ -3402,7 +3522,8 @@ function updateHUD(role, abd){
     $('tPose').classList.toggle('hidden', abd || role==='seeker');
     $('tTaunt').classList.toggle('hidden', abd || role==='seeker');
     $('tDecoy').classList.toggle('hidden', abd || role==='seeker');
-    $('tJump').classList.toggle('hidden', abd || role==='seeker' || !touch.on);
+    $('tJump').classList.toggle('hidden', abd || role==='seeker' || !touch.on || practiceOn);
+    $('tPractice').classList.toggle('hidden', players.length > 1 || !started);
     $('tBeam').classList.toggle('hidden', abd || role!=='seeker');
     $('tScan').classList.toggle('hidden', abd || role!=='seeker');
     $('altUI').classList.toggle('hidden', abd || role!=='seeker');
@@ -3460,7 +3581,14 @@ function updateHUD(role, abd){
   // banner
   const bEl=$('banner');
   if(phase==='waiting'){
-    if(bot) showBanner('','Training grounds',
+    if(practiceOn){
+      const left = practiceBodies.length - practiceFound;
+      showBanner('', 'Practice · HUNT',
+        'found ' + practiceFound + ' of ' + practiceBodies.length + ' · ' + left + ' still hiding — '
+        + 'fly, look, and hold BEAM on anything that looks wrong. Some of them are nearly perfect.',
+        careerLine());
+    }
+    else if(bot) showBanner('','Training grounds',
       '⭐ '+soloStars+' this run · caught '+botCatches+'× — earn while it looks and sees nothing. 🎨 paint · 👁 sky · 📣 bait. Second player = real rounds.',
       careerLine());
     else showBanner('','Waiting for players','Roam around to try the controls. Open this URL in another tab (or use Add a Player) to start a round.');
