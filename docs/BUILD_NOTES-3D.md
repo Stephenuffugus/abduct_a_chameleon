@@ -4,6 +4,11 @@ Last updated: **2026-08-01**. This is the living record of what we're building, 
 where every external thing comes from. The older `HANDOFF-3d.md` is a predecessor document and
 partially stale; trust this file first, then `HANDOFF-v02.md` for the 2D game's history.
 
+> **⛔ READ THIS FIRST (2026-08-01): eight changes shipped in one day and NONE have been
+> played by Stephen.** Do not add more mechanics until he has. The next decisions — is the
+> two-tone tax fair, is the jump height right, is the litter too busy — cannot be answered
+> from here. `docs/PLAY-THIS-FIRST.md` is the test list.
+
 > **Shipped since the 7/20 body of this doc** (read the commit messages, they carry the detail):
 > per-terrain speed/settle effects (`TERRAIN_FX`), the Kenney nature scatter that made every
 > walkable cell have something to paint, a settings panel (sensitivity / invert Y / volume), a
@@ -37,7 +42,25 @@ be frugal with tokens; use existing free assets instead of building from scratch
 
 Sourcing playbook that worked: KayKit and Kenney both mirror packs on GitHub with **direct raw
 file URLs** (curl-able, scriptable) — quaternius.com and kenney.nl main-site downloads are
-zip/drive links and NOT curl-friendly. To inspect a GLB without a browser:
+zip/drive links and NOT curl-friendly.
+
+⭐ **2026-08-01 — the playbook was too pessimistic. Two more paths, both verified (200 + `glTF`
+magic on every file, licence text read not assumed):**
+| Source | What it gives you |
+|---|---|
+| `github.com/Kenney-CCO/Kenney-CCO.glb` | **366 flat single-file GLBs** of Kenney's 3D library |
+| `github.com/trebeljahr/quaternius-showcase` | **all 33 Quaternius packs**, `public/glb/<pack>/` |
+Also fine: `KenneyNL/Starter-Kit-City-Builder`, `beep2bleep/FreeAssetsByKenneyNLandQuaternius`
+(Platformer Kit), `lalomorales22/threejskate` (Mini Skate).
+⛔ **Still rejected:** KayKit City-Builder / Restaurant / Furniture / Halloween — gltf + bin +
+shared texture, **zero GLBs**.
+⛔⛔ **There is NO CC0 playground equipment in GLB anywhere on GitHub** — no swing, no see-saw, no
+slide, no roundabout. Only itch/marketplace zips. That is why ours are primitives. Do not re-search.
+⚠ Models from these mirrors reference `Textures/colormap.png` **relative to their own folder** —
+copy it in beside them or the loader logs an error per model.
+106 files live under `assets/{clutter,street,playground,flower,building}/` (3.6MB); **46 are wired**,
+the **21 building pieces are downloaded but NOT PLACED**, and 57 more verified variants are listed
+in the session's `asset-manifest-extras.json` if the scatter wants more. To inspect a GLB without a browser:
 `node -e` read the file, `JSON.parse` the chunk at offset 20 (length at offset 12) → lists
 animations/meshes/nodes/materials. Checked and rejected: KayKit City-Builder (gltf+bin pairs, no
 trees), Space-Base (no saucer), Halloween/Hexagon (listing failed), Kenney platformer/racing kits
@@ -122,6 +145,30 @@ anyway (see invariant below).
 Owner's last playtest: "kind of working" — movement fix + rich default world + real character +
 props + decoy all shipped SINCE then and are awaiting their next test. Watch for feedback on:
 character facing (flip `CHAR_FACING` if backwards), character scale/read, prop scale, decoy feel.
+
+### Ranked queue as of 8/01 END OF DAY
+
+**0. HE PLAYS IT.** Eight changes, none tested. Everything below is guesswork until that happens.
+
+1. **The random map generator itself.** This is the real variety job and the biggest single win
+   left. Authored maps carry the walls (downtown 296, ruins 262); **random maps have almost none**,
+   so a random world reads thin next to downtown no matter how much we scatter on it. Marks and
+   litter can only decorate what the generator builds. Wanted: alleys, doorways, low walls to
+   vault, gaps between crates, roof edges, pipe runs — STRUCTURE, not texture. The 21 downloaded
+   building pieces are the kit; they need a placement system.
+2. **The survey photograph** (his idea, crystallised — see the note below). The ship photographs
+   the valley on arrival, then objects are removed; hiders must BECOME the missing objects, and the
+   hunter plays spot-the-difference against the photo. Makes camo into object mimicry with no morph
+   tech, makes group camo native (the photo shows three crates, so it takes three of you), and is
+   straight out of the Abduction Files canon. Cheap: render ONE frame from a fixed camera before
+   the hiders enter.
+3. **Group camo** — two or more hiders close together scored as one silhouette. The research says
+   MECCHA has **no designed co-op hiding at all**; stacking is only an emergent meme. This is a
+   genuine gap in the market leader, not a copy.
+4. Unlocks (career is still five read-only numbers); portal earn-bridge (3D posts nothing).
+⚖️ Parked by Stephen: metallic/roughness sheen matching, until he has played it.
+⚖️ Open: his clone musing is MECCHA's (3 clones, any found counts as you). **We already have
+DECOY** and ours is inverted — it baits the seeker into an overheat. Risk-variant is his call.
 
 ### Ranked queue as of 8/01 (surveyed against the live file, all solo-testable on a phone)
 
