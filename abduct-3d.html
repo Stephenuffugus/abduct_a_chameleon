@@ -1284,7 +1284,10 @@ function setupScene(){
      read as grey. A gradient dome costs one texture and changes everything: deep
      indigo overhead falling to a warm violet horizon the fog then melts into. */
   scene.background = new THREE.Color(0x1A1740);
-  scene.fog = new THREE.Fog(0x3B2A63, 90, 260);
+  /* ⛔ far was 260 and the new horizon rings sit out to ~250, so they would have
+     been fogged to nothing — the backdrop has to be VISIBLE to stop the valley
+     feeling like a box. Pushed out so distance reads as haze, not as deletion. */
+  scene.fog = new THREE.Fog(0x3B2A63, 120, 560);
   (function(){
     const c=document.createElement('canvas'); c.width=8; c.height=256;
     const g=c.getContext('2d').createLinearGradient(0,0,0,256);
@@ -1301,6 +1304,39 @@ function setupScene(){
     dome.renderOrder=-1;
     scene.add(dome);
   })();
+  /* ⭐ A NIGHT SKY WITH SOMETHING IN IT. The dome was a gradient and nothing
+     else, so looking up gave you a flat wash. Stars give the sky depth and a
+     moon gives it a subject — and the moon sits in the warm horizon band the
+     gradient already paints, so the light direction has a visible source. */
+  (function(){
+    const N = 520, pos = new Float32Array(N*3), sz = new Float32Array(N);
+    let sd = 20260802;
+    const rr = ()=> (sd = (sd*1664525 + 1013904223)>>>0) / 4294967296;
+    for(let i=0;i<N;i++){
+      const a = rr()*Math.PI*2, e = 0.10 + rr()*0.85, r = 520;
+      const ce = Math.cos(e*Math.PI/2);
+      pos[i*3]   = Math.cos(a)*ce*r;
+      pos[i*3+1] = Math.sin(e*Math.PI/2)*r;
+      pos[i*3+2] = Math.sin(a)*ce*r;
+      sz[i] = 1.1 + rr()*2.6;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+    g.setAttribute('size', new THREE.Float32BufferAttribute(sz,1));
+    const stars = new THREE.Points(g, new THREE.PointsMaterial({
+      color:0xE8EEFF, size:2.4, sizeAttenuation:false, transparent:true, opacity:0.85,
+      depthWrite:false, fog:false }));
+    stars.renderOrder = -1; scene.add(stars);
+
+    const moon = new THREE.Mesh(new THREE.SphereGeometry(17, 20, 16),
+      new THREE.MeshBasicMaterial({ color:0xFFF3DA, fog:false, depthWrite:false }));
+    moon.position.set(150, 165, 300); moon.renderOrder = -1; scene.add(moon);
+    const halo = new THREE.Mesh(new THREE.SphereGeometry(31, 18, 14),
+      new THREE.MeshBasicMaterial({ color:0xFFD9A0, transparent:true, opacity:0.13,
+        fog:false, depthWrite:false, side:THREE.BackSide }));
+    halo.position.copy(moon.position); halo.renderOrder = -1; scene.add(halo);
+  })();
+
   scene.add(worldGroup);
 
   camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 1200);
@@ -1701,12 +1737,28 @@ function buildWorld(map){
   velY = 0; grounded = true; standingOn = null;
 
   // ---- terrain: one vertex-coloured ground mesh ----
+  /* ⭐⭐ THE GROUND WAS ONE FLAT SLAB. Every cell got a single colour on all six
+     of its vertices, so from eye level the whole foreground is one uniform
+     surface — the Director: "we need to have the ground fully built and colored
+     ... it feels so one-dimensional and so much like a prison."
+     The jitter is keyed to the CELL CORNER, not the cell, so the four cells
+     meeting at a corner all read the same value there: the ground varies AND the
+     seams between terrains soften, from one change. A per-cell jitter would have
+     made it worse — a patchwork of flat squares is still flat squares.
+     ⚖ Kept to ±7%: the paint studio names an exact swatch and the camo maths
+     scores against `TERRAIN[key]`, so the ground must stay recognisably its own
+     colour. A cell's centre is the mean of its four corners, so the average is
+     unchanged and only the texture moves. */
   const pos = [], col = [], nrm = [];
+  const cornerJit = (cx, cy) => 1 + ((hash2(cx*7+1, cy*13+5) % 1000)/1000 - 0.5) * 0.14;
   for(let y=0;y<mapRows;y++) for(let x=0;x<mapCols;x++){
     const c = colorLinear(TERRAIN[map.terrain[y][x]] || TERRAIN.void);
     const x0=(x-mapCols/2)*TILE, z0=(y-mapRows/2)*TILE, x1=x0+TILE, z1=z0+TILE;
     pos.push(x0,0,z0, x1,0,z0, x1,0,z1,  x0,0,z0, x1,0,z1, x0,0,z1);
-    for(let k=0;k<6;k++){ col.push(c.r,c.g,c.b); nrm.push(0,1,0); }
+    const j00=cornerJit(x,y), j10=cornerJit(x+1,y), j11=cornerJit(x+1,y+1), j01=cornerJit(x,y+1);
+    for(const j of [j00, j10, j11, j00, j11, j01]){
+      col.push(c.r*j, c.g*j, c.b*j); nrm.push(0,1,0);
+    }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
@@ -1714,6 +1766,60 @@ function buildWorld(map){
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm,3));
   const ground = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors:true, roughness:1, side:THREE.DoubleSide }));
   worldGroup.add(ground);
+
+  /* ⭐⭐ THE WORLD USED TO STOP AT THE FENCE. Past the last cell there was
+     nothing: a flat plane, then sky. The Director: "we need a whole lot more of
+     the background to fill it in so it doesn't feel so one-dimensional and so
+     much like a prison."
+     Three rings of land BEYOND the playfield, each further out, lower in
+     saturation and closer to the fog colour, so distance reads as distance. It
+     is pure backdrop: never in `solids`, never in `losMeshes`, never a paint
+     target, so it cannot change the hunt — it only stops the valley from ending.
+     One InstancedMesh per ring, so the whole horizon is 3 draw calls, not 200. */
+  (function(){
+    const reach = Math.max(halfW, halfH);
+    /* ⛔ First pass put the near ring at 1.35x the map with 26m hills, in the
+       centre terrain's own colour — which on a green map built a bright green
+       WALL right behind the fence. That is still a prison, only prettier.
+       Distance has to read as distance: further out, lower against the eye, and
+       drained of colour before it is tinted toward the fog. */
+    const RINGS = [
+      { r:reach*1.9, n:40, h:[ 8,22], w:[18,40], mix:0.50, sat:0.45, y:-3 },
+      { r:reach*2.8, n:34, h:[20,48], w:[34,74], mix:0.70, sat:0.28, y:-6 },
+      { r:reach*4.0, n:26, h:[44,96], w:[64,150], mix:0.86, sat:0.14, y:-12 },
+    ];
+    const fog = new THREE.Color(0x3B2A63);
+    const base = new THREE.Color(TERRAIN[map.terrain[(mapRows/2)|0][(mapCols/2)|0]] || TERRAIN.rock);
+    let hseed = 0; for(const ch of String(map.name||'world')) hseed = (hseed*31 + ch.charCodeAt(0))>>>0;
+    const rnd2 = ()=> (hseed = (hseed*1664525 + 1013904223)>>>0) / 4294967296;
+    const geo = new THREE.ConeGeometry(1, 1, 5);        // 5 sides: a hill, not a cone
+    const _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
+    const _p = new THREE.Vector3(), _sc = new THREE.Vector3();
+    for(const R of RINGS){
+      /* wash the hue out FIRST, then tint toward fog. Lerping a saturated colour
+         straight at the fog keeps too much of its hue and it reads as a nearby
+         object that happens to be dim. */
+      const col = base.clone();
+      const _hsl = { h:0, s:0, l:0 }; col.getHSL(_hsl);
+      col.setHSL(_hsl.h, _hsl.s * R.sat, Math.min(0.72, _hsl.l * 0.85 + 0.10));
+      col.lerp(fog, R.mix);
+      const mat = new THREE.MeshLambertMaterial({ color: col, fog: true });
+      const inst = new THREE.InstancedMesh(geo, mat, R.n);
+      for(let i=0;i<R.n;i++){
+        const a = (i/R.n)*Math.PI*2 + rnd2()*0.11;
+        const rad = R.r * (0.86 + rnd2()*0.34);
+        const h = R.h[0] + rnd2()*(R.h[1]-R.h[0]);
+        const w = R.w[0] + rnd2()*(R.w[1]-R.w[0]);
+        _p.set(Math.cos(a)*rad, R.y + h/2, Math.sin(a)*rad);
+        _sc.set(w, h, w);
+        _q.setFromAxisAngle(UP, rnd2()*Math.PI*2);
+        inst.setMatrixAt(i, _m.compose(_p, _q, _sc));
+      }
+      inst.instanceMatrix.needsUpdate = true;
+      inst.frustumCulled = false;
+      worldGroup.add(inst);
+    }
+  })();
 
   const grid = new THREE.GridHelper(Math.max(mapCols,mapRows)*TILE, Math.max(mapCols,mapRows), 0x2a3350, 0x1a2236);
   /* ⛔ a GridHelper is a DEBUG object and at 0.25 it drew visible graph paper
