@@ -922,6 +922,7 @@ let paintTargets = [];          // {x,z,color:THREE.Color,r} — every landmark 
 
 const worldGroup = new THREE.Group();
 let cover = [], losMeshes = [], solids = [];   // cover meshes / raycast targets / wall AABBs
+let waterMesh = null;                          // rippling skin laid over the water cells
 let platforms = [];             // standable tops: {minX,maxX,minZ,maxZ,top,colorHex,cx,cz,name}
 let velY = 0, grounded = true, standingOn = null, jumpQueued = false, _posInit = false;
 let _lastTargetHex = 0x808080;  // colour of the most recent addTarget, for perches
@@ -1766,6 +1767,37 @@ function buildWorld(map){
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm,3));
   const ground = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors:true, roughness:1, side:THREE.DoubleSide }));
   worldGroup.add(ground);
+
+  /* ⭐ WATER THAT MOVES. Water was just cells of TERRAIN.water inside the one
+     flat ground mesh: a dead blue slab, and a big part of why the valley read as
+     "one-dimensional". A second skin laid 6cm over those cells, rippling, turns
+     the biggest flat area in most maps into the liveliest one.
+     ⚖ The camo maths is untouched: this is a SEPARATE mesh above the ground,
+     the ground underneath still carries the exact TERRAIN.water colour that
+     targetTonesAt and the studio swatch read, and the ripple only moves Y by a
+     few centimetres. Nothing here is a solid, a paint target or a losMesh. */
+  (function(){
+    const wp = [], wc = [];
+    const wcol = colorLinear(TERRAIN.water);
+    for(let y=0;y<mapRows;y++) for(let x=0;x<mapCols;x++){
+      if(map.terrain[y][x] !== 'water') continue;
+      const x0=(x-mapCols/2)*TILE, z0=(y-mapRows/2)*TILE, x1=x0+TILE, z1=z0+TILE;
+      wp.push(x0,0,z0, x1,0,z0, x1,0,z1,  x0,0,z0, x1,0,z1, x0,0,z1);
+      for(let k=0;k<6;k++) wc.push(wcol.r*1.08, wcol.g*1.08, wcol.b*1.14);
+    }
+    waterMesh = null;
+    if(!wp.length) return;
+    const wg = new THREE.BufferGeometry();
+    wg.setAttribute('position', new THREE.Float32BufferAttribute(wp,3));
+    wg.setAttribute('color', new THREE.Float32BufferAttribute(wc,3));
+    wg.computeVertexNormals();
+    const wm = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.22,
+      metalness:0.12, transparent:true, opacity:0.82, side:THREE.DoubleSide });
+    const water = new THREE.Mesh(wg, wm);
+    water.position.y = 0.06;
+    worldGroup.add(water);
+    waterMesh = { mesh:water, base:Float32Array.from(wp) };
+  })();
 
   /* ⭐⭐ THE WORLD USED TO STOP AT THE FENCE. Past the last cell there was
      nothing: a flat plane, then sky. The Director: "we need a whole lot more of
@@ -4793,6 +4825,21 @@ function hasLOS(from, to){
 }
 
 /* ============================ Main loop ============================ */
+/* one sine per vertex, every other frame — a 200-cell lake is 1200 verts, which
+   is nothing, but there is no reason to pay for it at 60Hz when 30 reads the
+   same to the eye. */
+let _wT = 0, _wFrame = 0;
+function waterTick(dt){
+  if(!waterMesh) return;
+  if((++_wFrame & 1)) return;
+  _wT += dt*2;
+  const p = waterMesh.mesh.geometry.attributes.position, b = waterMesh.base;
+  for(let i=0;i<p.count;i++){
+    const x = b[i*3], z = b[i*3+2];
+    p.array[i*3+1] = Math.sin(x*0.35 + _wT) * 0.05 + Math.sin(z*0.27 - _wT*1.3) * 0.04;
+  }
+  p.needsUpdate = true;
+}
 function loop(){
   if(!clock) clock = new THREE.Clock();
   const dt = Math.min(0.05, clock.getDelta());
@@ -5011,6 +5058,7 @@ function clientTick(dt){
   }
 
   skyTick(dt);
+  waterTick(dt);
 
   // publish my transform (+ camo / already-published beam)
   sendAccum += dt;
