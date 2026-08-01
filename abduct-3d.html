@@ -1418,6 +1418,34 @@ function buildWorld(map){
 
   for(const o of (map.objects||[])) addCover(o.type, o.x, o.y);
 
+  /* ── RARE LANDMARKS ──────────────────────────────────────────────────
+     A handful per map, never clustered: the obelisk and the stone head are the
+     things a player points at and says "meet me at the head". They are also
+     tall enough to break line of sight, so they change how a zone is fought. */
+  (function(){
+    const bad = { void:1, water:1, lava:1 };
+    const occupied = new Set();
+    for(const o of (map.objects||[])) occupied.add(o.x+','+o.y);
+    let n = 0;
+    for(let y=3;y<mapRows-3 && n<7;y+=3) for(let x=3;x<mapCols-3 && n<7;x+=3){
+      const k = (map.terrain[y] && map.terrain[y][x]) || 'void';
+      if(bad[k] || occupied.has(x+','+y)) continue;
+      const h = hash2(x*97+41, y*89+37);
+      if(h % 100 >= 4) continue;                       // 4% of the sampled grid
+      const kind = (h>>>7) % 2 ? 'statue_obelisk' : 'statue_head';
+      const hue = [0x8d8f8a, 0x7a7f88, 0x6f6a5e, 0x88806f][(h>>>9)%4];
+      const m = new THREE.MeshStandardMaterial({ color:hue, roughness:.95 });
+      const pr = propMesh(kind, m, kind==='statue_obelisk' ? 3.4 : 2.2);
+      if(!pr) continue;
+      const w = cellToWorld(x, y);
+      const g2 = new THREE.Group(); g2.add(pr.node);
+      g2.position.set(w.x, 0, w.z); g2.rotation.y = ((h>>>11)%628)/100;
+      worldGroup.add(g2); cover.push(g2); losMeshes.push(...pr.meshes);
+      addTarget(w.x, w.z, hue, 2.6);
+      occupied.add(x+','+y); n++;
+    }
+  })();
+
   placeStructures(map);            // playground, park, picnic spots and hedges
 
   /* ── SPRAY TAGS ON OUTDOOR WALLS ─────────────────────────────────────
@@ -1530,20 +1558,30 @@ function buildWorld(map){
      Seeded off the cell, so every client in a multiplayer round grows the
      same garden without a byte crossing the wire. */
   const PAINTABLE = {
-    grass:  ['bush','bush_small','flower_y','mushrooms','log'],
-    moss:   ['bush','bush_big','mushroom','mushrooms','moss_hang'],
-    foliage:['bush_big','bush','flower_p','flower_r','mushroom'],
-    dirt:   ['bush_small','log','mushroom'],
-    sand:   ['cactus_s','rock_a','bush_small'],
-    mud:    ['bush_small','mushrooms','log'],
-    water:  ['lily','lily_big']
+    grass:  ['bush','bush_small','flower_y','flower_p','mushrooms','log','grass_big'],
+    moss:   ['bush','bush_big','mushroom','mushrooms','moss_hang','stone_a'],
+    foliage:['bush_big','bush','flower_p','flower_r','flower_y','mushroom','log_big'],
+    dirt:   ['bush_small','log','log_big','mushroom','stone_a'],
+    sand:   ['cactus_s','rock_a','bush_small','stone_a'],
+    mud:    ['bush_small','mushrooms','log','log_big'],
+    water:  ['lily','lily_big'],
+    /* these six had NOTHING and read as painted floor for metres in every
+       direction - the flattest, most unhideable ground in the game */
+    rock:    ['stone_a','rock_tall_b','bush_small','mushroom'],
+    snow:    ['stone_a','rock_a','log_big'],
+    ice:     ['stone_a','rock_tall_b'],
+    ash:     ['log_big','stone_a','mushroom','log'],
+    crystal: ['rock_tall_b','stone_a'],
+    concrete:['log_big','stone_a','bush_small'],
+    metal:   ['stone_a','log_big']
   };
   /* one honest colour per plant, matching how the model reads on screen */
   const PAINT_HUE = { bush:0x3f6d33, bush_small:0x4c7d3c, bush_big:0x335c2c,
     flower_p:0x8a63c8, flower_r:0xc2453f, flower_y:0xd8bf3c,
     mushroom:0xb04038, mushrooms:0xc0a878, log:0x6b4b30,
     moss_hang:0x4a6b3a, lily:0x4e8f5a, lily_big:0x3f7d4c,
-    cactus_s:0x3f7a45, rock_a:0x6a6f78 };
+    cactus_s:0x3f7a45, rock_a:0x6a6f78,
+    log_big:0x5f4429, stone_a:0x777c85, rock_tall_b:0x6d7280, grass_big:0x4f7a3e };
   let paintDeco = 0, PAINT_CAP = 260;
   for(let y=0;y<mapRows && paintDeco<PAINT_CAP;y++) for(let x=0;x<mapCols && paintDeco<PAINT_CAP;x++){
     const kinds = PAINTABLE[map.terrain[y][x]]; if(!kinds) continue;
@@ -2330,7 +2368,7 @@ function addCover(type, gx, gy){
     const lm = instMat(COVER_MAT.leaf, LEAF_HUES, gx, gy);
     /* four silhouettes, chosen by cell so a wood is not one tree stamped over
        and over. The cone fallback stays for a missing asset. */
-    const TK = ['tree_a','tree_b','tree_c','tree_d'];
+    const TK = ['tree_a','tree_b','tree_c','tree_d','tree_dark','tree_pine_b'];
     const pr = propMesh(TK[hash2(gx+5,gy+9)%TK.length], lm, 5.2 + (hash2(gx,gy)%18)/10);
     if(pr){ pr.node.rotation.y=(hash2(gx,gy)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
     else{
@@ -2564,7 +2602,14 @@ const PROP_URLS = { crate:'assets/props/crate.glb', crates:'assets/props/crates.
   flower_y:'assets/nature/flower_yellowA.glb',
   mushroom:'assets/nature/mushroom_red.glb', mushrooms:'assets/nature/mushroom_tanGroup.glb',
   lily:'assets/nature/lily_small.glb', lily_big:'assets/nature/lily_large.glb',
-  moss_hang:'assets/nature/hanging_moss.glb', log:'assets/nature/log.glb' };
+  moss_hang:'assets/nature/hanging_moss.glb', log:'assets/nature/log.glb',
+  /* staged with the Nature Kit and never wired: eleven models sitting on disk
+     doing nothing while snow, ice, ash, rock, crystal and concrete had NO
+     scatter at all and read as painted floor */
+  log_big:'assets/nature/log_large.glb', stone_a:'assets/nature/stone_largeA.glb',
+  rock_tall_b:'assets/nature/rock_tallB.glb', grass_big:'assets/nature/grass_large.glb',
+  tree_dark:'assets/nature/tree_default_dark.glb', tree_pine_b:'assets/nature/tree_pineDefaultA.glb',
+  statue_head:'assets/nature/statue_head.glb', statue_obelisk:'assets/nature/statue_obelisk.glb' };
 const DECO_KEEP_UV = new Set(['grass','grass_small']);   // deco keeps its baked colormap look
 const propLib = {};
 async function loadProps(){
