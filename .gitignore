@@ -1,5 +1,11 @@
 node_modules/
-test/node_modules/
+# ⛔⛔ NO TRAILING SLASH. `test/node_modules/` matches a DIRECTORY only, and the
+# test harness links node_modules in from a sibling checkout, so git saw a
+# SYMLINK (mode 120000), `git add -A` committed it, and GitHub Pages died:
+# upload-pages-artifact runs `tar --dereference`, the link dangles on the
+# runner, tar exits 1 and the WHOLE SITE stops deploying. The push succeeded,
+# the workflow failed, and the live URL kept serving the old build.
+test/node_modules
 test/shots/
 test/*.jpg
 test/package-lock.json
