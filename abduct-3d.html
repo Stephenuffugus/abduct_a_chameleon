@@ -166,9 +166,17 @@
     padding:0 14px; border-radius:12px; cursor:pointer; touch-action:manipulation;
     background:rgba(63,208,224,.14); border:1.5px solid var(--cyan); color:var(--cyan);
     font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.12em }
-  @media (max-height: 470px){ #tPractice{ top:52px; min-height:44px; font-size:11px } }
+  #tStart{ position:fixed; left:12px; top:114px; z-index:14; min-height:48px; min-width:132px;
+    padding:0 14px; border-radius:12px; cursor:pointer; touch-action:manipulation;
+    background:rgba(242,179,61,.16); border:1.5px solid var(--amber); color:var(--amber);
+    font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.10em }
+  @media (max-height: 470px){ #tPractice{ top:52px; min-height:44px; font-size:11px }
+    #tStart{ top:104px; min-height:44px; font-size:11px; min-width:120px } }
   #hidewait .num{ font-size:26px; font-weight:900; color:var(--txt); font-variant-numeric:tabular-nums }
-  #hidewait.on{ display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:10px;
+  #hwWhy{ font-family:var(--mono); font-size:11px; line-height:1.6; color:var(--muted);
+    max-width:760px; margin:0 auto; text-align:center }
+  @media (max-height: 470px){ #hwWhy{ font-size:10px; line-height:1.5 } }
+  #hidewait.on{ display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:10px;
     align-items:stretch; justify-items:stretch; padding:12px 14px }
   #hwHead{ display:flex; align-items:center; gap:12px; justify-content:center }
   #hwHead .lead{ font-size:15px; letter-spacing:.14em }
@@ -487,11 +495,18 @@
        not wired into this game at all. So the wait is a reading room: the
        archive you are flying for, recovered a page at a time. -->
   <div id="hidewait">
+    <!-- ⛔ "the story cards are popping up immediately when i get put in a ufo...
+         im confused about how all this works". The panel announced SCANNERS
+         OFFLINE and then handed over a case file, and never said WHO you are,
+         WHY you are blind, or WHAT happens when the number reaches zero. -->
     <div id="hwHead">
       <span class="eye">🛸</span>
       <span class="lead">SCANNERS OFFLINE</span>
       <span class="num" id="hidewaitNum">20</span>
     </div>
+    <div id="hwWhy">You are the hunter this round. Your saucer is blind while the chameleons paint
+      themselves and pick a spot. When the number hits zero you can fly and beam. Until then, the
+      Abduction Files are yours to read.</div>
     <div id="hwCard">
       <div id="hwMeta"><span id="hwThread">FR</span><span id="hwNum">CASE FILE · PAGE — OF 1000</span></div>
       <div id="hwHeading">—</div>
@@ -506,6 +521,10 @@
   <!-- solo only: the switch between hiding and hunting. Half this game was
        untestable alone because solo always made you the hider. -->
   <button id="tPractice" type="button" class="hidden">HUNT</button>
+  <!-- A round is something you ASK FOR now. Before 2026-08-02 one started by
+       itself the moment a second connection appeared, which put one of you in a
+       UFO and both of you on a 120s clock nobody chose. -->
+  <button id="tStart" type="button" class="hidden">START ROUND</button>
   <div id="tapStart"><div class="big">▶ TAP TO PLAY</div><div class="sm">goes fullscreen · sound on</div></div>
 
   <div id="howto"><div class="in">
@@ -1294,11 +1313,22 @@ function setupScene(){
 
   /* warm sky bounce over a violet ground bounce, so surfaces separate by hue and
      not only by brightness — the thing a camouflage game actually needs */
-  scene.add(new THREE.HemisphereLight(0xBFD4FF, 0x3A2352, 1.15));
-  const warm = new THREE.DirectionalLight(0xFFB77A, 0.45);   // horizon glow, low and warm
+  /* ⛔⛔ 2026-08-02 — THE NIGHT WAS EATING THE TERRAIN PALETTE.
+     Measured by rendering one straight-down frame and reading the pixel back off
+     the GPU at a known cell (window.__aac3dGround): ICE, whose table colour is
+     #8FD7F2 (143,215,242 - bright cyan), rendered as (76,85,105) dark slate, and
+     ASH (#42465C) rendered as (3,1,11), which is black. Every ground read as the
+     same dark mud, which is most of "everything in the level looks like random
+     trash on the ground" and all of "the ground needs to be another color".
+     This is a CAMOUFLAGE game: if two terrains cannot be told apart by eye, the
+     entire decision the game is built on disappears. Lights lifted so the table
+     colours actually reach the screen. Still night - the sky dome, the fog and
+     the violet ground bounce are untouched - but a night you can see in. */
+  scene.add(new THREE.HemisphereLight(0xBFD4FF, 0x4A2F66, 2.6));
+  const warm = new THREE.DirectionalLight(0xFFB77A, 0.9);   // horizon glow, low and warm
   warm.position.set(-60, 18, -40);
   scene.add(warm);
-  const moon = new THREE.DirectionalLight(0xDCE8FF, 0.85);
+  const moon = new THREE.DirectionalLight(0xDCE8FF, 1.9);
   moon.position.set(40, 80, 25);
   scene.add(moon);
 
@@ -1351,34 +1381,142 @@ function makeSampleMap(){
 }
 
 // P31: in-client random maps — themed recipes, seeded, synced to everyone like any other map
+/* A theme is now a PLACE, not a fill plus spots: what the ground is made of,
+   what a road through it is paved with, what the verge wears down to, what the
+   water is and what its bank looks like. Five became nine so a run of maps stops
+   feeling like the same field repainted. */
 const GEN_THEMES = [
-  { base:'grass', patches:[['foliage',6,4,7],['water',2,3,5],['dirt',3,2,4],['rock',2,2,4]],
-    cover:[['tree','foliage',0.22],['tree','grass',0.05],['boulder','rock',0.3],['crate','dirt',0.05]], buildings:1 },
-  { base:'sand',  patches:[['rock',4,3,6],['dirt',3,2,4]],
-    cover:[['cactus','sand',0.04],['boulder','rock',0.28],['dead_tree','sand',0.015],['crate','dirt',0.06]], buildings:1 },
-  { base:'snow',  patches:[['ice',5,3,6],['rock',3,2,4]],
-    cover:[['ice_spike','ice',0.07],['ice_spike','snow',0.025],['boulder','rock',0.3],['dead_tree','snow',0.02]], buildings:1 },
-  { base:'concrete', patches:[['metal',4,2,4],['grass',4,3,5],['dirt',2,2,3]],
-    cover:[['tree','grass',0.12],['crate','concrete',0.05],['barrel','metal',0.06],['barrel','concrete',0.02]], buildings:3 },
-  { base:'moss',  patches:[['crystal',4,3,5],['ash',3,2,4],['water',2,2,4]],
-    cover:[['alien_pod','moss',0.05],['alien_pod','crystal',0.05],['boulder','crystal',0.12],['dead_tree','ash',0.06]], buildings:1 },
+  { base:'grass', road:'dirt', verge:'mud', water:'water', bank:'mud',
+    patches:[['foliage',6,4,7],['moss',3,2,4],['rock',2,2,4]],
+    cover:[['tree','foliage',0.22],['tree','grass',0.05],['boulder','rock',0.3],['crate','dirt',0.05]], buildings:2 },
+  { base:'sand',  road:'rock', verge:'dirt', water:null, bank:'sand',
+    patches:[['rock',4,3,6],['dirt',3,2,4]],
+    cover:[['cactus','sand',0.04],['boulder','rock',0.28],['dead_tree','sand',0.015],['crate','dirt',0.06]], buildings:2 },
+  { base:'snow',  road:'ice', verge:'rock', water:'ice', bank:'rock',
+    patches:[['ice',4,3,6],['rock',3,2,4]],
+    cover:[['ice_spike','ice',0.07],['ice_spike','snow',0.025],['boulder','rock',0.3],['dead_tree','snow',0.02]], buildings:2 },
+  { base:'concrete', road:'metal', verge:'dirt', water:'water', bank:'concrete',
+    patches:[['metal',4,2,4],['grass',4,3,5],['dirt',2,2,3]],
+    cover:[['tree','grass',0.12],['crate','concrete',0.05],['barrel','metal',0.06],['barrel','concrete',0.02]], buildings:4 },
+  { base:'moss',  road:'crystal', verge:'ash', water:'water', bank:'ash',
+    patches:[['crystal',4,3,5],['ash',3,2,4]],
+    cover:[['alien_pod','moss',0.05],['alien_pod','crystal',0.05],['boulder','crystal',0.12],['dead_tree','ash',0.06]], buildings:2 },
+  /* ── four new places ── */
+  { base:'dirt', road:'concrete', verge:'sand', water:'water', bank:'mud',
+    patches:[['grass',5,3,6],['mud',3,2,4],['rock',2,2,3]],
+    cover:[['tree','grass',0.14],['crate','dirt',0.06],['boulder','rock',0.26],['barrel','concrete',0.03]], buildings:3 },
+  { base:'rock', road:'dirt', verge:'sand', water:'water', bank:'sand',
+    patches:[['moss',4,3,5],['sand',3,2,4],['crystal',2,2,3]],
+    cover:[['boulder','rock',0.24],['boulder','crystal',0.14],['dead_tree','sand',0.03],['crate','dirt',0.04]], buildings:2 },
+  { base:'mud', road:'dirt', verge:'grass', water:'water', bank:'sand',
+    patches:[['foliage',5,3,6],['water',2,2,4],['moss',3,2,4]],
+    cover:[['tree','foliage',0.20],['dead_tree','mud',0.05],['crate','dirt',0.04],['boulder','rock',0.2]], buildings:2 },
+  { base:'ash', road:'metal', verge:'rock', water:null, bank:'rock',
+    patches:[['rock',4,3,5],['crystal',2,2,3],['dirt',3,2,4]],
+    cover:[['dead_tree','ash',0.07],['boulder','rock',0.28],['barrel','metal',0.05],['crate','ash',0.04]], buildings:3 },
 ];
 function makeRandomMap(seed){
   seed = seed>>>0 || 1;
   const rnd = ()=> (seed = (seed*1664525 + 1013904223)>>>0) / 4294967296;
   const th = GEN_THEMES[Math.floor(rnd()*GEN_THEMES.length)];
+  /* ⛔ Roads and ponds are thin; they cannot fix a map that is 80% one fill.
+     Measured after adding them: maxShare only moved 0.795 -> 0.813. The base
+     itself has to vary. Value noise over the whole grid, seeded, bilinear
+     between lattice points, splits the ground into the theme's own family of
+     keys - so the field reads as terrain rather than as a colour. */
+  const _lat = {};
+  const latt = (i,j)=>{ const k=i+','+j; if(_lat[k]===undefined) _lat[k]=rnd(); return _lat[k]; };
+  const noise = (x,y,sc)=>{
+    const fx=x/sc, fy=y/sc, i=Math.floor(fx), j=Math.floor(fy), tx=fx-i, ty=fy-j;
+    const sx=tx*tx*(3-2*tx), sy=ty*ty*(3-2*ty);
+    const a=latt(i,j), b=latt(i+1,j), c=latt(i,j+1), d=latt(i+1,j+1);
+    return (a*(1-sx)+b*sx)*(1-sy) + (c*(1-sx)+d*sx)*sy;
+  };
   const cols = 44 + Math.floor(rnd()*14), rows = 32 + Math.floor(rnd()*10);
   const t = Array.from({length:rows}, ()=> Array.from({length:cols}, ()=> th.base));
   const inb = (x,y)=> x>=0&&y>=0&&x<cols&&y<rows;
   const blob = (cx,cy,r,key)=>{ for(let y=cy-r;y<=cy+r;y++)for(let x=cx-r;x<=cx+r;x++){
     const d=Math.hypot(x-cx,y-cy)+rnd()*1.4-0.7; if(d<=r&&inb(x,y)) t[y][x]=key; } };
+  /* the field: two octaves choose between the theme's ground family */
+  (function(){
+    const fam = [th.base].concat(th.patches.map(p=>p[0]).filter(k=>k!=='water'));
+    if(fam.length < 2) return;
+    const s1 = 5 + rnd()*4, s2 = 2 + rnd()*2;
+    for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
+      const n = noise(x,y,s1)*0.68 + noise(x,y,s2)*0.32;
+      t[y][x] = fam[Math.min(fam.length-1, Math.floor(n*fam.length))];
+    }
+  })();
   for(const [key,count,minR,maxR] of th.patches)
     for(let i=0;i<count;i++) blob(3+Math.floor(rnd()*(cols-6)), 3+Math.floor(rnd()*(rows-6)),
       minR+Math.floor(rnd()*(maxR-minR+1)), key);
-  // a couple of straight seam strips — deliberate 2-tone hiding lanes
-  for(let i=0;i<2;i++){ const horiz=rnd()<0.5, at=4+Math.floor(rnd()*((horiz?rows:cols)-8));
-    const key = th.patches[Math.floor(rnd()*th.patches.length)][0];
-    for(let k=0;k<(horiz?cols:rows);k++){ const x=horiz?k:at, y=horiz?at:k; if(inb(x,y)) t[y][x]=key; } }
+  /* ══ 2026-08-02: ROADS, WATER, SHORELINES, WEAR ══════════════════════════
+     The Director: "the ground needs to be another color and that will come with
+     details where theres grass, roads, pathes, dirt, water, etc." and later,
+     bluntly, that a level "looks like random trash on the ground".
+     Measured on the old generator, live: **79.5% of a map was ONE terrain key
+     and it carried only FOUR keys.** Round blobs plus two full-width stripes is
+     not a place; it is a field with spots on it.
+     ⛔ This pass paints TERRAIN ONLY and never emits `void` or `wall`. Those are
+     the sole keys `SOLID`/`resolveWalls` treat as blocking, so no amount of
+     terrain painting can seal a region or strand a spawn - which is exactly the
+     failure mode that killed the more ambitious district generator (it stranded
+     hider spawns on 24% of seeds). Structure first, walls later, verified. */
+  const road = th.road || 'dirt', verge = th.verge || null, bank = th.bank || 'mud';
+
+  // ── a meandering watercourse, if the theme has one ──
+  if(th.water){
+    const horiz = rnd() < 0.5;
+    const span = horiz ? cols : rows;
+    let at = Math.floor(span * (0.3 + rnd()*0.4)), w = 1 + Math.floor(rnd()*2);
+    for(let k=0;k<(horiz?cols:rows);k++){
+      at += (rnd()<0.34) ? (rnd()<0.5?-1:1) : 0;              // wander, deterministic
+      at = Math.max(2, Math.min((horiz?rows:cols)-3, at));
+      for(let d=-w; d<=w; d++){
+        const x = horiz ? k : at+d, y = horiz ? at+d : k;
+        if(inb(x,y)) t[y][x] = th.water;
+      }
+    }
+    /* ⭐ the shoreline is the point. A hard circle of water on grass asks the
+       player nothing; a BAND of wet sand between them is a three-colour problem
+       and the most interesting ground in the game to hide on. */
+    for(let pass=0; pass<2; pass++){
+      const add = [];
+      for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++){
+        if(t[y][x]===th.water || t[y][x]===bank) continue;
+        if(t[y-1][x]===th.water||t[y+1][x]===th.water||t[y][x-1]===th.water||t[y][x+1]===th.water) add.push([x,y]);
+      }
+      for(const [x,y] of add) if(rnd() < (pass ? 0.45 : 0.9)) t[y][x] = bank;
+    }
+  }
+
+  // ── roads that go somewhere: a few anchors joined by L-shaped runs ──
+  const anchors = [];
+  for(let i=0;i<3+Math.floor(rnd()*2);i++)
+    anchors.push([4+Math.floor(rnd()*(cols-8)), 4+Math.floor(rnd()*(rows-8))]);
+  const lay = (x,y,wide)=>{ for(let dy=0;dy<=wide;dy++) for(let dx=0;dx<=wide;dx++)
+    if(inb(x+dx,y+dy) && t[y+dy][x+dx] !== th.water) t[y+dy][x+dx] = road; };
+  for(let i=1;i<anchors.length;i++){
+    const [ax,ay] = anchors[i-1], [bx,by] = anchors[i];
+    const wide = rnd()<0.45 ? 1 : 0;
+    const midFirstX = rnd()<0.5;
+    if(midFirstX){
+      for(let x=Math.min(ax,bx);x<=Math.max(ax,bx);x++) lay(x,ay,wide);
+      for(let y=Math.min(ay,by);y<=Math.max(ay,by);y++) lay(bx,y,wide);
+    }else{
+      for(let y=Math.min(ay,by);y<=Math.max(ay,by);y++) lay(ax,y,wide);
+      for(let x=Math.min(ax,bx);x<=Math.max(ax,bx);x++) lay(x,by,wide);
+    }
+  }
+  // ── wear: the ground either side of a road is walked bare ──
+  if(verge){
+    const worn = [];
+    for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++){
+      if(t[y][x]===road || t[y][x]===th.water || t[y][x]===bank) continue;
+      if(t[y-1][x]===road||t[y+1][x]===road||t[y][x-1]===road||t[y][x+1]===road) worn.push([x,y]);
+    }
+    for(const [x,y] of worn) if(rnd()<0.62) t[y][x] = verge;
+  }
   const objs=[], seen=new Set();
   const put=(x,y,type)=>{ const k=x+','+y; if(inb(x,y)&&!seen.has(k)){ seen.add(k); objs.push({x,y,type}); } };
   for(let b=0;b<th.buildings;b++){
@@ -1488,7 +1626,12 @@ function buildWorld(map){
   worldGroup.add(ground);
 
   const grid = new THREE.GridHelper(Math.max(mapCols,mapRows)*TILE, Math.max(mapCols,mapRows), 0x2a3350, 0x1a2236);
-  grid.material.transparent = true; grid.material.opacity = 0.25; grid.position.y = 0.03;
+  /* ⛔ a GridHelper is a DEBUG object and at 0.25 it drew visible graph paper
+     across the whole valley - in the sky check, which is the view the hunter
+     uses, the world read as a spreadsheet. Kept at a whisper because it still
+     gives the eye a sense of scale from 19m up, but it must never be the first
+     thing you notice about the ground. */
+  grid.material.transparent = true; grid.material.opacity = 0.07; grid.position.y = 0.03;
   worldGroup.add(grid);
 
   for(const o of (map.objects||[])) addCover(o.type, o.x, o.y);
@@ -1716,13 +1859,22 @@ function buildWorld(map){
     moss:    ['tree_stump','bricks_loose','well_stone'],
     snow:    ['tree_stump','rubble_small','fence_low']
   };
-  let litterN = 0, LITTER_CAP = 190;
+  /* ⛔⛔ "everything in the level looks like random trash on the ground" — and it
+     was, literally: crushed cans, bottles, rubble and tyres, sprinkled one at a
+     time across open ground. The clumping below already existed, but the
+     "empty in between" band was 3.5%, which on a 50x36 map still strews about
+     TWENTY-SIX isolated pieces of rubbish over bare terrain. One lone can in the
+     middle of a field does not read as detail, it reads as debris.
+     Now litter exists ONLY in piles: no strays at all, clumps rarer (30% -> 12%
+     of blocks) and much denser (0.30 -> 0.75), so a clump is an actual heap with
+     clean ground between heaps. Fewer objects, more legible place. */
+  let litterN = 0, LITTER_CAP = 120;
   for(let y=0;y<mapRows && litterN<LITTER_CAP;y++) for(let x=0;x<mapCols && litterN<LITTER_CAP;x++){
     const kinds = LITTER[map.terrain[y][x]]; if(!kinds) continue;
     const h = hash2(x*23+19, y*29+7);
-    /* litter gathers where people were: clumped hard, empty in between */
-    const clump = hash2((x+1)>>1, (y+2)>>1) % 100 < 30;
-    if((h%1000)/1000 >= (clump ? 0.30 : 0.035)) continue;
+    const clump = hash2((x+1)>>1, (y+2)>>1) % 100 < 12;
+    if(!clump) continue;                                  // no lone rubbish, ever
+    if((h%1000)/1000 >= 0.75) continue;
     const kind = kinds[(h>>>5)%kinds.length];
     const hue = PAINT_HUE[kind] || 0x8a8578;
     const m = new THREE.MeshLambertMaterial({ color: hue });
@@ -2516,6 +2668,59 @@ window.__aac3dStudio = {
    human having to play twenty rounds to find out. Read-only except forceGrace,
    which only ever SHORTENS the head start - a test must be able to reach the
    dangerous part of the round without waiting 45 real seconds. */
+/* P38: what the ROUND thinks is true about me right now. The solo probe only
+   ever described the bot, so a two-player reproduction had nothing to read -
+   and two players is exactly where the head start stops applying. */
+/* Does the ground RENDER as the colour the camo maths CLAIMS it is? The studio
+   names a swatch, the maths scores against that swatch, and the player judges
+   with their eyes - if those three disagree the whole game lies. Renders one
+   straight-down frame and reads the centre pixel back off the GPU. */
+window.__aac3dGround = function(){
+  const hist = {}; let cells = 0;
+  for(const row of MAP.terrain) for(const k of row){ hist[k]=(hist[k]||0)+1; cells++; }
+  const top = Object.entries(hist).sort((a,b)=>b[1]-a[1]);
+  const save = { p:camera.position.clone(), q:camera.quaternion.clone(), up:camera.up.clone(), vo:camera.view && camera.view.enabled };
+  if(save.vo) camera.clearViewOffset();
+  camera.up.set(0,0,-1);
+  camera.position.set(localPos.x, 60, localPos.z);
+  camera.lookAt(localPos.x, 0, localPos.z);
+  camera.updateMatrixWorld(true);
+  renderer.render(scene, camera);
+  const gl = renderer.getContext(), px = new Uint8Array(4);
+  /* ⛔ TWO probe bugs, both of which made the answer meaningless:
+     1. the CENTRE pixel of a straight-down shot is the PLAYER'S OWN WHITE BODY -
+        it reported the same light grey for ash and for concrete.
+     2. sampling an arbitrary offset pixel and comparing it to the terrain under
+        the PLAYER compares two different places. Project a known world point
+        into screen space and read THAT, so the pixel and the key are the same
+        cell. Anything else is not a measurement. */
+  const probeX = localPos.x + 14, probeZ = localPos.z + 14;
+  const _v = new THREE.Vector3(probeX, 0.02, probeZ).project(camera);
+  const sx = Math.round((_v.x*0.5+0.5)*gl.drawingBufferWidth);
+  const sy = Math.round((_v.y*0.5+0.5)*gl.drawingBufferHeight);   // GL origin is bottom-left
+  gl.readPixels(Math.max(0,Math.min(gl.drawingBufferWidth-1,sx)),
+                Math.max(0,Math.min(gl.drawingBufferHeight-1,sy)),
+                1,1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  camera.position.copy(save.p); camera.quaternion.copy(save.q); camera.up.copy(save.up);
+  const key = terrainKeyAt(probeX, probeZ);
+  const t = new THREE.Color(TERRAIN[key] || TERRAIN.void);
+  const _s = new THREE.Color(); t.getRGB(_s, THREE.SRGBColorSpace);
+  return { map:MAP.name, cells, keys:top.length,
+    maxShare:+(top[0][1]/cells).toFixed(3), hist:Object.fromEntries(top),
+    under:key, tableHex:TERRAIN[key],
+    tableSRGB:[Math.round(_s.r*255),Math.round(_s.g*255),Math.round(_s.b*255)],
+    rendered:[px[0],px[1],px[2]] };
+};
+window.__aac3dRound = function(){
+  const phase = getState('phase') || 'waiting';
+  return { phase, hideLeft:+hideLeft().toFixed(1), players:players.length,
+    myRole:myRole(), myHasRole:!!(me && me.getState('role')),
+    abducted:amAbducted(), roundId:getState('roundId')||0,
+    /* the number that matters: is anything at all stopping me being taken */
+    canBeCaught: phase==='playing' && hideLeft()<=0 && myRole()==='hider' && !amAbducted(),
+    soloGrace:+soloGraceLeft().toFixed(1), botExists:!!bot,
+    camo:+camoLevel.toFixed(2), match:+myMatch.toFixed(2) };
+};
 window.__aac3dBot = function(op){
   if(op === 'endGrace'){ botGraceEnds = Date.now(); botLiveAt = Date.now(); }
   if(op === 'warmUp'){ botLiveAt = Date.now() - SOLO_WARMUP*1000; }
@@ -3662,6 +3867,8 @@ function setupPaintUI(){
   if(pv) for(const b of pv.children) b.onclick = ()=>{ setPaintView(b.dataset.v); SFX.click(); };
   const _tp = document.getElementById('tPractice');
   if(_tp) _tp.onclick = ()=> togglePractice();
+  const _ts = document.getElementById('tStart');
+  if(_ts) _ts.onclick = ()=>{ setState('startReq', true, true); SFX.click(); };
   const _hn = document.getElementById('hwNext'), _hp = document.getElementById('hwPrev');
   if(_hn) _hn.onclick = ()=>{ filesNext(); SFX.click(); };
   if(_hp) _hp.onclick = ()=>{ filesPrev(); SFX.click(); };
@@ -3878,7 +4085,11 @@ function makeBotUfo(){
 }
 function killBotUfo(){ if(bot){ scene.remove(bot.g); if(bot.ring) scene.remove(bot.ring); bot=null; botLock=0; } }
 function botTick(dt){
-  const solo = players.length === 1 && myRole() !== 'seeker' && !amAbducted() && !practiceOn;
+  /* ⛔ was `players.length === 1`, so a second tab or a stale peer deleted the
+     training hunter along with the head start. It belongs to the free-play
+     phase, which is now where you spend your time until someone starts a round. */
+  const solo = (getState('phase') || 'waiting') !== 'playing'
+    && myRole() !== 'seeker' && !amAbducted() && !practiceOn;
   if(!solo){ killBotUfo(); return; }
   if(!bot){ bot = makeBotUfo(); armBotGrace(!paintTaught && botCatches===0); }
   const b = bot, pos = b.g.position;
@@ -4204,13 +4415,47 @@ function hostTick(dt){
 
   if(players.length < 2){ if(phase!=='waiting') setState('phase','waiting',true); return; }
 
-  if(phase==='waiting'){ startRound(); return; }
-  if(phase==='intermission'){ if(now > (getState('interEnds')||0)) startRound(); return; }
+  /* ⛔⛔ 2026-08-02 — A ROUND USED TO START THE INSTANT A SECOND CONNECTION
+     APPEARED, and that is what made the game untestable.
+     The Director: "the story cards are popping up immediately when i get put in
+     a ufo... theres literally zero time to actually try playing."
+     Measured with two real clients: the moment player 2 connects, startRound()
+     fires, SEEKER_PER=6 means Math.max(1, round(2/6)) = ONE of the two is put in
+     a UFO, and BOTH then sit through HIDE_SECONDS=120 - the seeker blindfolded
+     behind the Files reader, the hider hiding from a person who cannot see. A
+     second browser tab, a stale peer left by a reload, or a friend opening the
+     link is enough to take the paint studio away from you for two minutes.
+     Now a round is something you ASK FOR. Until somebody presses START, the room
+     stays in 'waiting', which is the free-play state: no UFO, no clock, nobody
+     can be caught, the paint studio and the practice range are both open. */
+  if(phase==='waiting'){
+    if(getState('startReq')){ setState('startReq', false, true); startRound(); }
+    return;
+  }
+  if(phase==='intermission'){
+    /* between rounds, go back to free play rather than straight into another
+       one - the intermission was a 7s window nobody could use */
+    if(now > (getState('interEnds')||0)){ setState('phase','waiting',true); freePlayReset(); }
+    return;
+  }
 
   // phase === 'playing'
   detectAbductions(dt);
   if(hiders.length>0 && alive.length===0){ endRound('seekers'); return; }
   if(now > (getState('roundEnds')||0)){ endRound('hiders'); return; }
+}
+/* Free play is everyone-is-a-hider: nobody is stuck in a UFO watching a clock
+   they did not ask for, and everybody can open the paint studio. Roles persist
+   in player state, so without this the last round's seeker stays a seeker and
+   keeps flying a saucer around a lobby. */
+function freePlayReset(){
+  for(const p of players){
+    p.state.setState('role', 'hider', true);
+    p.state.setState('abducted', false, true);
+    p.state.setState('beam', false, true);
+    p.state.setState('lock', 0, true);
+  }
+  setState('hideEnds', 0, true);
 }
 function startRound(){
   const rid = (getState('roundId')||0) + 1;
@@ -4696,6 +4941,8 @@ function updateHUD(role, abd){
     $('tDecoy').classList.toggle('hidden', abd || role==='seeker');
     $('tJump').classList.toggle('hidden', abd || role==='seeker' || !touch.on || practiceOn);
     $('tPractice').classList.toggle('hidden', players.length > 1 || !started);
+    /* a real round needs a real second player, and now it needs someone to say so */
+    $('tStart').classList.toggle('hidden', !(started && players.length > 1 && phase !== 'playing'));
     $('tBeam').classList.toggle('hidden', abd || role!=='seeker');
     $('tScan').classList.toggle('hidden', abd || role!=='seeker');
     $('altUI').classList.toggle('hidden', abd || role!=='seeker');
@@ -4768,13 +5015,28 @@ function updateHUD(role, abd){
     }
     else if(bot && performance.now() < botEjectUntil) showBanner('caught','Found you mid-coat',
       'The beam shuts the studio. Paint is safe from the LOCK, never from being seen — get out of the light and finish the coat somewhere else.');
-    else if(bot && soloGraceLeft() > 0) showBanner('','Head start · '+Math.ceil(soloGraceLeft())+'s',
-      'It is circling and its beam is off. Find a spot, then 🎨 to paint yourself to match it. '
-      + 'When the clock hits zero it drops and starts hunting.', careerLine());
-    else if(bot) showBanner('','Training grounds · '+botTierNow().name,
-      '⭐ '+soloStars+' this run · caught '+botCatches+'× — earn while it looks and sees nothing. 🎨 paint · 👁 sky · 📣 bait. Second player = real rounds.',
+    /* ⛔ "im confused about how all this works, nothing tells you what the fuck is
+       happening" — his words, and he was right. Every waiting state now answers
+       the same three questions in order: WHAT IS THIS, WHAT DO I DO NEXT, WHAT
+       HAPPENS WHEN I DO IT. No jargon, no emoji-only instructions. */
+    else if(bot && soloGraceLeft() > 0) showBanner('','Free play · nothing can catch you for '+Math.ceil(soloGraceLeft())+'s',
+      (players.length > 1 ? 'Somebody else is in this room. Nothing starts until one of you presses '
+        + 'START ROUND, so take your time. ' : '')
+      + 'You are the chameleon. The idea: PAINT YOUR BODY to match whatever you are standing on or '
+      + 'hiding beside, then hold still and the hunter loses you. Tap the 🎨 button (right side) to '
+      + 'open the paint studio, then tap MATCH GROUND. When this clock hits zero the saucer drops '
+      + 'and starts looking. Nothing here is scored and you can reopen the paint at any time.',
       careerLine());
-    else showBanner('','Waiting for players','Roam around to try the controls. Open this URL in another tab (or use Add a Player) to start a round.');
+    else if(bot) showBanner('','Free play · the saucer is hunting ('+botTierNow().name+')',
+      'It finds you by how badly your paint matches, so a good coat plus standing still makes it '
+      + 'lose you. Move and it sees you. ⭐ '+soloStars+' this run, caught '+botCatches+'×. '
+      + '🎨 repaint · 👁 see yourself from its view · 📣 taunt it · HUNT to swap sides and practise spotting.'
+      + (players.length > 1 ? '  ·  '+(players.length-1)+' other player here — press START ROUND when you both want a real one.' : ''),
+      careerLine());
+    else showBanner('','Free play · alone in the valley',
+      'You are the chameleon and nothing is hunting you yet. Walk around, then tap 🎨 to paint '
+      + 'yourself to match the ground. Share this page\'s link to bring somebody in; a real round '
+      + 'only begins when one of you presses START ROUND.');
   }
   else if(phase==='intermission'){
     const w=getState('winner'), left=((getState('interEnds')||0)-Date.now())/1000;
