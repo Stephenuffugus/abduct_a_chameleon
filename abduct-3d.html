@@ -324,7 +324,12 @@
      is open. It sits ABOVE the two invisible thumbsticks (z-index 8) so a drag
      orbits you instead of walking you into the open, and BELOW the action column
      (z-index 12) and the dock (25) so both stay tappable. */
-  #recov{ position:fixed; left:50%; top:16px; transform:translate(-50%,-140%); z-index:30;
+  /* ⛔ z-index 24, NOT 30. The card is 560px wide and centred at the top; the
+     paint dock is on the right with its ✕ at the top of it, so at 932px the
+     card overlapped exactly where that exit lives. This file has already lost a
+     day to a paint studio whose exits were unreachable — a story card is never
+     worth risking that again. Below the dock (25), above everything else. */
+  #recov{ position:fixed; left:50%; top:16px; transform:translate(-50%,-140%); z-index:24;
     width:min(92vw,560px); opacity:0; pointer-events:none;
     transition:transform .5s cubic-bezier(.2,.9,.25,1), opacity .5s ease }
   #recov.on{ transform:translate(-50%,0); opacity:1 }
