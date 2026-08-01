@@ -69,12 +69,24 @@ const MEASURE = async () => {
   if (!S) return { fatal: 'window.__aac3dStudio missing (the studio has no probe)' };
   if (!$('tPaint') || !$('paint')) return { fatal: 'touch UI or paint panel missing' };
 
+  /* ⛔ THE DESKTOP-ONLY KILLER, FORCED INTO REACH OF A HEADLESS BROWSER.
+     Opening the studio releases pointer lock, which used to un-hide
+     #clickToPlay - a full-screen 74% scrim at z-index 20, sitting exactly
+     between #paintStage (9) and #paint (25). The mirror went behind a wash and
+     every drag hit the scrim. Puppeteer NEVER acquires pointer lock, so the
+     overlay is always hidden here and every gate passed while the feature was
+     dead on every real desktop. Show it first, then assert the studio hides it. */
+  $('clickToPlay').classList.remove('hidden');
   $('tPaint').click();
   await frame(4);
+  const scrim = { hidden: $('clickToPlay').classList.contains('hidden'),
+                  z: getComputedStyle($('clickToPlay')).zIndex,
+                  stageZ: getComputedStyle($('paintStage')).zIndex };
   const p = $('paint'), pr = p.getBoundingClientRect();
   const out = { vw, vh,
     dockPct: Math.round(100 * (pr.width * pr.height) / (vw * vh)),
-    dockW: Math.round(pr.width) };
+    dockW: Math.round(pr.width),
+    scrimHidden: scrim.hidden, scrimZ: scrim.z, stageZ: scrim.stageZ };
 
   /* Where is the body on screen, and how big? Projecting the rig's bounding box
      is the only honest answer - "the camera is pointed at it" is not the same as
@@ -182,6 +194,7 @@ for (const [w, h] of VIEWPORTS) {
   const bad = [];
   if (m.fatal) bad.push(m.fatal);
   else {
+    if (!m.scrimHidden) bad.push(`#clickToPlay (z${m.scrimZ}) is up over the studio while #paintStage is z${m.stageZ} - THE STUDIO IS BEHIND A SCRIM AND EVERY DRAG MISSES IT (desktop-only, invisible to headless unless forced)`);
     if (m.dockPct > 34) bad.push(`the dock eats ${m.dockPct}% of the screen (was 55% - the bug); budget is 34%`);
     if (!m.bodyOnScreen) bad.push(`YOUR CHARACTER IS NOT ON SCREEN while painting it: ${JSON.stringify(m.body)}`);
     if (!m.bodyClearOfDock) bad.push('the character renders under the dock');

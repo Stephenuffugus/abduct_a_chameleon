@@ -3188,10 +3188,17 @@ function setupInput(){
     lock();                                                // desktop: pointer lock → overlay hides on lock change
     if(coarse || gp.present) document.getElementById('clickToPlay').classList.add('hidden'); // touch/controller: just dismiss
   });
-  document.addEventListener('pointerlockchange', ()=>{
-    const locked = document.pointerLockElement === cv;
-    document.getElementById('clickToPlay').classList.toggle('hidden', !(started && !locked));
-  });
+  /* ⛔⛔ THE STUDIO WAS DEAD ON DESKTOP AND HEADLESS COULD NOT SEE IT.
+     setPaintOpen() releases the mouse so you can use the panel. That fires
+     pointerlockchange with locked=false, which un-hid #clickToPlay - a
+     full-screen rgba(8,12,25,.74) + blur(4px) scrim at z-index 20. #paintStage
+     is z9 and #paint is z25, so the scrim landed exactly BETWEEN them: the 3D
+     mirror sat behind a 74% wash, and every orbit or brush drag hit the scrim
+     and re-requested pointer lock instead of reaching the stage.
+     ⚠ A headless browser NEVER acquires pointer lock, so the overlay is always
+     hidden there and every gate passed. Found by reading the z-order, not by
+     running it. Some bugs only exist on a real machine. */
+  document.addEventListener('pointerlockchange', syncClickToPlay);
   document.addEventListener('mousemove', e=>{
     if(document.pointerLockElement !== cv) return;
     applyLook(e.movementX*SENS, e.movementY*SENS);
@@ -3408,6 +3415,13 @@ function setPaintView(v){
   const box = document.getElementById('paintViews');
   if(box) for(const b of box.children) b.classList.toggle('on', b.dataset.v===v);
 }
+/* One place decides whether the click-to-play scrim is up, because two places
+   disagreed and the disagreement blanked the paint studio on every desktop. */
+function syncClickToPlay(){
+  const o = document.getElementById('clickToPlay'); if(!o) return;
+  const locked = renderer && document.pointerLockElement === renderer.domElement;
+  o.classList.toggle('hidden', !(started && !locked) || paintOpen || touch.on);
+}
 function setPaintOpen(on){
   if(myRole()!=='hider' || amAbducted()) on = false;
   paintOpen = on;
@@ -3423,6 +3437,10 @@ function setPaintOpen(on){
     requestAnimationFrame(measureStagePan);   // after the dock has laid out, not before
     if(document.pointerLockElement) document.exitPointerLock(); }
   else { _panPx = 0; publishPaint(true); }
+  /* closing does NOT fire pointerlockchange (the mouse is already free), so the
+     "click to play" prompt has to be restored by hand or a desktop player is
+     left with no invitation to take the mouse back */
+  syncClickToPlay();
 }
 /* ⛔ The flat map was a BLANK WHITE SQUARE. Nothing ever drew the body into it,
    so "paint your top half" was an instruction about a rectangle. loadCharacter
