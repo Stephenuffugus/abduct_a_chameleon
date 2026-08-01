@@ -162,7 +162,32 @@
   #hidewait .eye{ font-size:40px; opacity:.85 }
   #hidewait .lead{ font-size:19px; font-weight:800; letter-spacing:.06em; color:var(--amber) }
   #hidewait .sub{ color:var(--muted); font-size:13px; max-width:280px; line-height:1.5 }
-  #hidewait .num{ font-size:44px; font-weight:900; color:var(--txt); font-variant-numeric:tabular-nums }
+  #hidewait .num{ font-size:26px; font-weight:900; color:var(--txt); font-variant-numeric:tabular-nums }
+  #hidewait.on{ display:grid; grid-template-rows:auto minmax(0,1fr) auto; gap:10px;
+    align-items:stretch; justify-items:stretch; padding:12px 14px }
+  #hwHead{ display:flex; align-items:center; gap:12px; justify-content:center }
+  #hwHead .lead{ font-size:15px; letter-spacing:.14em }
+  #hwCard{ min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; text-align:left;
+    background:rgba(255,255,255,.035); border:1px solid var(--line); border-radius:12px;
+    padding:14px 16px; max-width:760px; width:100%; margin:0 auto }
+  #hwMeta{ display:flex; align-items:center; gap:10px; margin-bottom:8px }
+  #hwThread{ font-family:var(--mono); font-size:10px; font-weight:800; letter-spacing:.12em;
+    color:#0b0f1c; background:var(--amber); border-radius:4px; padding:2px 7px }
+  #hwNum{ font-family:var(--mono); font-size:10px; letter-spacing:.12em; color:var(--muted-2) }
+  #hwHeading{ font-size:15px; font-weight:800; letter-spacing:.08em; color:var(--amber); margin-bottom:7px }
+  #hwBody{ font-size:13px; line-height:1.72; color:var(--txt); white-space:pre-wrap }
+  #hwFoot{ display:flex; align-items:center; gap:10px; justify-content:center }
+  #hwFoot button{ min-height:48px; min-width:112px; padding:0 14px; border-radius:10px; cursor:pointer;
+    background:rgba(242,179,61,.14); border:1.5px solid var(--amber); color:var(--amber);
+    font-weight:800; font-size:12px; letter-spacing:.08em; touch-action:manipulation }
+  #hwCount{ font-family:var(--mono); font-size:10.5px; color:var(--muted); flex:1; text-align:center }
+  @media (max-height: 470px){
+    #hidewait.on{ gap:7px; padding:8px 10px }
+    #hwHead .lead{ font-size:12px }
+    #hidewait .num{ font-size:20px }
+    #hwCard{ padding:10px 12px }
+    #hwBody{ font-size:12px; line-height:1.6 }
+  }
   #tapStart{ position:fixed; inset:0; z-index:65; display:none; flex-direction:column; gap:12px;
     align-items:center; justify-content:center; background:rgba(8,12,25,.92); text-align:center }
   #tapStart .big{ font-size:22px; font-weight:800; letter-spacing:.1em; color:var(--amber) }
@@ -395,10 +420,29 @@
   <div id="rotate"><div class="ph">📱</div><div style="font-weight:700">Turn your phone sideways</div>
     <div style="color:var(--muted);font-size:12px">this game is played in landscape</div>
     <div class="anyway">Already sideways? Tap to play &rsaquo;</div></div>
-  <div id="hidewait"><div class="eye">🛸</div>
-    <div class="lead">HOLD POSITION</div>
-    <div class="num" id="hidewaitNum">20</div>
-    <div class="sub">The chameleons are picking their spots. Your scanners come online when the countdown ends.</div></div>
+  <!-- ⛔ This used to be an opaque black panel with a number on it, and the
+       hunter sat behind it for the full two minutes doing nothing. The head
+       start is Stephen's call and stays; what he actually wanted here was the
+       ABDUCTION FILES - 880 pages of case file that already existed and were
+       not wired into this game at all. So the wait is a reading room: the
+       archive you are flying for, recovered a page at a time. -->
+  <div id="hidewait">
+    <div id="hwHead">
+      <span class="eye">🛸</span>
+      <span class="lead">SCANNERS OFFLINE</span>
+      <span class="num" id="hidewaitNum">20</span>
+    </div>
+    <div id="hwCard">
+      <div id="hwMeta"><span id="hwThread">FR</span><span id="hwNum">CASE FILE · PAGE — OF 1000</span></div>
+      <div id="hwHeading">—</div>
+      <div id="hwBody">Recovering…</div>
+    </div>
+    <div id="hwFoot">
+      <button id="hwPrev" type="button">◀ BACK</button>
+      <span id="hwCount">0 of 1000 recovered</span>
+      <button id="hwNext" type="button">NEXT PAGE ▶</button>
+    </div>
+  </div>
   <div id="tapStart"><div class="big">▶ TAP TO PLAY</div><div class="sm">goes fullscreen · sound on</div></div>
 
   <div id="howto"><div class="in">
@@ -635,6 +679,20 @@
     </div>
   </div>
 
+<!-- THE ABDUCTION FILES page bank, shared with the 2D game. These are plain
+     classic scripts that append to window.AAC_FILES; see docs/ABDUCTION-FILES-CANON.md -->
+<script src="pages/files-1.js"></script>
+<script src="pages/files-2.js"></script>
+<script src="pages/files-3.js"></script>
+<script src="pages/files-4.js"></script>
+<script src="pages/files-5.js"></script>
+<script src="pages/files-6.js"></script>
+<script src="pages/files-7.js"></script>
+<script src="pages/files-8.js"></script>
+<script src="pages/files-9.js"></script>
+<script src="pages/files-10.js"></script>
+<script src="pages/files-11.js"></script>
+<script src="pages/files-12.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -1513,6 +1571,81 @@ window.__aac3dCamo = function(x, z, topHex, botHex){
            single:+em.single.toFixed(4), two:+em.two.toFixed(4),
            mq:+em.mq.toFixed(4), split:em.split };
 };
+/* ===== THE ABDUCTION FILES, in the hunter's window =======================
+   880 pages already existed in pages/files-*.js and this game never touched
+   them. Pages are written to be read OUT OF ORDER and self contained, which is
+   exactly what a two minute wait needs. Recovered pages persist, so the archive
+   fills in across sessions instead of resetting every round. */
+const FILES_TOTAL = 1000;
+const FILES_KEY = 'aac3d_files_read';
+let filesRead = (function(){
+  try{ const a = JSON.parse(localStorage.getItem(FILES_KEY) || '[]');
+    return new Set(Array.isArray(a) ? a.slice(0, FILES_TOTAL) : []); }catch(e){ return new Set(); }
+})();
+let curFile = null, filesHist = [], filesHistIdx = -1;
+/* the HUD re-decides the blindfold every frame, so a test or a preview that
+   just adds the class gets it removed again on the next tick. This pins it. */
+let filesDemo = false;
+function filesBank(){ return (window.AAC_FILES && window.AAC_FILES.length) ? window.AAC_FILES : []; }
+function filesMarkRead(n){
+  if(filesRead.has(n)) return;
+  filesRead.add(n);
+  // read-modify-write against fresh disk: two tabs must not erase each other
+  try{
+    const disk = JSON.parse(localStorage.getItem(FILES_KEY) || '[]');
+    const merged = new Set(Array.isArray(disk) ? disk : []);
+    filesRead.forEach(v=> merged.add(v));
+    filesRead = merged;
+    localStorage.setItem(FILES_KEY, JSON.stringify([...merged]));
+  }catch(e){}
+}
+function filesPick(){
+  const bank = filesBank();
+  if(!bank.length) return null;
+  // prefer something you have not recovered yet, so the archive actually grows
+  const fresh = bank.filter(p=> !filesRead.has(p.n));
+  const pool = fresh.length ? fresh : bank;
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+function filesRender(p){
+  const $$ = id => document.getElementById(id);
+  if(!$$('hwBody')) return;
+  if(!p){
+    $$('hwHeading').textContent = 'ARCHIVE UNAVAILABLE';
+    $$('hwBody').textContent = 'The case files did not load. The hunt still works.';
+    $$('hwNum').textContent = ''; $$('hwThread').textContent = '—';
+    return;
+  }
+  curFile = p;
+  $$('hwThread').textContent = p.t || 'FR';
+  $$('hwNum').textContent = 'CASE FILE · PAGE ' + p.n + ' OF ' + FILES_TOTAL;
+  $$('hwHeading').textContent = p.h || '';
+  $$('hwBody').textContent = p.b || '';
+  $$('hwCard').scrollTop = 0;
+  filesMarkRead(p.n);
+  $$('hwCount').textContent = filesRead.size + ' of ' + FILES_TOTAL + ' recovered';
+}
+function filesNext(){
+  const p = filesPick(); if(!p) return filesRender(null);
+  filesHist = filesHist.slice(0, filesHistIdx+1); filesHist.push(p);
+  if(filesHist.length > 40) filesHist.shift();
+  filesHistIdx = filesHist.length-1;
+  filesRender(p);
+}
+function filesPrev(){
+  if(filesHistIdx <= 0) return;
+  filesHistIdx--; filesRender(filesHist[filesHistIdx]);
+}
+function filesEnsure(){ if(!curFile) filesNext(); }
+window.__aac3dFiles = {
+  open(){ filesDemo = true; document.getElementById('hidewait').classList.add('on'); filesEnsure(); },
+  close(){ filesDemo = false; document.getElementById('hidewait').classList.remove('on'); },
+  next: filesNext, prev: filesPrev,
+  state(){ return { bank: filesBank().length, read: filesRead.size,
+    cur: curFile ? { n:curFile.n, t:curFile.t, h:curFile.h, words:(curFile.b||'').split(/\s+/).length } : null,
+    histIdx: filesHistIdx }; }
+};
+
 /* read-only movement diagnostics, same family as __aac3dPaint/__aac3dCamo */
 window.__aac3dPlayer = function(){
   return { jumpInput:{ space:!!keys['Space'], gpAltUp:!!gp.altUp, touchJump:!!touch.jump },
@@ -2398,6 +2531,9 @@ function setupPaintUI(){
   bc.addEventListener('pointerdown', e=>{ e.preventDefault(); drawing=true; const p=pos(e); paintStroke(p.x,p.y); });
   bc.addEventListener('pointermove', e=>{ if(!drawing) return; e.preventDefault(); const p=pos(e); paintStroke(p.x,p.y); });
   addEventListener('pointerup', ()=>{ if(drawing){ drawing=false; publishPaint(); } });
+  const _hn = document.getElementById('hwNext'), _hp = document.getElementById('hwPrev');
+  if(_hn) _hn.onclick = ()=>{ filesNext(); SFX.click(); };
+  if(_hp) _hp.onclick = ()=>{ filesPrev(); SFX.click(); };
   document.getElementById('paintClose').onclick = ()=> setPaintOpen(false);
   document.getElementById('paintDone').onclick  = ()=> setPaintOpen(false);
   const wheelPick = (cv, fn)=>{
@@ -3224,8 +3360,10 @@ function updateHUD(role, abd){
   /* seeker blindfold + the hider's own countdown */
   (function(){
     const hw=$('hidewait'); if(!hw) return;
-    const left=hideLeft(), on=(role==='seeker' && left>0 && !abd);
+    const left=hideLeft(), on=filesDemo || (role==='seeker' && left>0 && !abd);
+    const was = hw.classList.contains('on');
     hw.classList.toggle('on', on);
+    if(on && !was) filesEnsure();          // first page the moment the window opens
     // keep the number fresh whenever a head start is running, not only while the
     // blindfold happens to be up, so it can never be caught showing a stale value
     if(left>0){ const n=$('hidewaitNum'); if(n) n.textContent=String(Math.ceil(left)); }
