@@ -134,7 +134,7 @@ const TURN_RATE = 3.2, ARRIVE_DT = 0.25, BELIEF_TRACK = 6.0;
 /* How far ahead of a moving target a ship is allowed to aim. The chaser is conservative;
    a ship converging from elsewhere leads much harder, because its whole job is to be
    somewhere you have not got to yet. Zero inside BEAM - the ring has to sit ON the body. */
-const LEAD_MAX = 0.9, CUTOFF_LEAD_MAX = 2.5, CUTOFF_RANGE = 900, STATION_DT = 0.15;
+const LEAD_MAX = 0.9, CUTOFF_LEAD_MAX = 2.5, CUTOFF_RANGE = 900, STATION_DT = 0.15, PIVOT_R = 220;
 const SPAWN_GRACE = 1.5, COORD_RANGE = 480;
 /* 1v1 round shape (Stephen + Penny live playtest 7/30): a real hide phase
    before the hunt (the hunter is frozen + the survive clock waits), a
@@ -1695,7 +1695,16 @@ function interceptPoint(u,tx,ty,tvx,tvy,spd,capT){
   return { x:tx+tvx*t, y:ty+tvy*t };
 }
 function steer(u,tx,ty,maxSpd,dt,pursuit,mvx,mvy){ const dx=tx-u.x, dy=ty-u.y, dist=Math.hypot(dx,dy);
-  if(dist<0.001) return; u.heading=turnToward(u.heading, Math.atan2(dy,dx), TURN_RATE*(pursuit?2:1)*dt);
+  if(dist<0.001) return;
+  /* A SAUCER HOVERS, SO IT SHOULD PIVOT, NOT BANK. At a flat 6.4 rad/s a 180-degree reversal
+     takes 0.49s, during which the ship travels ~75px in the wrong direction while the player
+     gains 74px. That is the entire back-and-forth exploit, and it is a consequence of modelling
+     a hovering craft like an aeroplane. Agility now ramps up as it closes: gentle and curving at
+     range, near-instant when it is right on top of you. It costs nothing in speed, and it means
+     evasion has to be about being UNREADABLE (cover, direction changes it cannot see coming)
+     rather than about exploiting a turning circle. */
+  const agility = pursuit ? (2 + 8*clamp01(1 - dist/PIVOT_R)) : 1;
+  u.heading=turnToward(u.heading, Math.atan2(dy,dx), TURN_RATE*agility*dt);
   /* Three regimes, and the middle one is new.
      - patrol/investigate: arrive damping, so a ship eases onto a waypoint.
      - pursuit with NO target velocity: flat out. (The old comment is still true: plain arrive
@@ -2102,17 +2111,29 @@ function drawRound(alpha){
       if(round.cutter){ ctx.globalAlpha=0.5+0.4*pl; ctx.strokeStyle=COL.cyan; ctx.lineWidth=2;
         ctx.beginPath(); ctx.arc(rg.x,rg.y,RIG_R+7,0,TAU); ctx.stroke(); }
       ctx.globalAlpha=1;
+      txt(round.cutter?'CUTTER':'RIG', rg.x, rg.y+RIG_R+11, 10, round.cutter?COL.cyan:COL.amber,'center','800');
     }
+    /* These were a faint cyan wash and they DISAPPEARED into foliage at play zoom - obvious
+       the moment anyone looked at a screenshot, invisible to every assertion in the suite.
+       A core is the one thing on the map you are looking for, so it gets a dark backing disc
+       to separate it from whatever it is standing on, a solid rim, and a standing beam. */
     for(const c of round.cores){ if(c.taken) continue;
       const pl=0.5+0.5*Math.sin(gfx.t*3+c.x*0.01);
       const col=c.loose?COL.green:COL.cyan;
-      ctx.globalAlpha=0.30+0.22*pl; ctx.strokeStyle=col; ctx.lineWidth=2;
+      ctx.globalAlpha=0.55; ctx.fillStyle='rgba(6,10,18,0.85)';
+      ctx.beginPath(); ctx.arc(c.x,c.y,CORE_R*0.62,0,TAU); ctx.fill();
+      ctx.globalAlpha=0.75+0.25*pl; ctx.strokeStyle=col; ctx.lineWidth=2.5;
       ctx.beginPath(); ctx.arc(c.x,c.y,CORE_R,0,TAU); ctx.stroke();
-      ctx.globalAlpha=0.16+0.12*pl; ctx.fillStyle=col;
-      ctx.beginPath(); ctx.arc(c.x,c.y,CORE_R*0.42,0,TAU); ctx.fill();
-      ctx.globalAlpha=0.95; ctx.fillStyle=col;
+      ctx.globalAlpha=0.30+0.20*pl; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.arc(c.x,c.y,CORE_R*1.5,0,TAU); ctx.stroke();
+      // a short standing beam, so a core reads from the edge of the screen and through leaves
+      ctx.globalAlpha=0.28+0.18*pl; ctx.fillStyle=col;
+      ctx.beginPath(); ctx.moveTo(c.x-5,c.y); ctx.lineTo(c.x+5,c.y);
+      ctx.lineTo(c.x+2,c.y-52); ctx.lineTo(c.x-2,c.y-52); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha=1; ctx.fillStyle=col;
       ctx.beginPath(); for(let i=0;i<6;i++){ const an=gfx.t*0.6+i*TAU/6;
-        ctx.lineTo(c.x+Math.cos(an)*7, c.y+Math.sin(an)*7); } ctx.closePath(); ctx.fill();
+        ctx.lineTo(c.x+Math.cos(an)*9, c.y+Math.sin(an)*9); } ctx.closePath(); ctx.fill();
+      ctx.strokeStyle='rgba(6,10,18,0.9)'; ctx.lineWidth=1.5; ctx.stroke();
       // the pry ring: how much longer you have to stand here glowing
       if(c.hold>0 && c.need>0){ ctx.globalAlpha=1; ctx.strokeStyle=COL.amber; ctx.lineWidth=4;
         ctx.beginPath(); ctx.arc(c.x,c.y,CORE_R-4,-Math.PI/2,-Math.PI/2+TAU*clamp01(c.hold/c.need)); ctx.stroke(); }
@@ -2512,7 +2533,7 @@ function drawRoundHUD(){
     const t=Math.max(0,Math.ceil(round.timeLeft)), ts=Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
     panel(vpW-116,12,104,54,9);
     txt(ts, vpW-64,28,18, round.timeLeft<=30?COL.danger:COL.txt,'center','700');
-    txt('⚙ '+round.delivered+' / '+salvTotal()+(round.carrying?'  (+'+round.carrying+')':''),
+    txt(round.cutter?'CUTTER READY':('⚙ '+round.delivered+' / '+salvTotal()),
         vpW-64,44,9, round.cutter?COL.cyan:COL.amber,'center','700');
     // lives read as pips, not a number: you should be able to see the cost at a glance
     const lives=SALV_LIVES[round.diff.label]||3;
@@ -2532,16 +2553,21 @@ function drawRoundHUD(){
       if(!tp && round.carrying>0){ tp=round.rig; tcol=COL.amber; tlabel='RIG'; } }
     if(tp){
       const an=Math.atan2(tp.y-player.y, tp.x-player.x), dist=Math.hypot(tp.x-player.x,tp.y-player.y);
-      const cxk=vpW/2, cyk=88, rr2=17;
+      /* Sat at y=88 with no backing, which put it inside the match meter's caption band and
+         made the bearing arrow read as part of the meter. It gets its own pill, below the
+         band, so it is obviously a separate instrument. */
+      const cxk=vpW/2, cyk=112, rr2=17;
+      ctx.globalAlpha=0.9; panel(cxk-48, cyk-22, 96, round.carrying>0?58:46, 12);
       ctx.globalAlpha=0.55; ctx.strokeStyle=tcol; ctx.lineWidth=1.5;
-      ctx.beginPath(); ctx.arc(cxk,cyk,rr2,0,TAU); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cxk,cyk-4,rr2,0,TAU); ctx.stroke();
       ctx.globalAlpha=0.95; ctx.fillStyle=tcol;
       ctx.beginPath();
-      ctx.moveTo(cxk+Math.cos(an)*rr2, cyk+Math.sin(an)*rr2);
-      ctx.lineTo(cxk+Math.cos(an+2.5)*rr2*0.6, cyk+Math.sin(an+2.5)*rr2*0.6);
-      ctx.lineTo(cxk+Math.cos(an-2.5)*rr2*0.6, cyk+Math.sin(an-2.5)*rr2*0.6);
+      ctx.moveTo(cxk+Math.cos(an)*rr2, cyk-4+Math.sin(an)*rr2);
+      ctx.lineTo(cxk+Math.cos(an+2.5)*rr2*0.6, cyk-4+Math.sin(an+2.5)*rr2*0.6);
+      ctx.lineTo(cxk+Math.cos(an-2.5)*rr2*0.6, cyk-4+Math.sin(an-2.5)*rr2*0.6);
       ctx.closePath(); ctx.fill(); ctx.globalAlpha=1;
-      txt(tlabel+'  '+Math.round(dist/TILE)+'m', cxk, cyk+rr2+9, 9, tcol,'center','700');
+      txt(tlabel+' '+Math.round(dist/TILE)+'m', cxk, cyk+15, 9, tcol,'center','700');
+      if(round.carrying>0) txt('carrying '+round.carrying, cxk, cyk+27, 8, COL.cyan,'center','700');
     }
   } else if(round.mode==='TA'){ const t=Math.max(0,Math.ceil(round.timeLeft)), ts=Math.floor(t/60)+':'+String(t%60).padStart(2,'0');
     panel(vpW-108,12,96,40,9); txt(ts, vpW-60,30,18, round.timeLeft<=15?COL.danger:COL.txt,'center','700'); txt('⛯ '+round.taBanked+' / '+round.beacons.length, vpW-60,46,9,COL.amber,'center','700');
@@ -2622,15 +2648,23 @@ function drawRoundHUD(){
   /* The column grew to seven. Rather than hand-check the arithmetic again every time an
      ability is added, the pitch now shrinks to fit whatever is above it (the timer panel ends
      at y=52) with 44px as a hard floor so a button never goes under the thumb minimum. */
-  const N=ABILITIES.length, want=44*N+10*(N-1);
+  /* THE CUTTER TAKES A SLOT IN THE COLUMN, it does not get a button of its own.
+     Two placements were tried and both were wrong, and only a screenshot showed it: bottom
+     centre steals the press meant for the floating move stick (roundHits is tested before the
+     stick is created), and the action-hand band just above the dock is exactly where the
+     spotted-reason panel lives, so FIRING 58% printed on top of "a scanner passed directly
+     overhead". Actions belong where the player already looks for actions. */
+  const BAR = (round.mode==='SALVAGE' && round.cutter)
+    ? [{key:'cut', name:'Cut', glyph:'⚡', cut:true}].concat(ABILITIES) : ABILITIES;
+  const N=BAR.length;
   const room=Math.max(44*N, (ay-14)-60);
   const pitch=Math.max(44, Math.min(54, room/N));
   const aby = ay-14-(pitch*N-(pitch-44));
-  ABILITIES.forEach((ab,i)=>{ const y=aby+i*pitch;
+  BAR.forEach((ab,i)=>{ const y=aby+i*pitch;
     const gated = ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');   // P9: hard-anchor while scouting
-    const out = ab.charges && (player.lureLeft|0)<=0;                                  // spent, not cooling
-    const cd = ab.key==='freeze'?0:(player.cd[ab.key]||0), ready=cd<=0 && !gated && !out;
-    const on = ab.key==='freeze' && player.freeze;
+    const out = (ab.charges && (player.lureLeft|0)<=0) || (ab.cut && !round.cutTarget && !player.cutOn);
+    const cd = (ab.key==='freeze'||ab.cut)?0:(player.cd[ab.key]||0), ready=cd<=0 && !gated && !out;
+    const on = (ab.key==='freeze' && player.freeze) || (ab.cut && player.cutOn);
     ctx.globalAlpha = gated?0.4:1;
     ctx.fillStyle=on?'rgba(63,208,224,0.28)':(ready?'rgba(21,27,44,0.88)':'rgba(21,27,44,0.5)'); rr(abx,y,44,44,11); ctx.fill();
     ctx.strokeStyle=on?COL.cyan:(ready?COL.line:'#242c44'); ctx.lineWidth=on?2:1; rr(abx,y,44,44,11); ctx.stroke();
@@ -2638,13 +2672,19 @@ function drawRoundHUD(){
     if(cd>0){ ctx.fillStyle='#05070d'; ctx.globalAlpha=(gated?0.4:1)*0.55; ctx.beginPath(); ctx.moveTo(abx+22,y+22);
       ctx.arc(abx+22,y+22,23,-Math.PI/2,-Math.PI/2+TAU*clamp01(cd/(cdMax[ab.key]||1)),false); ctx.closePath(); ctx.fill(); }
     // a consumable has to SHOW its count or "nothing happened" is the only feedback you get
+    if(ab.cut){ txt('CUT', abx+22, y+36, 8, on?COL.danger:(ready?COL.amber:COL.muted),'center','800');
+      if(player.cutOn){ ctx.strokeStyle=COL.danger; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.arc(abx+22,y+22,20,-Math.PI/2,-Math.PI/2+TAU*clamp01(player.cutT/CUT_TIME)); ctx.stroke(); } }
     if(ab.charges){ const n=player.lureLeft|0;
       ctx.fillStyle=n>0?'rgba(63,208,224,0.92)':'rgba(224,101,94,0.9)';
       ctx.beginPath(); ctx.arc(abx+38,y+6,8,0,TAU); ctx.fill();
       txt(String(n), abx+38, y+6, 10, '#0b0f1a','center','800'); }
     ctx.globalAlpha=1;
     roundHits.push({x:abx,y,w:44,h:44,fn:()=>{ const g=ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');
-      if(g) return; if(ab.key==='freeze') freezeHeld=!freezeHeld; else useAbility(ab.key); }});
+      if(g) return;
+      if(ab.cut){ if(!round.cutTarget && !player.cutOn){ showToast('Nothing in cutter range'); SFX.back(); return; }
+        player.cutOn=!player.cutOn; if(!player.cutOn) player.cutT=0; SFX.ui(); vibe(20); return; }
+      if(ab.key==='freeze') freezeHeld=!freezeHeld; else useAbility(ab.key); }});
   });
   }
   /* THE CUT BUTTON is a TOGGLE, not a hold, and it is not an eighth entry in the ability
@@ -2655,19 +2695,6 @@ function drawRoundHUD(){
      - at eight entries the ability column's top lands on the timer panel on a 320x568 screen.
      It lives in the free band between the reason panel and the toast, and only exists once the
      cutter is online, so it can never crowd anything in a normal round. */
-  if(round.mode==='SALVAGE' && round.cutter && !studio.open && ctrlMode==='MOVE'){
-    const cw2=Math.min(150,vpW*0.42), cx2=(vpW-cw2)/2, cy2=vpH-112;
-    const armed=!!round.cutTarget, on=player.cutOn;
-    ctx.globalAlpha=armed?1:0.55;
-    uiBtn(on?('FIRING  '+Math.round(clamp01(player.cutT/CUT_TIME)*100)+'%'):(armed?'⚡ CUT':'CUT  (no target)'),
-      cx2, cy2, cw2, 52, ()=>{}, { rad:14, size:14,
-      active:on, color:on?COL.danger:(armed?COL.amber:COL.muted), stroke:on?COL.danger:undefined });
-    ctx.globalAlpha=1;
-    roundHits.push({ x:cx2, y:cy2, w:cw2, h:52, fn:()=>{
-      if(!round.cutTarget && !player.cutOn){ showToast('Nothing in cutter range'); SFX.back(); return; }
-      player.cutOn=!player.cutOn; if(!player.cutOn) player.cutT=0;
-      SFX.ui(); vibe(20); } });
-  }
   // debug overlay (practice)
   if(round.debug){ drawDebug(); }
   // seeker's-eye inspect overlay (lite while painting over a held shot: rings + YOU only, no chrome)
@@ -3417,6 +3444,7 @@ function startRound(entry, mode, diff, fixedSeed){
         if(!clash) round.cores.push({ x, y, taken:false, loose:false, hold:0, need:0 });
       }
     }
+    round.coreTotal=round.cores.length;    // frozen here; dropped cargo must never move it
   }
   seedAmbient();   // AFTER gameplay entities — ambient must not consume the seeded RNG stream (keeps DAILY reproducible)
   appState='ROUND'; roundState='COUNTDOWN'; studio.open=false; studio.reticleOn=false;
@@ -3564,7 +3592,12 @@ function endTimeAttack(win){ if(round.finalized) return;
   appState='SUMMARY'; menuIndex=0;
 }
 /* ============================ SALVAGE — the round ============================ */
-function salvTotal(){ return round.cores.length; }
+/* ⛔ salvTotal() USED TO RETURN round.cores.length AND THAT WAS A REAL BUG, caught by
+   LOOKING at a screenshot rather than by any test: the HUD read "4 / 6" in a four-core round.
+   Being taken pushes your dropped cargo back into round.cores as recoverable pieces, so every
+   abduction silently RAISED the number of cores you had to deliver, and enough of them made
+   the round unwinnable. The objective is fixed at placement; dropped cores are recoveries. */
+function salvTotal(){ return round.coreTotal||round.cores.length; }
 function pryNeed(n){ return PRY_BASE + n*PRY_STEP; }          // core n takes longer than core n-1
 function salvDone(){ return round.delivered>=salvTotal(); }
 function cutKillsNeeded(){ return Math.max(1, Math.ceil(round.diff.UFO_COUNT/3)); }
@@ -4635,6 +4668,15 @@ try{ window.__aac = { get state(){ return { appState, roundState,
       // test can reach a late-round state in seconds instead of playing four minutes to it.
       dropCore(x,y){ if(round&&round.cores) round.cores.push({x:x,y:y,taken:false,loose:false,hold:0,need:0}); },
       setClock(sec){ if(round) round.timeLeft=sec; },
+      snapCam(){ if(round){ cam.x=player.x; cam.y=player.y; camFollow.x=player.x; camFollow.y=player.y; camPan.x=0; camPan.y=0; } },
+      skipCountdown(){ if(round && (roundState==='COUNTDOWN'||roundState==='RESUME_COUNTDOWN')){ round.countdown=0; roundState='PLAYING'; } },
+      /* Advance the SIMULATION without drawing. The headless renderer leaks about 17MB of
+         native canvas memory per rendered frame and dies around frame 155, which is less than
+         the 180-frame countdown - so screenshots of anything that takes real time to reach
+         (a pry, a full rig, a cutter kill) were simply unreachable. Stepping the sim without
+         the render costs nothing and is honest: it is the same stepSim the game runs. */
+      sim(steps,dt){ if(!round) return; const d=dt||DT_FIXED;
+        for(let i=0;i<(steps|0);i++){ if(appState!=='ROUND') break; stepSim(d); } },
       abduct(){ if(round&&roundState==='PLAYING'&&player.alive) triggerAbduction(round.ufos[0]); } } }; }catch(_){}
 boot();
 

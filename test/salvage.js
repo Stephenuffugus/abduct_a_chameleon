@@ -16,6 +16,7 @@
 const fs=require('fs'), path=require('path'), {JSDOM}=require('jsdom');
 const htmlPath=process.argv[2]||'/workspaces/abduct_a_chameleon/index.html';
 const html=fs.readFileSync(htmlPath,'utf8');
+const TILEISH=32, CORE_R_ISH=34;
 let fails=0, passes=0;
 function ok(n,c,i){ if(c){passes++;console.log('OK    '+n+(i?'  — '+i:''));} else {fails++;console.log('FAIL  '+n+(i?'  — '+i:''));} }
 
@@ -135,11 +136,21 @@ function deliver(W,maxSec){
       const covers=W.T().covers().filter(o=>o.type!=='wall');
       let near=null,bd=1e18;
       for(const o of covers){ const d=Math.hypot(o.wx-c.x,o.wy-c.y); if(d<bd){bd=d;near=o;} }
-      W.T().teleport(c.x,c.y); W.pump(4);
-      W.key('KeyQ'); W.pump(60);                                             // match perfectly
-      // settle fully first and record how hidden we are when NOT working
-      for(let i=0;i<40;i++){ W.pump(6); W.T().teleport(c.x,c.y); }
+      /* Settle BESIDE the core, not on it. The first version of this stood on the core while
+         settling, which pried it loose during the settle loop, so by the time it measured there
+         was nothing left to pry and pryT read 0 forever. */
+      const off={x:c.x+CORE_R_ISH*2.2, y:c.y};
+      W.T().teleport(off.x,off.y); W.pump(4);
+      /* Match and settle until it actually takes. The paint crawls toward the target over time
+         and the settle curve depends on the terrain the round's seed dropped us on, so a single
+         KeyQ plus a fixed pump is a coin flip on some maps - which is exactly how this assertion
+         failed once with conceal=0.115 on otherwise identical code. Converge, do not hope. */
+      for(let a=0; a<6 && W.S().conceal<0.80; a++){
+        W.key('KeyQ');
+        for(let i=0;i<40;i++){ W.pump(6); W.T().teleport(off.x,off.y); }
+      }
       const idle=W.S();
+      ok('B: settling beside the core does not start a pry', idle.salv.pryT===0, 'pryT='+idle.salv.pryT);
       // now start prying (same spot, same paint, only difference is the work)
       let pry=null;
       for(let i=0;i<40;i++){ W.pump(4); W.T().teleport(c.x,c.y); const q=W.S();
@@ -153,6 +164,8 @@ function deliver(W,maxSec){
       // and now the cover case
       if(near){
         W.T().teleport(near.wx+10, near.wy+10); W.pump(30);
+        for(let a=0; a<6 && W.S().conceal<0.80; a++){ W.key('KeyQ');
+          for(let i=0;i<30;i++){ W.pump(6); W.T().teleport(near.wx+10,near.wy+10); } }
         const inCover=W.S();
         W.T().dropCore(near.wx+10, near.wy+10);                              // a core right in cover
         let pc=null;
@@ -267,10 +280,13 @@ function deliver(W,maxSec){
       ok('F: and they drop you somewhere else',
          Math.hypot(after.playerPos.x-before.playerPos.x, after.playerPos.y-before.playerPos.y)>200,
          'moved='+Math.round(Math.hypot(after.playerPos.x-before.playerPos.x, after.playerPos.y-before.playerPos.y))+'px');
-      // burn the remaining chances
+      // burn the remaining chances. The last one plays the abduction cutscene before the
+      // summary exists, so give it real frames rather than 20.
       let over=false;
-      for(let n=0;n<5;n++){ if(W.S().appState==='SUMMARY'){ over=true; break; }
-        W.T().abduct(); W.pump(20); }
+      for(let n=0;n<6 && !over;n++){
+        if(W.S().appState==='SUMMARY'){ over=true; break; }
+        if(W.S().roundState==='PLAYING') W.T().abduct();
+        for(let f=0; f<180 && !over; f+=6){ W.pump(6); if(W.S().appState==='SUMMARY') over=true; } }
       ok('F: but enough of them does end it', over || W.S().appState==='SUMMARY',
          'appState='+W.S().appState+' lives='+(W.S().salv&&W.S().salv.lives));
       ok('F: no runtime errors', W.errors.length===0, W.errors.slice(0,2).join(' | '));
