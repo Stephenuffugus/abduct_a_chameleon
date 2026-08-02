@@ -1262,7 +1262,7 @@ const HIDE_MIN = 60, HIDE_MAX = 300, HIDE_STEP = 30;   // the host may set 1-5 m
 /* ⛔ a build stamp on screen, because "is he even running the new one" cost a
    whole test session. The room link carries whatever ?v= the host's tab had, so
    an old link quietly hands an old build to everybody who opens it. */
-const BUILD = '0802u';
+const BUILD = '0802v';
 let hideSecsLocal = null;       // the host's own copy, so a burst of taps all land
 const ROUND_SECONDS = 150;
 const INTERMISSION = 7;
@@ -2206,7 +2206,11 @@ function makeRandomMap(seed){
     for(const [x,y] of worn) if(rnd()<0.62) t[y][x] = verge;
   }
   const objs=[], seen=new Set();
-  const put=(x,y,type)=>{ const k=x+','+y; if(inb(x,y)&&!seen.has(k)){ seen.add(k); objs.push({x,y,type}); } };
+  /* the `u` tag is a STRUCTURE id: which unit of which block this cell belongs to.
+     It exists so a wall or a roof can be coloured by the thing it is part of
+     rather than by the coordinates it happens to sit at - see addCoverInner. */
+  const put=(x,y,type,u)=>{ const k=x+','+y; if(inb(x,y)&&!seen.has(k)){ seen.add(k);
+    const o={x,y,type}; if(u!=null) o.u=u; objs.push(o); } };
   /* ⭐⭐ A BUILDING WITH NO ROOF IS NOT A HIDING PLACE. The seeker looks STRAIGHT
      DOWN, so a bare wall ring is a movement obstacle and nothing else — the
      interior is as exposed as open ground. Roofing them turns the one structure
@@ -2246,7 +2250,8 @@ function makeRandomMap(seed){
      room by room, and a chameleon inside has somewhere to move TO - which is the
      whole reason both the sweep and the stun exist. */
   const placedRects = [];                 // block footprints, exported as sweep zones
-  const wallSet = new Set(), doorSet = new Set();
+  const wallSet = new Set(), doorSet = new Set(), wallOwner = new Map();
+  let unitSeq = 0;
   const ckey = (x,y)=> x+','+y;
   const ROOM_MIN = 3;                     // 3 across = two walls and an interior
 
@@ -2338,11 +2343,24 @@ function makeRandomMap(seed){
     placedRects.push(block);
 
     const units = []; bsp(block, 2, units);                     // 2-4 units sharing walls
-    const rooms = []; for(const u of units) bsp(u, 1, rooms);   // each split again
+    const rooms = [];
+    units.forEach((u, ui)=>{
+      const sub = []; bsp(u, 1, sub);                           // each split again
+      /* every room carries the UNIT it came from, so the two rooms of one
+         apartment share a wall colour and the apartment next door does not */
+      for(const r of sub){ r.u = unitSeq + ui; rooms.push(r); }
+    });
+    unitSeq += units.length;
 
     for(const r of rooms){
       for(let x=r.x0;x<=r.x1;x++){ wallSet.add(ckey(x,r.y0)); wallSet.add(ckey(x,r.y1)); }
       for(let y=r.y0;y<=r.y1;y++){ wallSet.add(ckey(r.x0,y)); wallSet.add(ckey(r.x1,y)); }
+      // first writer wins a shared wall — a seam has to belong to one side or the
+      // other, and which one does not matter as long as it is consistent
+      for(let x=r.x0;x<=r.x1;x++){ if(!wallOwner.has(ckey(x,r.y0))) wallOwner.set(ckey(x,r.y0), r.u);
+                                   if(!wallOwner.has(ckey(x,r.y1))) wallOwner.set(ckey(x,r.y1), r.u); }
+      for(let y=r.y0;y<=r.y1;y++){ if(!wallOwner.has(ckey(r.x0,y))) wallOwner.set(ckey(r.x0,y), r.u);
+                                   if(!wallOwner.has(ckey(r.x1,y))) wallOwner.set(ckey(r.x1,y), r.u); }
     }
 
     /* ⛔ CONNECTIVITY BY CONSTRUCTION, NOT BY LUCK. A spanning tree over the rooms
@@ -2386,13 +2404,13 @@ function makeRandomMap(seed){
         put(cx, cy, ['crate','barrel','chest','table'][Math.floor(rnd()*4)]);
       }
       for(let y=r.y0+1;y<r.y1;y++) for(let x=r.x0+1;x<r.x1;x++)
-        if(rnd() < 0.66) put(x,y,'roof');
+        if(rnd() < 0.66) put(x,y,'roof', r.u);
     }
   }
   // walls LAST: every cell that is a wall and was not chosen as a doorway
   for(const k2 of wallSet){
     if(doorSet.has(k2)) continue;
-    const c = k2.split(','); put(+c[0], +c[1], 'wall');
+    const c = k2.split(','); put(+c[0], +c[1], 'wall', wallOwner.get(k2));
   }
   /* ⛔⛔⛔ AND NOW RESERVE THE DOORWAYS, OR THE COVER PASS FILLS THEM IN.
      This is what actually sealed the rooms, and it was not the door rule at all.
@@ -2701,7 +2719,7 @@ function buildWorld(map){
   grid.material.transparent = true; grid.material.opacity = 0.07; grid.position.y = 0.03;
   worldGroup.add(grid);
 
-  for(const o of (map.objects||[])) addCover(o.type, o.x, o.y);
+  for(const o of (map.objects||[])) addCover(o.type, o.x, o.y, o.u);
 
   /* ── RARE LANDMARKS ──────────────────────────────────────────────────
      A handful per map, never clustered: the obelisk and the stone head are the
@@ -3105,7 +3123,16 @@ const COVER_MAT = {
 // Hide beside a rust-red crate painted rust-red and you're furniture; painted white you're dinner.
 const CRATE_HUES = [0x8a5a2b, 0xa33b30, 0x3c6c9e, 0x557f3a, 0xb08d2e, 0x6b4a8c, 0x9e5b7d, 0x4e7a76];
 const BARREL_HUES = [0x9a7b3a, 0x7d3b32, 0x36607e, 0x5b7440, 0x8a8d94];
-const WALL_HUES = [0x39415A, 0x4a3f38, 0x555c49, 0x513f52];
+const WALL_HUES = [0x39415A, 0x4a3f38, 0x555c49, 0x513f52, 0x5a4a3c, 0x424a52, 0x4d4535];
+/* roofs are their own family - corrugated tin, tar, faded terracotta. Sharing the
+   wall palette made a roof read as a wall lying down, which is half of why a block
+   had no silhouette from the air. */
+const ROOF_HUES = [0x6a5344, 0x4a4f57, 0x7a4b3a, 0x565b4a, 0x3f4650, 0x6b6355];
+/* lamplight, candle, a television. Warm and low - a cold blue window would read
+   as another moon and the night already has one. */
+const WINDOW_HUES = [0xFFD79A, 0xFFC073, 0xF7E7C2, 0xE8B86A];
+const WINDOW_MATS = WINDOW_HUES.map(c => new THREE.MeshBasicMaterial({
+  color:c, transparent:true, opacity:0.55, depthWrite:false, fog:true }));
 const ROCK_HUES = [0x6b7079, 0x7d6f5e, 0x5d6672, 0x776a70];
 const LEAF_HUES = [0x2f5e37, 0x3d6b2f, 0x2a4f42, 0x556b2a];
 function hash2(a,b){ let h=(a*374761393+b*668265263)|0; h=(h^(h>>>13))*1274126177|0; return (h>>>0); }
@@ -4815,11 +4842,11 @@ window.__aac3dPaint = function(){
            coveredPct: Math.round(covered/Math.max(1,walkable)*100),
            worstCellTargets: worst===1e9?3:worst };
 };
-function addCover(type, gx, gy){
+function addCover(type, gx, gy, unit){
   _targetName = String(type).replace(/_/g,' ').toUpperCase();   // names every addTarget below
-  try{ return addCoverInner(type, gx, gy); } finally { _targetName = ''; }
+  try{ return addCoverInner(type, gx, gy, unit); } finally { _targetName = ''; }
 }
-function addCoverInner(type, gx, gy){
+function addCoverInner(type, gx, gy, unit){
   const w = cellToWorld(gx, gy); const g = new THREE.Group(); g.position.set(w.x, 0, w.z);
   if(type==='tree'){
     const lm = instMat(COVER_MAT.leaf, LEAF_HUES, gx, gy);
@@ -4859,10 +4886,51 @@ function addCoverInner(type, gx, gy){
       g.add(b); losMeshes.push(b); }
     addTarget(w.x, w.z, pat ? pat.avg : bm.color.getHex(), 2.2);
   }else if(type==='wall'){
-    const pat = maybePattern(COVER_MAT.wall, WALL_HUES, Math.floor(gx/5), Math.floor(gy/5), 3);
-    const wm = pat ? pat.m : instMat(COVER_MAT.wall, WALL_HUES, Math.floor(gx/5), Math.floor(gy/5));   // walls vary per building
+    /* ⛔⛔ 2026-08-02 — A BUILDING WAS A PATCHWORK, AND THAT IS MOST OF "SLOPPY".
+       Stephen: "buildings look the same and everything looks random and sloppy."
+       Both halves were true at once and for the same reason: the colour was chosen
+       from WHERE A CELL SAT rather than from WHAT IT BELONGED TO. Walls used
+       floor(gx/5), so one wall run changed colour every five cells - mid-wall, for
+       no reason anybody could see - and roofs used the raw cell, so a roof was a
+       four-colour speckle. Meanwhile every building drew from the same four hues,
+       so they all looked alike AND none of them looked like one thing.
+       A unit id fixes both ends at once: every wall and every roof tile of one
+       structure now shares a colour, and neighbouring units differ. One building
+       reads as one building, and the block reads as several. */
+    const uk = (unit == null) ? Math.floor(gx/5) + Math.floor(gy/5)*31 : unit;
+    const pat = maybePattern(COVER_MAT.wall, WALL_HUES, uk, 0, 3);
+    const wm = pat ? pat.m : instMat(COVER_MAT.wall, WALL_HUES, uk, 0);
     const h=4.2, b = new THREE.Mesh(new THREE.BoxGeometry(TILE,h,TILE), wm); b.position.y=h/2;
     g.add(b); losMeshes.push(b); addTarget(w.x, w.z, pat ? pat.avg : wm.color.getHex(), 3.0);
+    /* ⭐ A LIT WINDOW IS WHAT MAKES A NIGHT BUILDING A BUILDING. Until this the
+       favela was flat slabs in the dark - correct geometry with nothing that
+       said "somebody lives here", which is the other half of "buildings look the
+       same". A warm rectangle on the face reads instantly, from the air and from
+       an alley, and it gives a hunter something to navigate by.
+       ⚖ DELIBERATELY NOT PART OF THE WALL MATERIAL. Putting windows in the map
+       would change what addTarget reports and quietly move the camo target for
+       every wall in the game. These are separate unlit quads pinned just outside
+       the faces: they light nothing, block nothing, are never added to solids or
+       losMeshes, and the colour a chameleon has to match is exactly what it was.
+       ⚖ And they are DIM - 0.55 alpha on a small quad. A window that lit the
+       street would hand a hunter free illumination in a game about darkness. */
+    if((hash2(gx*3+11, gy*7+5) % 100) < 34){
+      /* four shared materials, not one per cell. A map has ~250 wall cells and a
+         third of them light up, so a fresh material each was ~85 extra draw
+         batches for four distinct colours. */
+      const wmMat = WINDOW_MATS[hash2(gx+5, gy+9) % WINDOW_MATS.length];
+      const ww = 0.95, wh = 0.8, yy = 2.35, eps = TILE/2 + 0.03;
+      for(let f=0; f<4; f++){
+        // one face in four is left blank so a run of walls is not a lit grid
+        if((hash2(gx*13+f, gy*17+f*3) % 100) < 26) continue;
+        const q = new THREE.Mesh(new THREE.PlaneGeometry(ww, wh), wmMat);
+        if(f===0){ q.position.set(0, yy,  eps); }
+        else if(f===1){ q.position.set(0, yy, -eps); q.rotation.y = Math.PI; }
+        else if(f===2){ q.position.set( eps, yy, 0); q.rotation.y =  Math.PI/2; }
+        else { q.position.set(-eps, yy, 0); q.rotation.y = -Math.PI/2; }
+        g.add(q);
+      }
+    }
     solids.push({ minX:w.x-TILE/2, maxX:w.x+TILE/2, minZ:w.z-TILE/2, maxZ:w.z+TILE/2 });
   }else if(type==='cactus'){
     const b = new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.45,2.6,8), COVER_MAT.cactus); b.position.y=1.3;
@@ -4919,7 +4987,9 @@ function addCoverInner(type, gx, gy){
     /* one interior tile of a building's roof. No posts — the walls hold it up —
        and it sits higher than a canopy so the two read as different shelter.
        Above STAND_MAX_TOP, so like the canopy it can never become a perch. */
-    const rm = instMat(COVER_MAT.crate, WALL_HUES, gx+29, gy+31);
+    // same rule as the walls: the roof belongs to the structure, not to the cell
+    const rm = instMat(COVER_MAT.crate, ROOF_HUES,
+                       (unit == null) ? (gx+29) : unit, (unit == null) ? (gy+31) : 7);
     const slab = new THREE.Mesh(new THREE.BoxGeometry(3.05, 0.26, 3.05), rm);
     slab.position.y = 2.9; g.add(slab); losMeshes.push(slab);
   }else if(type==='canopy'){
