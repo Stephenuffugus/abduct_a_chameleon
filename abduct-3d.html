@@ -4894,6 +4894,17 @@ window.__aac3dCatchMe = function(){
    machine instead - park the saucer over a hider and hold the beam - so the round has to
    end the way a round ends. */
 window.__aac3dBeam = function(on){ if(!me) return false; me.setState('beam', on!==false, true); return true; };
+/* ⛔ AND A DETERMINISTIC WAY DOWN. combat3d places the seeker at y=6, clicks LAND, then
+   places them at y=0 - and measured at fire time the seeker was still `onfoot:false,
+   alt:10.5`, so fireStun's `!onFoot()` guard returned immediately and the gate reported
+   "the stun did not land at 4m dead ahead in clear sight". The gun was never fired. A
+   gate should not have to win a race against the flight floor to test a ground weapon. */
+window.__aac3dLand = function(on){
+  if(!me || myRole()!=='seeker') return false;
+  if(on===false) return setOnFoot(false);
+  localPos.y = Math.min(localPos.y, LAND_ALT - 1);   // inside the step-off ceiling first
+  return setOnFoot(true) || onFoot();
+};
 /* ⛔ MAKING PROPS SOLID CAN SEAL A MAP. TILE is 3 units, a boulder is nearly 2.8
    wide, and PLAYER_RADIUS 0.6 is added on each side - so one badly placed rock
    can close a one-cell gap. Sealing 91% of maps is a mistake this project has

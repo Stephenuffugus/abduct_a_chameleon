@@ -91,7 +91,10 @@ console.log('   ground    :', JSON.stringify(SPOT));
 await H.p.evaluate(s=>window.__aac3dPlace(s.bx, 0, s.bz, 0), SPOT);
 await wait(500);
 await S.p.evaluate(s=>window.__aac3dPlace(s.ax, 6, s.az, s.yaw), SPOT);
-await S.p.evaluate(()=>{ const L=document.getElementById('tLand'); if(L) L.click(); });
+/* ⛔ LAND DETERMINISTICALLY. Clicking tLand and then re-placing raced the flight floor:
+   measured at fire time the seeker was still onfoot:false, alt:10.5, so fireStun's
+   !onFoot() guard returned before doing anything and this gate blamed the gun. */
+await S.p.evaluate(()=>window.__aac3dLand(true));
 await wait(700);
 await S.p.evaluate(s=>window.__aac3dPlace(s.ax, 0, s.az, s.yaw), SPOT);
 await wait(900);
