@@ -1169,7 +1169,7 @@
         border:1.5px solid var(--danger);color:#F2A6A0;font-size:11px;font-weight:800">STICK</button>
       <button id="tTaunt" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:rgba(224,101,94,.14);
         border:1.5px solid var(--danger);color:var(--danger);font-size:20px">📣</button>
-      <button id="tJumpC" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(122,179,86,.16);
+      <button id="tJump" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(122,179,86,.16);
         border:1.5px solid #7ab356;color:#a8e07a;font-size:13px;font-weight:800">JUMP</button>
       <button id="tBeam" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(63,208,224,.16);
         border:1.5px solid var(--cyan);color:var(--cyan);font-size:13px;font-weight:800">BEAM</button>
@@ -1218,7 +1218,7 @@
     <button id="tJam" class="tbtn hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;
       width:62px;height:62px;border-radius:16px;background:rgba(142,127,214,.18);
       border:1.5px solid #8E7FD6;color:#C6BAF6;font-size:11px;font-weight:800;line-height:1.1">JAM</button>
-    <button id="tFree" class="tbtn hidden" style="position:fixed;right:86px;bottom:88px;z-index:12;
+    <button id="tFree" class="tbtn hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;
       width:62px;height:62px;border-radius:16px;background:rgba(63,208,224,.20);
       border:1.5px solid var(--cyan);color:var(--cyan);font-size:12px;font-weight:800;line-height:1.1">FREE</button>
     <div id="altUI" class="hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;display:flex;flex-direction:column;gap:10px">
@@ -8672,7 +8672,6 @@ function updateHUD(role, abd){
   if(touch.on){
     $('tPaint').classList.toggle('hidden', abd || role==='seeker');
     $('tTaunt').classList.toggle('hidden', abd || role==='seeker');
-    $('tDecoy').classList.toggle('hidden', abd || role==='seeker');
     /* ⭐ ON FOOT the hunter is a body: it jumps like one, it has no altitude, and
        BEAM becomes the FREEZE RAY. ONE button, relabelled - a second button that
        does the same job in a different stance is how you end up with two controls
@@ -8683,14 +8682,19 @@ function updateHUD(role, abd){
     $('tScan').classList.toggle('hidden', abd || role!=='seeker');
     $('altUI').classList.toggle('hidden', abd || role!=='seeker' || foot);
     $('tLand').classList.toggle('hidden', abd || role!=='seeker');
-    $('tFree').classList.toggle('hidden', !rescueTarget());
     const hider = role==='hider' && !abd && !amHeld();
     $('tStick').classList.toggle('hidden', !hider);
-    /* JAM is offered where it does something: inside a block. Out in the open a
-       jammer marks a patch of grass nobody was going to search anyway. */
+    /* ⭐ ONE SLOT, THREE CANDIDATES, A CLEAR ORDER.
+       FREE beats everything - a teammate in a parked ship is the most urgent
+       thing on the map. JAM beats DECOY because it only works inside a block, so
+       when it is offered at all it is offered for a reason; a decoy you can drop
+       anywhere can wait for the next step. */
     const inBlock = hider && zoneAt(localPos.x, localPos.z).kind === 'building';
-    const freeing = !!rescueTarget();
-    $('tJam').classList.toggle('hidden', !(inBlock && !freeing));
+    const canFree = !!rescueTarget();
+    const canJam  = hider && inBlock && jamCd <= 0 && !me.getState('jam');
+    $('tFree').classList.toggle('hidden', !canFree);
+    $('tJam').classList.toggle('hidden', !(canJam && !canFree));
+    $('tDecoy').classList.toggle('hidden', !(hider && !canFree && !canJam));
     /* a cooldown you cannot see is a button that randomly does nothing */
     const cdLbl = (el, cd, name)=>{ if(!el) return;
       const t = cd > 0 ? Math.ceil(cd)+'s' : name;
