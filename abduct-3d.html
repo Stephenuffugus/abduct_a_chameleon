@@ -553,7 +553,7 @@
      Desktop (tall viewport) is untouched and still shows everything at once. */
   #paintMore{ display:none }
   @media (max-height: 760px){
-    #paintMore{ display:block; min-height:34px; padding:0 10px; border-radius:8px;
+    #paintMore{ display:block; min-height:48px; padding:0 10px; border-radius:8px;
       background:#0A0E19; border:1px solid var(--line); color:var(--muted);
       font-family:var(--mono); font-size:10px; font-weight:800; letter-spacing:.1em;
       cursor:pointer; touch-action:manipulation }
@@ -580,8 +580,8 @@
          ever auto-placed into somebody else's cell again. */
       display:grid;
       grid-template-columns:minmax(0,1fr);
-      grid-template-rows:auto auto minmax(0,1fr) auto;
-      grid-template-areas:"head" "views" "right" "done";
+      grid-template-rows:auto minmax(0,1fr) auto;
+      grid-template-areas:"head" "right" "done";
       row-gap:5px;
       top:6px !important; bottom:6px !important; transform:none !important;
       right:82px !important;                 /* clears the 62px touch column */
@@ -592,13 +592,15 @@
     }
     :root{ --dockw:calc(clamp(188px, 30vw, 268px) + 82px) }
     #paintHead{ grid-area:head; margin-bottom:0 !important }
-    /* a horizontal strip, not a column: it is four short words and it has to cost
-       the character view as little height as possible */
-    #paintViews{ grid-area:views; position:static !important; display:flex !important;
-      flex-direction:row !important; gap:5px !important; width:100% !important;
-      top:auto !important; right:auto !important; left:auto !important; transform:none !important }
-    #paintViews .pview{ flex:1 1 0; min-width:0; height:34px !important; padding:0 !important;
-      font-size:9px !important }
+    /* ⛔ THE VIEW RAIL IS GONE FROM PHONES ENTIRELY, and that is the real fix.
+       It was four buttons that auto-placed on top of the controls column, and
+       when I gave it a row of its own it cost 34-48px of the tightest panel in
+       the game - then failed the 48px touch law trying to be small enough to
+       afford. All of which for a control that is ALREADY DUPLICATED: the 👁
+       button cycles front/side/back/sky inside the studio, which is what a
+       player reaches for anyway. Two controls doing one job, and the redundant
+       one was breaking the panel. Desktop keeps the rail. */
+    #paintViews{ display:none !important }
     /* ⛔⛔ THE READ-OUT WAS EATING THE ENTIRE COLUMN. Measured at 740x360:
        #paintTarget occupied 167px of a 182px window, so MATCH GROUND sat on the
        bottom edge and MATCH COVER and the swatches were both below a fold nobody
@@ -1167,8 +1169,8 @@
         border:1.5px solid var(--danger);color:#F2A6A0;font-size:11px;font-weight:800">STICK</button>
       <button id="tTaunt" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:rgba(224,101,94,.14);
         border:1.5px solid var(--danger);color:var(--danger);font-size:20px">📣</button>
-      <button id="tDecoy" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:rgba(142,127,214,.16);
-        border:1.5px solid #8E7FD6;color:#B9A9F0;font-size:20px">👥</button>
+      <button id="tJumpC" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(122,179,86,.16);
+        border:1.5px solid #7ab356;color:#a8e07a;font-size:13px;font-weight:800">JUMP</button>
       <button id="tBeam" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(63,208,224,.16);
         border:1.5px solid var(--cyan);color:var(--cyan);font-size:13px;font-weight:800">BEAM</button>
       <button id="tScan" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(242,179,61,.14);
@@ -1195,9 +1197,16 @@
          sit at right:86 (86..148) - a 12px gap, and 22px on short screens where
          the media query drops both to 52px. JUMP is hider-only and altUI is
          seeker-only, so they still share the slot without ever colliding. -->
-    <button id="tJump" class="tbtn hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;
-      width:62px;height:62px;border-radius:16px;background:rgba(122,179,86,.16);
-      border:1.5px solid #7ab356;color:#a8e07a;font-size:13px;font-weight:800">JUMP</button>
+    <!-- ⛔⛔ ONE CONTEXTUAL BUTTON AT right:86, AND ONLY ONE. That slot is the only
+         part of the touch UI that sits inside the sight line hud3d measures, so
+         every permanent control there is charged against the middle of the
+         screen. JUMP moved into the right:12 column (which is clear of it) and
+         this slot now holds exactly one of FREE / JAM / DECOY, whichever the
+         moment calls for: a friend in a parked ship outranks a trick, and a trick
+         you can only use indoors outranks one you can use anywhere. -->
+    <button id="tDecoy" class="tbtn hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;
+      width:62px;height:62px;border-radius:16px;background:rgba(142,127,214,.16);
+      border:1.5px solid #8E7FD6;color:#B9A9F0;font-size:20px">👥</button>
     <!-- ⭐ CUT THEM LOOSE. Contextual: it only exists while you are standing next
          to somebody in a beam, so it never competes for room in the column and it
          never needs explaining - it appears exactly when it means something. -->
@@ -1206,7 +1215,7 @@
          thing you are about to do - and two permanent buttons here is what put 14%
          of writing across the sight line. FREE wins the slot when both apply,
          because a friend in a ship outranks a trick. -->
-    <button id="tJam" class="tbtn hidden" style="position:fixed;right:86px;bottom:88px;z-index:12;
+    <button id="tJam" class="tbtn hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;
       width:62px;height:62px;border-radius:16px;background:rgba(142,127,214,.18);
       border:1.5px solid #8E7FD6;color:#C6BAF6;font-size:11px;font-weight:800;line-height:1.1">JAM</button>
     <button id="tFree" class="tbtn hidden" style="position:fixed;right:86px;bottom:88px;z-index:12;
