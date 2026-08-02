@@ -1825,7 +1825,7 @@ const MOODS = [
   { key:'bloodmoon', amb:[0.065, 430, 0.70], mote:0xFFA8A0, sky:['#12060C','#2C0A1A','#571228','#93253A','#D2543F'],
     fog:0x4A1826, near:115, far:545, hemi:[0xFFC4C0,0x3E1220,2.4], warm:[0xFF7A66,1.2], moon:[0xFFD0C4,1.7] },
 ];
-let skyDome = null, groundSkirt = null, hemiLight = null, warmLight = null, moonLight = null, _mood = MOODS[0];
+let skyDome = null, groundSkirt = null, ambLight = null, hemiLight = null, warmLight = null, moonLight = null, _mood = MOODS[0];
 function applyMood(m){
   if(!m) return;
   _mood = m;
@@ -1854,6 +1854,10 @@ function applyMood(m){
     else scene.fog = new THREE.Fog(m.fog, m.near, m.far);
   }
   if(hemiLight){ hemiLight.color.setHex(m.hemi[0]); hemiLight.groundColor.setHex(m.hemi[1]); hemiLight.intensity = m.hemi[2]; }
+  /* the ambient floor is the mood's own sky, lifted - so a bloodmoon fills in
+     red and an auroral night fills in green, and the floor never fights the hour */
+  if(ambLight){ const a = new THREE.Color(m.hemi[0]);
+    a.lerp(new THREE.Color(m.fog), 0.45); ambLight.color.copy(a); }
   if(warmLight){ warmLight.color.setHex(m.warm[0]); warmLight.intensity = m.warm[1]; }
   if(moonLight){ moonLight.color.setHex(m.moon[0]); moonLight.intensity = m.moon[1]; }
   if(motes && m.mote) motes.material.color.setHex(m.mote);
@@ -2011,6 +2015,21 @@ function setupScene(){
      the violet ground bounce are untouched - but a night you can see in. */
   hemiLight = new THREE.HemisphereLight(0xBFD4FF, 0x4A2F66, 2.6);
   scene.add(hemiLight);
+  /* ⛔⛔ 2026-08-02 — THERE WAS NO AMBIENT LIGHT AT ALL, AND WALLS WENT BLACK.
+     Three lights: a hemisphere and two directionals. A hemisphere lights a
+     surface by its normal's Y, so a VERTICAL wall gets the halfway mix of sky and
+     ground - and with a base colour of 0x39415A (already a dark slate) a face
+     turned away from both directionals lands at almost zero. Shot 09 of the world
+     pass is a third of the frame in pure black with a hard edge, which reads as a
+     hole in the world rather than as a wall at night.
+     A floor under the lighting fixes it without touching anything else.
+     ⚖ SAFE FOR CAMO BY CONSTRUCTION: camouflage is scored against TERRAIN[key]
+     and the paint targets' own colours, never against the lit pixel, so light can
+     be added freely - it changes how the place READS, not who wins. Changing the
+     material colours instead WOULD have moved the camo targets, which is exactly
+     why this is a light and not a repaint. */
+  ambLight = new THREE.AmbientLight(0x6F7BA8, 0.55);
+  scene.add(ambLight);
   warmLight = new THREE.DirectionalLight(0xFFB77A, 0.9);   // horizon glow, low and warm
   warmLight.position.set(-60, 18, -40);
   scene.add(warmLight);
@@ -3485,7 +3504,17 @@ function buildMarkAtlas(name){
     const kind = MARK_KINDS[i % MARK_KINDS.length];
     const m = markCanvas(kind, (seed ^ (i*2654435761))>>>0);
     if(m.coverage < 0.04) continue;                  // too faint to be a hiding decision
-    m.mat = new THREE.MeshBasicMaterial({ map:m.tex, transparent:true, depthWrite:false,
+    /* ⛔⛔ THIS WAS MeshBasicMaterial, WHICH IS UNLIT — and that is the whole
+       reason a graffiti tag read as a rendering fault. Stephen: "everything looks
+       random and sloppy", and one of the things he was looking at was a magenta
+       splash on a night street. Every other surface in the scene is dimmed by the
+       moonlight; a Basic material ignores light entirely and paints at 100%, so a
+       #E8639B tag sat two or three times brighter than the road it was sprayed on.
+       It is PAINT ON A SURFACE, so it has to be lit like the surface. Lambert
+       costs nothing here and puts the marks back in the night's value range, plus
+       a colour knock-down so even a lit tag is weathered rather than neon. */
+    m.mat = new THREE.MeshLambertMaterial({ map:m.tex, transparent:true, depthWrite:false,
+      color:0x9AA0AE,
       polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2, side:THREE.DoubleSide });
     m.kind = kind;
     markAtlas.push(m);
