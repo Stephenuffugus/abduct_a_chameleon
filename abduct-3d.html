@@ -1498,7 +1498,7 @@ let beamEnergy = 1, overheat = 0;   // P31: the beam has a battery — guessing 
 let paintTargets = [];          // {x,z,color:THREE.Color,r} — every landmark is something to paint yourself to match
 
 const worldGroup = new THREE.Group();
-let cover = [], losMeshes = [], solids = [];   // cover meshes / raycast targets / wall AABBs
+let cover = [], losMeshes = [], solids = [], solidOwner = [];   // cover meshes / raycast targets / wall AABBs / which map object owns each solid
 let waterMesh = null;                          // rippling skin laid over the water cells
 let wrecks = [];                               // downed panels that carry a case file
 let platforms = [];             // standable tops: {minX,maxX,minZ,maxZ,top,colorHex,cx,cz,name}
@@ -2841,7 +2841,7 @@ function buildWorld(map){
   applyMood(moodForMap(map && map.name)); mapCols = map.grid.cols; mapRows = map.grid.rows;
   halfW = mapCols*TILE/2; halfH = mapRows*TILE/2;
   while(worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
-  cover = []; losMeshes = []; solids = []; paintTargets = []; platforms = []; wrecks = []; markCount = 0; markQueue = [];
+  cover = []; losMeshes = []; solids = []; solidOwner = []; paintTargets = []; platforms = []; wrecks = []; markCount = 0; markQueue = [];
   buildMarkAtlas(map && map.name || 'world');
   velY = 0; grounded = true; standingOn = null;
 
@@ -2991,7 +2991,16 @@ function buildWorld(map){
   grid.material.transparent = true; grid.material.opacity = 0.07; grid.position.y = 0.03;
   worldGroup.add(grid);
 
-  for(const o of (map.objects||[])) addCover(o.type, o.x, o.y, o.u);
+  /* Record which map object produced which solids, so the connectivity repair below can
+     name the thing to delete. One line here is the whole attribution problem. */
+  solidOwner = [];
+  { const objs = map.objects || [];
+    for(let i=0;i<objs.length;i++){ const o = objs[i];
+      const s0 = solids.length;
+      addCover(o.type, o.x, o.y, o.u);
+      while(solidOwner.length < s0) solidOwner.push(-1);
+      while(solidOwner.length < solids.length) solidOwner.push(i);
+    } }
 
   /* ── RARE LANDMARKS ──────────────────────────────────────────────────
      A handful per map, never clustered: the obelisk and the stone head are the
@@ -3299,7 +3308,147 @@ function buildWorld(map){
     n.rotation.y = (h%628)/100;
     worldGroup.add(n); deco++;
   }
+  while(solidOwner.length < solids.length) solidOwner.push(-1);   // anything added after the props
   reseatSpawns();
+  repairReachability(map);
+}
+
+/* ⛔⛔⛔ 2026-08-02 — THE OLD REPAIR PROVED CONNECTIVITY IN A WORLD THE PLAYER DOES NOT
+   LIVE IN, and ground3d has been red on 2 of 14 seeds ever since (seed 72271 seals a
+   244-cell room at (26,26); seed 80190 seals 316 cells at (16,23)).
+
+   `repairConnectivity`, at the bottom of makeRandomMap, floods a 1 METRE CELL GRID,
+   4-neighbour, where a cell is solid if the terrain is void OR an object of one of NINE
+   HARDCODED TYPE NAMES sits on it. The real collider does neither of those things:
+     - it inflates every solid's AABB by PLAYER_RADIUS 0.6, so a 1m gap between two walls
+       has 1.0 - 0.6 - 0.6 = -0.2m of clearance and is IMPASSABLE, while the cell grid
+       counts it as free;
+     - and it blocks on HEIGHT (top > STAND_MAX_TOP), not on a name, so every tall prop
+       the cover pass drops - which is what memory already records as "what sealed rooms
+       was the COVER PASS filling doorways" - is invisible to a nine-name list.
+   It also keys one object per cell, so a second object on the same cell is unseen.
+
+   The fix is to stop approximating. This runs AFTER the world is built, floods the same
+   0.5m grid with the same `solids` array the collider and __aac3dLevel use, and when it
+   finds an orphan it deletes the OBJECT whose solids are standing in the doorway. It
+   works out the whole delete list in memory first and rebuilds once, because a wall you
+   can walk through is a worse bug than the one being fixed. Removing a prop can only
+   ever open a map, so it terminates. */
+let _repairing = false;
+function repairReachability(map){
+  if(_repairing) return;                       // the rebuild below re-enters buildWorld
+  const step = 0.5, W = halfW*2, H = halfH*2;
+  const nx = Math.floor(W/step), nz = Math.floor(H/step);
+  if(nx<4 || nz<4) return;
+  const gone = new Set();                       // solids indices treated as removed this pass
+  const drop = new Set();                       // map.objects indices to delete
+  const blockers = [];
+  for(let i=0;i<solids.length;i++){ const sd = solids[i];
+    if(sd.top != null && sd.top <= STAND_MAX_TOP) continue;   // you can hop onto it: not a wall
+    blockers.push(i); }
+
+  const cellOf = (i,j)=>({ x:-halfW + (i+0.5)*step, z:-halfH + (j+0.5)*step });
+  const _who = new Int32Array(nx*nz).fill(-1);
+
+  /* ⛔ RASTERISE, DO NOT PROBE. The obvious version of this tests every cell against
+     every solid: on a 64x64 map that is 384x384 cells against several hundred blockers,
+     tens of millions of AABB tests per pass and up to 24 passes, all in ONE synchronous
+     task at map load. This project has already shipped that exact shape once - the
+     seeker-only freeze was calDeal running ~424k scans in a single task. Walking each
+     solid and stamping the cells it covers is the same answer for the cost of the area
+     actually covered. The terrain void mask does not change between passes, so it is
+     computed once. */
+  const voidMask = new Uint8Array(nx*nz);
+  for(let j=0;j<nz;j++) for(let i=0;i<nx;i++){
+    const p = cellOf(i,j); if(terrainKeyAt(p.x,p.z)==='void') voidMask[j*nx+i] = 1; }
+
+  function label(){
+    const blocked = new Uint8Array(voidMask);                  // 2 would be terrain; 1 is a prop
+    for(let n=0;n<blocked.length;n++) if(blocked[n]) blocked[n] = 2;
+    for(const k of blockers){
+      if(gone.has(k)) continue; const sd = solids[k];
+      const i0 = Math.max(0, Math.ceil((sd.minX - PLAYER_RADIUS + halfW)/step - 0.5));
+      const i1 = Math.min(nx-1, Math.floor((sd.maxX + PLAYER_RADIUS + halfW)/step - 0.5));
+      const j0 = Math.max(0, Math.ceil((sd.minZ - PLAYER_RADIUS + halfH)/step - 0.5));
+      const j1 = Math.min(nz-1, Math.floor((sd.maxZ + PLAYER_RADIUS + halfH)/step - 0.5));
+      for(let j=j0;j<=j1;j++) for(let i=i0;i<=i1;i++){
+        const c = j*nx+i; if(blocked[c] === 2) continue;       // terrain wins: it cannot be removed
+        blocked[c] = 1; _who[c] = k; }
+    }
+    const reg = new Int32Array(nx*nz).fill(-1); const sizes = [];
+    for(let s0=0;s0<nx*nz;s0++){
+      if(blocked[s0] || reg[s0]>=0) continue;
+      const id = sizes.length; let n = 0; const st = [s0]; reg[s0] = id;
+      while(st.length){ const c = st.pop(); n++;
+        const ci = c%nx, cj = (c/nx)|0;
+        for(const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const i2 = ci+dx, j2 = cj+dz;
+          if(i2<0||j2<0||i2>=nx||j2>=nz) continue;
+          const c2 = j2*nx+i2;
+          if(blocked[c2] || reg[c2]>=0) continue;
+          reg[c2] = id; st.push(c2); } }
+      sizes.push(n); }
+    return { blocked, reg, sizes };
+  }
+
+  const _rlog = [];
+  for(let pass=0; pass<24; pass++){
+    const { blocked, reg, sizes } = label();
+    _rlog.push({ pass, regions:sizes.length, sizes:sizes.slice().sort((x,y)=>y-x).slice(0,4) });
+    if(sizes.length <= 1) break;
+    let main = 0; for(let i=1;i<sizes.length;i++) if(sizes[i] > sizes[main]) main = i;
+    /* the gate's own rule: a legitimate pocket is a sliver behind a boulder (~120 cells
+       at this resolution); a sealed ROOM is 200+. Leave the slivers alone. */
+    let worst = -1, worstN = 200;
+    for(let i=0;i<sizes.length;i++) if(i!==main && sizes[i] > worstN){ worstN = sizes[i]; worst = i; }
+    if(worst < 0) break;
+    /* ⛔ "A CELL THAT TOUCHES BOTH SIDES" DOES NOT WORK HERE, and that is why the first
+       version of this changed nothing. The old cell-grid repair could use it because a
+       wall was ONE cell wide. At 0.5m with the collider's PLAYER_RADIUS inflation a TILE
+       wall is 3 + 2*0.6 = 4.2m of blocked band - EIGHT cells - so no single blocked cell
+       is ever adjacent to both the room and the outside. Measured: main 54227, orphan
+       244, and pick came back -1 on both failing seeds.
+       So test removals instead of guessing at them. The candidates are the objects whose
+       solids form the orphan's own boundary - a handful, not hundreds - and each one is
+       cheap to try: drop it, re-flood, see if the room joined the world. */
+    const cand = [];
+    { const seen = new Set();
+      for(let j=0;j<nz;j++) for(let i=0;i<nx;i++){
+        const c = j*nx+i; if(blocked[c] !== 1) continue;
+        let touchesOrphan = false;
+        for(const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const i2=i+dx, j2=j+dz; if(i2<0||j2<0||i2>=nx||j2>=nz) continue;
+          if(reg[j2*nx+i2] === worst){ touchesOrphan = true; break; } }
+        if(!touchesOrphan) continue;
+        const k = _who[c]; if(k < 0 || gone.has(k)) continue;
+        const owner = solidOwner[k];
+        if(owner == null || owner < 0 || seen.has(owner)) continue;   // map-tile wall: keep
+        seen.add(owner); cand.push(owner); } }
+    let pick = -1;
+    for(const owner of cand){
+      const undo = [];
+      for(let k=0;k<solidOwner.length;k++) if(solidOwner[k] === owner && !gone.has(k)){ gone.add(k); undo.push(k); }
+      if(!undo.length) continue;
+      const after = label();
+      const merged = after.sizes.length < sizes.length ||
+                     Math.max(...after.sizes) > Math.max(...sizes) + worstN*0.5;
+      if(merged){ pick = owner; break; }
+      for(const k of undo) gone.delete(k);      // put it back and try the next candidate
+    }
+    _rlog[_rlog.length-1].main = main; _rlog[_rlog.length-1].worst = worst;
+    _rlog[_rlog.length-1].worstN = worstN; _rlog[_rlog.length-1].cands = cand.length; _rlog[_rlog.length-1].pick = pick;
+    if(pick < 0) break;                                        // nothing removable is in the way
+    drop.add(pick);
+    for(let k=0;k<solidOwner.length;k++) if(solidOwner[k] === pick) gone.add(k);
+  }
+
+  window.__aac3dRepairLog = _rlog;
+  if(!drop.size) return;
+  const kept = (map.objects||[]).filter((_,i)=> !drop.has(i));
+  console.info('[world] opened ' + drop.size + ' sealed-room blocker(s) on ' + (map.name||'map'));
+  map.objects = kept;
+  _repairing = true;
+  try { buildWorld(map); } finally { _repairing = false; }
 }
 /* ⛔⛔ MAKING PROPS SOLID CAN STRAND A PLAYER. Tree trunks are only ~0.7 wide,
    but a body is 1.2 across, so a line of trees in neighbouring cells is now a
