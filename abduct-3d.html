@@ -1262,7 +1262,7 @@ const HIDE_MIN = 60, HIDE_MAX = 300, HIDE_STEP = 30;   // the host may set 1-5 m
 /* ⛔ a build stamp on screen, because "is he even running the new one" cost a
    whole test session. The room link carries whatever ?v= the host's tab had, so
    an old link quietly hands an old build to everybody who opens it. */
-const BUILD = '0802s';
+const BUILD = '0802t';
 let hideSecsLocal = null;       // the host's own copy, so a burst of taps all land
 const ROUND_SECONDS = 150;
 const INTERMISSION = 7;
@@ -1825,7 +1825,7 @@ const MOODS = [
   { key:'bloodmoon', amb:[0.065, 430, 0.70], mote:0xFFA8A0, sky:['#12060C','#2C0A1A','#571228','#93253A','#D2543F'],
     fog:0x4A1826, near:115, far:545, hemi:[0xFFC4C0,0x3E1220,2.4], warm:[0xFF7A66,1.2], moon:[0xFFD0C4,1.7] },
 ];
-let skyDome = null, hemiLight = null, warmLight = null, moonLight = null, _mood = MOODS[0];
+let skyDome = null, groundSkirt = null, hemiLight = null, warmLight = null, moonLight = null, _mood = MOODS[0];
 function applyMood(m){
   if(!m) return;
   _mood = m;
@@ -1838,6 +1838,15 @@ function applyMood(m){
     const old = skyDome.material.map;
     skyDome.material.map = tex; skyDome.material.needsUpdate = true;
     if(old) old.dispose();                       // a mood per map load leaks otherwise
+  }
+  /* the skirt is the fog made solid, so it can never disagree with the haze it
+     fades into - a horizon that is a different colour from the fog reads as a
+     seam, which is the thing it exists to remove. Nudged darker than the fog so
+     the ground still reads as ground rather than as sky. */
+  if(groundSkirt){
+    const c = new THREE.Color(m.fog);
+    c.lerp(new THREE.Color(0x000000), 0.18);
+    groundSkirt.material.color.copy(c);
   }
   if(scene){
     scene.background = new THREE.Color(m.sky[0]);
@@ -1920,6 +1929,29 @@ function setupScene(){
     new THREE.MeshBasicMaterial({ side:THREE.BackSide, fog:false, depthWrite:false }));
   skyDome.renderOrder = -1;
   scene.add(skyDome);
+  /* ⛔⛔⛔ 2026-08-02 — THE GROUND HAS TO REACH THE HORIZON.
+     Stephen: "theres just an empty void around the levle... the water seems to
+     turn into a bright light... i can see through the floor."
+     All three are the same bug. Every MOODS[].sky gradient ends on a BRIGHT WARM
+     stop (#C46A4E, #E8894A, #D2543F) painted top to bottom onto the dome. That is
+     correct for a sky - a real sky brightens toward the horizon and then THE
+     GROUND TAKES OVER. Here it does not: the map is a finite cols x rows grid and
+     past its edge there is nothing at all, so you see the dome's lower half, a big
+     bright orange field. It sits behind the water at the map edge (hence "the
+     water turns into a bright light" - the water is not glowing, the thing behind
+     it is) and shows through every gap in the terrain (hence "see through the
+     floor").
+     So: an unlit plate under everything, out past fog.far, in the fog's own
+     colour. Near the map it reads as more land; far away the fog takes it and it
+     becomes the horizon. DoubleSide so it also seals the world from underneath,
+     and it is not in `solids`, `losMeshes` or `paintTargets` - it is scenery, it
+     can never block a body, a beam or a camera, and camo never scores against it. */
+  groundSkirt = new THREE.Mesh(new THREE.CircleGeometry(900, 56),
+    new THREE.MeshBasicMaterial({ side:THREE.DoubleSide, fog:true, depthWrite:true }));
+  groundSkirt.rotation.x = -Math.PI/2;
+  groundSkirt.position.y = -0.12;      // just under the tiles, so it never z-fights
+  groundSkirt.renderOrder = -1;
+  scene.add(groundSkirt);
   applyMood(MOODS[0]);
   /* ⭐ A NIGHT SKY WITH SOMETHING IN IT. The dome was a gradient and nothing
      else, so looking up gave you a flat wash. Stars give the sky depth and a
