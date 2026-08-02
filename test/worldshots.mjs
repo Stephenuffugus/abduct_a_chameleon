@@ -51,14 +51,14 @@ await new Promise(r=>setTimeout(r,4500));
    Six seconds was not enough on this box. */
 let ready = false;
 for(let t=0;t<60;t++){
-  ready = await p.evaluate(()=> !!(window.__aac3dTeleport && window.__aac3dTeleport('probe') !== 'no map'));
+  ready = await p.evaluate(()=> !!(window.__aac3dCamTo && window.__aac3dCamTo('probe') !== 'no map'));
   if(ready) break;
   await new Promise(r=>setTimeout(r,500));
 }
 if(!ready){
   const diag = await p.evaluate(()=>({
     hooks: Object.keys(window).filter(k=>k.startsWith('__aac3d')),
-    tp: window.__aac3dTeleport ? window.__aac3dTeleport('probe') : 'HOOK MISSING',
+    tp: window.__aac3dCamTo ? window.__aac3dCamTo('probe') : 'HOOK MISSING',
     err: (document.getElementById('errorMsg')||{}).textContent || '',
     errVis: (()=>{const e=document.getElementById('errorOverlay'); return e?e.style.display:'?';})(),
     overlays: ['howto','tapStart','rotate','clickToPlay'].map(id=>{
@@ -86,11 +86,11 @@ const shots = [
   ['05-walk-more',   async()=>{ await p.keyboard.down('KeyW'); await new Promise(r=>setTimeout(r,3400)); await p.keyboard.up('KeyW'); }],
   ['06-look-down',   async()=>{ await p.evaluate(()=>{ for(let i=0;i<24;i++) document.dispatchEvent(new MouseEvent('mousemove',{movementX:0,movementY:14})); }); }],
   ['07-look-up',     async()=>{ await p.evaluate(()=>{ for(let i=0;i<48;i++) document.dispatchEvent(new MouseEvent('mousemove',{movementX:0,movementY:-14})); }); }],
-  ['08-edge-of-map', async()=>{ console.log('  ->', await p.evaluate(()=>window.__aac3dTeleport('edge'))); await new Promise(r=>setTimeout(r,900)); }],
-  ['09-horizon',     async()=>{ console.log('  ->', await p.evaluate(()=>window.__aac3dTeleport('horizon'))); await new Promise(r=>setTimeout(r,900)); }],
+  ['08-edge-of-map', async()=>{ console.log('  ->', await p.evaluate(()=>window.__aac3dCamTo('edge'))); await new Promise(r=>setTimeout(r,900)); }],
+  ['09-horizon',     async()=>{ console.log('  ->', await p.evaluate(()=>window.__aac3dCamTo('horizon'))); await new Promise(r=>setTimeout(r,900)); }],
   ['10-water',       async()=>{ await p.evaluate(()=>window.__aac3dFreeCam(null));
-                                console.log('  ->', await p.evaluate(()=>window.__aac3dTeleport('water'))); await new Promise(r=>setTimeout(r,900)); }],
-  ['11-under-floor', async()=>{ console.log('  ->', await p.evaluate(()=>window.__aac3dTeleport('under'))); await new Promise(r=>setTimeout(r,900)); }],
+                                console.log('  ->', await p.evaluate(()=>window.__aac3dCamTo('water'))); await new Promise(r=>setTimeout(r,900)); }],
+  ['11-under-floor', async()=>{ console.log('  ->', await p.evaluate(()=>window.__aac3dCamTo('under'))); await new Promise(r=>setTimeout(r,900)); }],
 ];
 for(const [name, act] of shots){
   try{ await act(); }catch(e){ console.log('  (act failed', name, String(e).slice(0,60), ')'); }

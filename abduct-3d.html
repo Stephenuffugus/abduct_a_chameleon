@@ -4630,7 +4630,16 @@ window.__aac3dFreeCam = function(px,py,pz, lx,ly,lz){
 };
 /* put the player somewhere interesting. Returns what it found so a shot can be
    labelled honestly - "no water on this map" is a real answer. */
-window.__aac3dTeleport = function(what){
+/* ⛔⛔ THIS WAS CALLED __aac3dTeleport AND IT SILENTLY ATE AN EXISTING HOOK.
+   There is already a `window.__aac3dTeleport(x, z)` further up this file - the
+   one test/files3d.mjs uses to walk a player onto a wreck - and because this
+   assignment runs LATER it won. Every call with two numbers fell through to
+   'unknown', the player never moved, and files3d reported four failures that all
+   read like the Abduction Files were broken. They were not; the hook was.
+   ⭐ Before adding any window.__aac3d* hook, grep the name. A test hook is a
+   public API to the gates, and quietly changing its signature breaks them in a
+   way that points at the wrong feature. */
+window.__aac3dCamTo = function(what){
   if(!MAP) return 'no map';
   const find = key => {
     for(let gy=0; gy<mapRows; gy++) for(let gx=0; gx<mapCols; gx++)
