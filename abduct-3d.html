@@ -2622,7 +2622,12 @@ function _sCyl(r,h,mat,seg){ return new THREE.Mesh(new THREE.CylinderGeometry(r,
 /* Built at the origin, then placed. World coordinates for targets and perches
    are read back from the real matrices afterwards, so a piece can be rotated or
    nested and still register in the right place. */
-function placeStructure(built, wx, wz, rotY){
+function placeStructure(built, wx, wz, rotY, kind){
+  /* ⛔ _targetName is a module-level baton set by addCover. Anything that adds a
+     paint target WITHOUT setting it would inherit the last cover's name and tell
+     the player to go and stand against a boulder that is not there. Every entry
+     point sets or clears it. */
+  _targetName = kind ? String(kind).replace(/_/g,' ').toUpperCase() : 'STRUCTURE';
   const g = built.group;
   g.position.set(wx, 0, wz); g.rotation.y = rotY || 0;
   worldGroup.add(g); cover.push(g);
@@ -2632,7 +2637,7 @@ function placeStructure(built, wx, wz, rotY){
     const bb = new THREE.Box3().setFromObject(pc.mesh);
     if(!isFinite(bb.max.y)) continue;
     bb.getCenter(_c);
-    if(pc.hex != null) addTarget(_c.x, _c.z, pc.hex, pc.r || 1.5);
+    if(pc.hex != null) addTarget(_c.x, _c.z, pc.hex, pc.r || 1.5, pc.name || _targetName);
     if(pc.stand && bb.max.y > 0.3 && bb.max.y <= STAND_MAX_TOP){
       platforms.push({ minX:bb.min.x, maxX:bb.max.x, minZ:bb.min.z, maxZ:bb.max.z,
         top:bb.max.y, colorHex:(pc.hex==null?0x808080:pc.hex), cx:_c.x, cz:_c.z,
@@ -2813,25 +2818,25 @@ function placeStructures(map){
   const big = findPlots(map, 5, 5, 2, taken);
   if(big[0]){                                             // THE PLAYGROUND
     const c = cellToWorld(big[0].gx+2, big[0].gy+2);
-    placeStructure(buildSwings(R),  c.x-2.2, c.z-1.6, _quarter(R));
-    placeStructure(buildSlide(R),   c.x+2.0, c.z-1.4, _quarter(R));
-    placeStructure(buildSeesaw(R),  c.x-1.8, c.z+2.2, _quarter(R));
-    placeStructure(buildSandpit(R), c.x+2.2, c.z+2.4, 0);
-    placeStructure(buildClimber(R), c.x,     c.z,     _quarter(R));
+    placeStructure(buildSwings(R),  c.x-2.2, c.z-1.6, _quarter(R), 'SWINGS');
+    placeStructure(buildSlide(R),   c.x+2.0, c.z-1.4, _quarter(R), 'SLIDE');
+    placeStructure(buildSeesaw(R),  c.x-1.8, c.z+2.2, _quarter(R), 'SEESAW');
+    placeStructure(buildSandpit(R), c.x+2.2, c.z+2.4, 0, 'SANDPIT');
+    placeStructure(buildClimber(R), c.x,     c.z,     _quarter(R), 'CLIMBER');
   }
   if(big[1]){                                             // THE PARK
     const c = cellToWorld(big[1].gx+2, big[1].gy+2);
-    placeStructure(buildFountain(R), c.x, c.z, 0);
+    placeStructure(buildFountain(R), c.x, c.z, 0, 'FOUNTAIN');
     for(let i=0;i<4;i++){
       const a2 = i*1.57 + 0.4;
-      placeStructure(buildBench(R), c.x+Math.cos(a2)*3.6, c.z+Math.sin(a2)*3.6, Math.round((-a2+Math.PI/2)/(Math.PI/2))*(Math.PI/2));
+      placeStructure(buildBench(R), c.x+Math.cos(a2)*3.6, c.z+Math.sin(a2)*3.6, Math.round((-a2+Math.PI/2)/(Math.PI/2))*(Math.PI/2), 'BENCH');
     }
   }
   const small = findPlots(map, 3, 3, 6, taken);            // picnic spots and hedges
   small.forEach((pl, i)=>{
     const c = cellToWorld(pl.gx+1, pl.gy+1);
-    if(i % 2 === 0) placeStructure(buildPicnic(R), c.x, c.z, _quarter(R));
-    else placeStructure(buildHedge(R), c.x, c.z, (Math.floor(R()*2)) * 1.5708);
+    if(i % 2 === 0) placeStructure(buildPicnic(R), c.x, c.z, _quarter(R), 'PICNIC');
+    else placeStructure(buildHedge(R), c.x, c.z, (Math.floor(R()*2)) * 1.5708, 'HEDGE');
   });
 }
 
@@ -3012,8 +3017,16 @@ function maybePattern(baseMat, hues, gx, gy, chance){
   m.map = patternTexture('#'+new THREE.Color(c1).getHexString(), '#'+new THREE.Color(c2).getHexString(), (h>>4)%3);
   return { m, avg: mixHex(c1, c2) };
 }
-function addTarget(x, z, colorHex, r){ _lastTargetHex = colorHex;
-  paintTargets.push({ x, z, color:new THREE.Color(colorHex), r:r||2.6 }); }
+/* ⛔⛔ "the match color didnt work at all it wasnt at all right." Measured: with
+   cover beside you the game scores you against TWO surfaces, and the second one
+   was called NEARBY COVER. A player cannot deliberately match a thing the game
+   will not name - you are told 45% and given no idea what the other 55% is even
+   looking at. Every target now carries the name of the thing it came from, so
+   the studio can say BOULDER or PICNIC TABLE and you know where to stand. */
+let _targetName = '';
+function addTarget(x, z, colorHex, r, name){ _lastTargetHex = colorHex;
+  paintTargets.push({ x, z, color:new THREE.Color(colorHex), r:r||2.6,
+                      name: name || _targetName || 'NEARBY COVER' }); }
 /* measurement hook: how much of the walkable map is actually within reach of
    something to paint. Penny's round-one note was that there was nothing, and
    an assertion beats an opinion. Reports the worst case, not the average. */
@@ -4116,6 +4129,10 @@ window.__aac3dPaint = function(){
            worstCellTargets: worst===1e9?3:worst };
 };
 function addCover(type, gx, gy){
+  _targetName = String(type).replace(/_/g,' ').toUpperCase();   // names every addTarget below
+  try{ return addCoverInner(type, gx, gy); } finally { _targetName = ''; }
+}
+function addCoverInner(type, gx, gy){
   const w = cellToWorld(gx, gy); const g = new THREE.Group(); g.position.set(w.x, 0, w.z);
   if(type==='tree'){
     const lm = instMat(COVER_MAT.leaf, LEAF_HUES, gx, gy);
@@ -4896,7 +4913,7 @@ const _tc2 = new THREE.Color();
 function targetInfoAt(x, z){
   let best=null, bd=1e9;
   for(const t of paintTargets){ const dx=t.x-x, dz=t.z-z, d=dx*dx+dz*dz; if(d<t.r*t.r && d<bd){ bd=d; best=t; } }
-  if(best) return { color:best.color, kind:'cover', name:'NEARBY COVER', tip:'stand against it' };
+  if(best) return { color:best.color, kind:'cover', name:best.name || 'NEARBY COVER', tip:'stand against it' };
   const key = terrainKeyAt(x,z);
   return { color:_tc2.set(TERRAIN[key] || TERRAIN.grass), kind:'ground',
            name:(key||'ground').toUpperCase(), tip:terrainFx(key).tip };
@@ -5002,7 +5019,7 @@ function targetTonesAt(x, z, plat){
      outer edge of a cover radius with no way to improve it and no affordance
      shown. If the split cannot engage, the faint tone does not count at all. */
   if(w <= SPLIT_MIN_W) return [{ color:ground, w:1, kind:'ground', name:gname }];
-  const tones = [{ color:best.color, w:w, kind:'cover', name:'NEARBY COVER' },
+  const tones = [{ color:best.color, w:w, kind:'cover', name:best.name || 'NEARBY COVER' },
                  { color:ground, w:1-w, kind:'ground', name:gname }];
   tones.sort((a,b)=> b.w - a.w);
   return tones;
