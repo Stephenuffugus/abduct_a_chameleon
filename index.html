@@ -196,6 +196,18 @@ const DECOY_LIFE=6.0, DECOY_CD=12.0, INK_R=95, INK_LIFE=3.6, INK_CD=10.0, INK_MA
 // and Burrow (sink into soft ground; a panic hide that works even in the wrong paint)
 const TONGUE_R=176, TONGUE_SPEED=560, TONGUE_CD=8.0, TONGUE_MAXT=0.6;
 const BURROW_MAX=2.5, BURROW_CD=14.0, BURROW_C=0.03;
+/* LURE - the clicker. Every other tool in the kit is defensive: hide better, break line of
+   sight, get out of the ring. This is the first one that acts on THEM, and it is the reason
+   an objective is survivable at all - you clear a patrol off the ground you need before you
+   commit to standing still on it.
+   Two deliberate limits, both learned the hard way in review:
+   - It is a CONSUMABLE, not a cooldown. On a cooldown it becomes a rotation ("throw, work in
+     the vacuum, walk to the next one while it recharges") and it quietly switches the game's
+     only source of tension off. Three per round means every throw is a decision.
+   - It does NOTHING to a ship that has already found something. A lure that also rescued you
+     from a chase would be a strictly better Ink for half the cost, and it would make being
+     spotted meaningless. It is a tool for before, never for after. */
+const LURE_R=380, LURE_LIFE=5.0, LURE_PULL=340, LURE_CD=4.0, LURE_CHARGES=3;
 const BURROW_SOFT={grass:1,dirt:1,sand:1,mud:1,moss:1,snow:1,foliage:1};
 const HEAT_RAMP=20, HEAT_UFO_EVERY=45, HEAT_UFO_CAP=8;
 // P5+ Time Attack "Beacon Run"
@@ -227,6 +239,7 @@ const ABILITIES=[
   { key:'ink',    name:'Ink',    glyph:'💨', kb:'KeyV', pad:4 },
   { key:'tongue', name:'Tongue', glyph:'🪝', kb:'KeyB', pad:3 },
   { key:'burrow', name:'Burrow', glyph:'🕳', kb:'KeyX', pad:5 },
+  { key:'lure',   name:'Lure',   glyph:'🔔', kb:'KeyF', pad:6, charges:true },
 ];
 // terrain
 const TERRAIN_HEX = { void:'#12182B', grass:'#4E8C4A', dirt:'#C9A96B', water:'#3A6EA5',
@@ -870,7 +883,7 @@ const player = { x:0,y:0, vx:0,vy:0, facing:0, prevx:0,prevy:0,
   animT:0, walkPhase:0, breathP:0, squash:0, blinkT:2, blinkE:0, repaintT:0,
   pose:'stand', poseBlend:{},
   // P5 abilities
-  freeze:false, freezeCap:MAX_CONCEAL_OPEN, dashT:0, dashDx:0, dashDy:0, dashFlare:0, dashRecT:0,
+  freeze:false, freezeCap:MAX_CONCEAL_OPEN, dashT:0, dashDx:0, dashDy:0, dashFlare:0, dashRecT:0, lureLeft:LURE_CHARGES,
   tongueT:0, tongueTx:0, tongueTy:0, burrowT:0,
   cd:{ dash:0, decoy:0, ink:0, tongue:0, burrow:0 } };
 
@@ -1038,6 +1051,24 @@ function useAbility(k){ if(!round||roundState!=='PLAYING'||!player.alive) return
   else if(k==='decoy'){ if(player.cd.decoy>0) return; player.cd.decoy=DECOY_CD;
     round.decoys.push({ x:player.x, y:player.y, paint:Object.assign({},player.currentPaint), C:Math.max(0.25,player.C), life:DECOY_LIFE, pose:player.pose });
     SFX.ui(); showToast('Decoy dropped'); vibe(20); }
+  else if(k==='lure'){ if(player.cd.lure>0) return;
+    if((player.lureLeft|0)<=0){ showToast('No clickers left'); SFX.back(); return; }
+    /* AIM. input.mx/my is the convention every other ability uses, but it is force-zeroed
+       while frozen, while burrowed and while painting - which is exactly the posture you
+       throw one of these from. So the peeked camera wins when the player is looking
+       somewhere, and it is the only aim source that stays live while frozen. */
+    let ax,ay; const pm=Math.hypot(camPan.x,camPan.y), im=Math.hypot(input.mx,input.my);
+    if(pm>20){ ax=camPan.x/pm; ay=camPan.y/pm; }
+    else if(im>0.1){ ax=input.mx/im; ay=input.my/im; }
+    else { ax=Math.cos(player.facing); ay=Math.sin(player.facing); }
+    let tx=player.x+ax*LURE_R, ty=player.y+ay*LURE_R;
+    for(let s=1.0; s>0.15; s-=0.08){                       // walk the throw back off a wall
+      const cx=player.x+ax*LURE_R*s, cy=player.y+ay*LURE_R*s;
+      if(!circleBlocked(cx,cy)){ tx=cx; ty=cy; break; } }
+    round.lures.push({ x:tx, y:ty, life:LURE_LIFE, t:0 });
+    player.lureLeft--; player.cd.lure=LURE_CD;
+    SFX.ui(); spawnShards(tx,ty,COL.cyan,7); floatText(tx,ty-14,'click','rgba(63,208,224,0.95)');
+    showToast('Clicker thrown  ('+player.lureLeft+' left)'); vibe(18); }
   else if(k==='ink'){ if(player.cd.ink>0) return; player.cd.ink=INK_CD;
     round.inks.push({ x:player.x, y:player.y, r:INK_R, life:INK_LIFE }); if(round.inks.length>INK_MAX) round.inks.shift();
     SFX.ui(); spawnShards(player.x,player.y,'#2a2a3a',10); showToast('Ink cloud'); vibe(20); }
@@ -1133,6 +1164,7 @@ addEventListener('keydown', e=>{
     else if(e.code==='BracketRight'||e.code==='KeyR') cyclePose(1);
     else if((e.code==='ControlLeft'||e.code==='ControlRight') && ctrlMode==='MOVE') useAbility('dash');   // P10: no dashing out of a rooted pose
     else if(e.code==='KeyC' && ctrlMode==='MOVE') useAbility('decoy');
+    else if(e.code==='KeyF' && ctrlMode==='MOVE') useAbility('lure');
     else if(e.code==='KeyV' && ctrlMode==='MOVE') useAbility('ink');
     else if(e.code==='KeyB' && ctrlMode==='MOVE') useAbility('tongue');
     else if(e.code==='KeyX' && ctrlMode==='MOVE') useAbility('burrow');
@@ -1694,6 +1726,20 @@ function updateUfo(u,dt,D){
   if((u.state==='CHASE'||u.state==='BEAM') && d<senseR && signal>0.001 && losClear(u.x,u.y,player.x,player.y))
     u.suspicion=Math.max(u.suspicion,0.9);
   u.suspicion=clamp01(u.suspicion); u.signal=signal;
+  /* THE CLICKER. Note where this sits: OUTSIDE the signal maths above, on purpose. A decoy
+     competes as a signal, so a decoy only works if it out-shines you; a lure is a NOISE and
+     it does not care what colour you painted yourself. It also only reaches a ship that has
+     not already found something - see the constant block for why that limit is the whole
+     design. Set the state directly rather than nudging suspicion: PATROL only reaches SCAN
+     this tick and SCAN only reaches INVESTIGATE the next, so a nudge would arrive two frames
+     late and read as the throw not working. */
+  u.lured=false;
+  if(round.lures.length && (u.state==='PATROL'||u.state==='SCAN')){
+    let bl=null, bd=LURE_PULL;
+    for(const L of round.lures){ const dd=Math.hypot(L.x-u.x,L.y-u.y); if(dd<bd){ bd=dd; bl=L; } }
+    if(bl){ u.lastSuspect.x=bl.x; u.lastSuspect.y=bl.y; u.lastSuspectConf=1; u.lured=true;
+      u.suspicion=Math.max(u.suspicion,ENTER_INVEST); u.giveupTimer=0; u.state='INVESTIGATE'; }
+  }
   const prev=u.state;
   // ---- transitions + movement ----
   switch(u.state){
@@ -1975,6 +2021,19 @@ function drawRound(alpha){
       ctx.beginPath(); ctx.arc(player.x-eo,player.y-2,2.0,0,TAU); ctx.fill();
       ctx.beginPath(); ctx.arc(player.x+eo,player.y-2,2.0,0,TAU); ctx.fill(); ctx.globalAlpha=1; } }
   for(const u of round.ufos) drawUfo(u);
+  /* thrown clickers: a small brass thing on the ground throwing rings of sound. Drawn UNDER
+     the ink so a cloud can still hide it, and sized off its remaining life so you can read
+     at a glance how much longer the patrol will stay distracted. */
+  for(const L of round.lures){ const a=clamp01(L.life/LURE_LIFE);
+    const ring=(L.t*150)%110;
+    ctx.strokeStyle='rgba(63,208,224,'+(0.42*a*(1-ring/110)).toFixed(3)+')'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(L.x,L.y,10+ring,0,TAU); ctx.stroke();
+    const ring2=(L.t*150+55)%110;
+    ctx.strokeStyle='rgba(63,208,224,'+(0.30*a*(1-ring2/110)).toFixed(3)+')'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(L.x,L.y,10+ring2,0,TAU); ctx.stroke();
+    ctx.fillStyle='rgba(198,168,90,'+(0.95*a).toFixed(3)+')';
+    ctx.beginPath(); ctx.arc(L.x,L.y,4.5,0,TAU); ctx.fill();
+    ctx.strokeStyle='rgba(20,24,38,'+(0.9*a).toFixed(3)+')'; ctx.lineWidth=1; ctx.stroke(); }
   // ink clouds (obscuring, over entities)
   for(const ik of round.inks){ const a=clamp01(ik.life/INK_LIFE); const rad=ik.r*(0.7+0.3*a);
     const g=ctx.createRadialGradient(ik.x,ik.y,rad*0.2,ik.x,ik.y,rad);
@@ -2396,7 +2455,7 @@ function drawRoundHUD(){
   else _hud.recenter=null;
   // ---- ability bar (vertical column, action-hand side) — hidden under a held shot; ❄ stays live while looking ----
   if(!studio.open){
-  const abx = right ? vpW-edge-44 : edge; const cdMax={dash:DASH_CD,decoy:DECOY_CD,ink:INK_CD,tongue:TONGUE_CD,burrow:BURROW_CD};
+  const abx = right ? vpW-edge-44 : edge; const cdMax={dash:DASH_CD,decoy:DECOY_CD,ink:INK_CD,tongue:TONGUE_CD,burrow:BURROW_CD,lure:LURE_CD};
   const aby = ay-14-44*ABILITIES.length-10*(ABILITIES.length-1);
   ABILITIES.forEach((ab,i)=>{ const y=aby+i*54;
     const gated = ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');   // P9: hard-anchor while scouting
@@ -3051,8 +3110,9 @@ function startRound(entry, mode, diff, fixedSeed){
   round={ entry, mode, diff, ufos:[], timeLeft:diff.SURVIVE_TIME, countdown:COUNTDOWN_SEC, lastCount:null,
     caught:false, caughtBy:null, finalized:false, spawnGrace:SPAWN_GRACE, nearUfo:0, debug:false,
     spottedReason:'', reasonUntil:0, spottedFlash:0, summaryT:0, seed, summary:null,
-    decoys:[], inks:[], beacons:[], taBanked:0, heat:!!diff.heat, heatT:0, heatUfoT:0 };
-  player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.dashRecT=0; player.cd={dash:0,decoy:0,ink:0,tongue:0,burrow:0};
+    decoys:[], inks:[], lures:[], beacons:[], taBanked:0, heat:!!diff.heat, heatT:0, heatUfoT:0 };
+  player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.dashRecT=0; player.cd={dash:0,decoy:0,ink:0,tongue:0,burrow:0,lure:0};
+  player.lureLeft=LURE_CHARGES;
   player.tongueT=0; player.burrowT=0;
   player.splitPaint=false; studio.activeTone=0; player.mq2=0;
   player.currentPaint2={...player.currentPaint}; player.targetPaint2={...player.targetPaint}; player.paintHSV2=rgb2hsv(player.currentPaint);
@@ -3276,6 +3336,7 @@ function stepSim(dt){
     if(player.burrowT===0) spawnShards(player.x,player.y,'#6a5636',6); }   // time's up — dirt pops as you surface
   for(let i=round.decoys.length-1;i>=0;i--){ round.decoys[i].life-=dt; if(round.decoys[i].life<=0) round.decoys.splice(i,1); }
   for(let i=round.inks.length-1;i>=0;i--){ round.inks[i].life-=dt; if(round.inks[i].life<=0) round.inks.splice(i,1); }
+  for(let i=round.lures.length-1;i>=0;i--){ const L=round.lures[i]; L.life-=dt; L.t+=dt; if(L.life<=0) round.lures.splice(i,1); }
   updateBots(dt);
   const ms=dt*1000, M=round.metrics; M.survivalMs+=ms; M.blendAccum+=player.mq*dt;
   if(player.C<WELL_HIDDEN_C) M.lowDetectMs+=ms;
@@ -4055,6 +4116,8 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   summary: round&&round.summary?round.summary:null,
   ability: round?{freeze:player.freeze,dashCd:+player.cd.dash.toFixed(2),decoyCd:+player.cd.decoy.toFixed(2),inkCd:+player.cd.ink.toFixed(2),freezeCap:+player.freezeCap.toFixed(3),tongueCd:+(player.cd.tongue||0).toFixed(2),burrowCd:+(player.cd.burrow||0).toFixed(2),tongueT:+(player.tongueT||0).toFixed(2),burrowT:+(player.burrowT||0).toFixed(2)}:null,
   decoys: round?round.decoys.length:0, inks: round?round.inks.length:0, pose: player.pose,
+  lures: round?round.lures.length:0, lureLeft: player.lureLeft|0, lureCd: +(player.cd&&player.cd.lure||0).toFixed(2),
+  lured: round?round.ufos.filter(u=>u.lured).length:0,
   ta: round&&round.mode==='TA'?{ beacons:round.beacons.length, banked:round.taBanked, timeLeft:Math.round(round.timeLeft), beaconPos:round.beacons.map(b=>({x:Math.round(b.x),y:Math.round(b.y),banked:b.banked})) }:null,
   hunt: round&&round.mode==='HUNT'?{ bots: round.bots.length, caught: round.hunterCaught||0, pinged: round.bots.filter(b=>b.pinged>0).length, botStates: round.bots.map(b=>b.state), botC: round.bots.map(b=>+b.C.toFixed(2)), pulseCd:+player.pulseCd.toFixed(2), botPos: round.bots.map(b=>({x:Math.round(b.x),y:Math.round(b.y),caught:b.caught,C:+b.C.toFixed(2),pinged:+(b.pinged>0)})) }:null,
   // ---- P8 "Living Camo" (add-only) ----
