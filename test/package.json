@@ -30,6 +30,7 @@
   "studio3d": "node studio3d.mjs ../abduct-3d.html",
   "solo3d": "node solo3d.mjs ../abduct-3d.html",
   "ground3d": "node ground3d.mjs ../abduct-3d.html",
+  "groundcolour": "node ground_colour.mjs ../abduct-3d.html",
   "roundtrip": "node roundtrip.mjs ../abduct-3d.html",
   "files3d": "node files3d.mjs ../abduct-3d.html",
   "calib3d": "node calib3d.mjs ../abduct-3d.html",

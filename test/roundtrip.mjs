@@ -113,6 +113,39 @@ for(let t=0;t<40;t++){
 console.log('6 guest starts', JSON.stringify({moved:guestMoved, phase:guestPhase}));
 if(!guestMoved) bad.push('a GUEST pressing START ROUND did nothing - only the host can start a round, and nothing on screen says so');
 
+/* ⛔⛔ 7. AND SOMEBODY HAS TO GET CAUGHT. This gate drove a whole round end to end
+   and never once had anybody taken, so it could not see that the seekers were
+   unable to win AT ALL: hostTick counted a hider as out of the round only when
+   `abducted` was set, the 8/02 rework moved the real catch onto `held`, and the
+   only remaining writer of `abducted` is a test hook. Every round ended on the
+   clock with "the hiders survived", however many people the hunter had caught.
+   Start a round, catch the hider, and require the room to end it for the seekers. */
+{
+  for(let t=0;t<40;t++){
+    for(const c of [A,B]) await c.p.evaluate(()=>{const e=document.getElementById('tStart'); if(e&&!e.classList.contains('hidden')) e.click();});
+    const ph = await A.p.evaluate(()=>window.__aac3dRound().phase);
+    if(ph==='playing'||ph==='hiding') break;
+    await new Promise(r=>setTimeout(r,150));
+  }
+  for(const c of [A,B]) await c.p.evaluate(()=>{ try{ window.__aac3dRoundSkip('hide'); }catch(_){} });
+  await new Promise(r=>setTimeout(r,600));
+  const roles = [];
+  for(const c of [A,B]) roles.push(await c.p.evaluate(()=>window.__aac3dRound().myRole));
+  const HID = roles[0]==='hider' ? A : B;
+  await HID.p.evaluate(()=>{ try{ window.__aac3dCatchMe(); }catch(_){} });
+  let winner=null, phase=null;
+  for(let t=0;t<60;t++){
+    const r = await A.p.evaluate(()=>window.__aac3dRound());
+    winner = r.winner; phase = r.phase;
+    if(winner) break;
+    await new Promise(r2=>setTimeout(r2,200));
+  }
+  console.log('7 caught ends it', JSON.stringify({roles, winner, phase}));
+  if(!roles.includes('seeker')) console.log('   (no seeker in this room - step skipped)');
+  else if(winner !== 'seekers')
+    bad.push(`catching every hider did not end the round for the seekers (winner=${winner}) - the hunt cannot be won, only survived`);
+}
+
 const errs=[...A.errs,...B.errs];
 if(errs.length) bad.push('JS errors: '+errs.slice(0,2).join(' | '));
 console.log(bad.length ? '\nFAIL roundtrip:\n  - '+bad.join('\n  - ')

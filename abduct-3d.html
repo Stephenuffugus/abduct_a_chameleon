@@ -2823,9 +2823,30 @@ function buildWorld(map){
   for(let y=0;y<mapRows;y++) for(let x=0;x<mapCols;x++){
     const c = colorLinear(TERRAIN[map.terrain[y][x]] || TERRAIN.void);
     const x0=(x-mapCols/2)*TILE, z0=(y-mapRows/2)*TILE, x1=x0+TILE, z1=z0+TILE;
-    pos.push(x0,0,z0, x1,0,z0, x1,0,z1,  x0,0,z0, x1,0,z1, x0,0,z1);
+    /* ⛔⛔⛔ 2026-08-02 — THE ENTIRE PLAYFIELD WAS LIT FROM UNDERNEATH.
+       These two triangles used to wind x0z0 -> x1z0 -> x1z1, which is CLOCKWISE seen
+       from above: the cross product of its edges is (0,-1,0). The vertex normal was
+       hand-written as (0,1,0) and the material is side:DoubleSide, and DoubleSide
+       negates the normal on back-facing fragments - so three.js took the up-normal,
+       flipped it to point at the floor, and every light in the sky contributed
+       exactly nothing. Only the hemisphere light's dark GROUND colour reached the
+       surface. Measured: grass #4FA83F rendered rgb(16,16,3) instead of rgb(89,151,46).
+
+       The water mesh three lines below has the identical winding and calls
+       computeVertexNormals, and it renders correctly - the control was sitting in the
+       same function the whole time, which is why the shots read as "props are lit,
+       the ground they stand on is black".
+
+       This is a camouflage game whose only verb is "match the ground you are standing
+       on", played on a ground nobody could see. It is most of "everything looks random
+       and sloppy" and all of the dead terrain palette, and it is a winding order.
+
+       Wound counter-clockwise now, so (0,1,0) is the true face normal and is not
+       flipped. The jitter list is reordered to follow the vertices - they index the
+       same corners in the new order, not the old one. */
+    pos.push(x0,0,z0, x1,0,z1, x1,0,z0,  x0,0,z0, x0,0,z1, x1,0,z1);
     const j00=cornerJit(x,y), j10=cornerJit(x+1,y), j11=cornerJit(x+1,y+1), j01=cornerJit(x,y+1);
-    for(const j of [j00, j10, j11, j00, j11, j01]){
+    for(const j of [j00, j11, j10, j00, j01, j11]){
       col.push(c.r*j, c.g*j, c.b*j); nrm.push(0,1,0);
     }
   }
@@ -4879,6 +4900,7 @@ window.__aac3dRound = function(){
     team: (me && me.getState('team')) || null, host: isHost(),
     myRole:myRole(), myHasRole:!!(me && me.getState('role')),
     abducted:amAbducted(), roundId:getState('roundId')||0,
+    winner:getState('winner')||null,   // which side ended the round, so a gate can assert the hunt is winnable
     // 8/02: the ground hunt + the sweep, so a gate can assert on both
     onfoot:onFoot(), alt:+localPos.y.toFixed(2), canLand: localPos.y <= LAND_ALT,
     stunned: amStunned(), stunLeft:+stunLeft().toFixed(1),
@@ -5956,7 +5978,18 @@ function handleJoin(state){
 
 /* ============================ Input ============================ */
 function setupInput(){
+  /* ⛔⛔⛔ TYPING A ROOM CODE WAS PLAYING THE GAME. This handler is on window with no
+     idea whether a text field has focus, and the join panel's input is a text field, so
+     entering a four letter code ran every letter as a command: measured, typing
+     "GLEHVCX" flipped the player's role from hider to seeker and fired the echo scan,
+     the jammer, the decoy and a view change on the way. This is the same defect this
+     studio shipped across 39 of 42 portal games (a global preventDefault on WASD while
+     somebody was typing into a feedback form) and it is written down as a rule. Guard
+     it, and clear the held-key set on the way out so nothing is left stuck down. */
+  const typing = t => { if(!t) return false;
+    const tag = t.tagName; return tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT' || t.isContentEditable; };
   addEventListener('keydown', e=>{
+    if(typing(e.target)){ for(const k in keys) keys[k] = false; return; }
     ensureAudio();
     keys[e.code] = true;
     if(e.code==='KeyV'){
@@ -7793,7 +7826,22 @@ function hostTick(dt){
   const phase = getState('phase') || 'waiting';
   const roled = players.filter(p=> p.state.getState('role'));
   const hiders = players.filter(p=> p.state.getState('role')==='hider');
-  const alive = hiders.filter(p=> !p.state.getState('abducted'));
+  /* ⛔⛔⛔ THE SEEKERS COULD NOT WIN. THE ROUND ONLY EVER ENDED ON THE CLOCK.
+     This counted a hider as out of the round only when `abducted` was true, and
+     nothing in the game ever sets it: the 8/02 rework moved the real catch onto
+     `held` (see detectAbductions), and the only remaining writer of `abducted` is
+     the TEST HOOK __aac3dCatchMe. So `alive` never shrank, endRound('seekers')
+     was unreachable, and every round the family played ended the same way - the
+     clock ran out and the banner said the hiders survived, no matter how many
+     people the hunter had caught. Catching somebody scored 100 points and nothing
+     else. roundtrip.mjs drives a whole round end to end and never has anybody
+     caught, so it could not see it.
+     A HELD hider is out of the round unless somebody frees them, and freeing
+     requires another FREE hider - so when the last free hider is taken there is
+     nobody left who could ever open the hatch. alive.length===0 is exactly that
+     moment, and it is also the fix for a two-player room, where being caught used
+     to mean standing in a beam for 150 seconds with no possible rescue. */
+  const alive = hiders.filter(stillFree);
 
   /* ⛔⛔⛔ THIS EARLY RETURN WAS A LOADED GUN. It sends the room back to
      'waiting' when everybody leaves but steps over 'startReq' on the way out, so
@@ -7968,13 +8016,19 @@ function startRound(){
    Fires once per round on the client it happened to, never on the host's behalf
    of everyone, so nobody collects for a round they were not in. */
 function filesRoundReward(winner){
-  if(amAbducted() && winner === 'seekers') return;              // caught pays nothing
-  if(myRole() === 'hider' && winner === 'hiders') recoverPage('YOU SURVIVED');
+  if((amAbducted() || amHeld()) && winner === 'seekers') return;   // caught pays nothing
+  if(myRole() === 'hider' && winner === 'hiders' && !amHeld()) recoverPage('YOU SURVIVED');
   else if(myRole() === 'seeker' && winner === 'seekers') recoverPage('THE VALLEY IS CLEAR');
 }
+/* One definition of "still in the round", used everywhere. Being HELD in a beam is
+   what being caught means since the 8/02 rework; `abducted` is legacy and is now only
+   written by a test hook. Three separate places asked only about `abducted`, so a
+   caught player counted as alive for the round-end check, was paid the survival bonus
+   when the clock ran out, and was handed the survivor's page reward. */
+function stillFree(p){ const st = p.state || p; return !st.getState('abducted') && !st.getState('held'); }
 function endRound(winner){
   if(winner==='hiders'){
-    for(const p of players) if(p.state.getState('role')==='hider' && !p.state.getState('abducted'))
+    for(const p of players) if(p.state.getState('role')==='hider' && stillFree(p))
       p.state.setState('score', (p.state.getState('score')||0)+SURVIVE_POINTS, true);
   }
   setState('winner', winner, true);
@@ -8716,6 +8770,15 @@ function orbit(c, y, p, dist, eyeH, collide){
       }
     }
   }
+  /* ⛔⛔ AND THE CAMERA IS NOT ALLOWED UNDER THE FLOOR. pitch clamps to -0.5 and the
+     orbit puts the eye at c.y + dist*sin(pitch) + 1, so on foot at 6.5m of orbit that
+     is c.y - 2.116: hold look-up on open ground and the camera ends up two metres
+     BELOW the terrain, where every pixel is one flat colour and the world simply
+     disappears. That is "i can see through the floor", and it takes a single upward
+     drag to reproduce. The eye stays above the surface you are standing on. Only for
+     the cameras that collide - the studio mirror sits by design two metres from your
+     face and the saucer flies too high for this to ever bite. */
+  if(collide) py = Math.max(py, c.y + 0.45);
   camera.position.set(px, py, pz);
   camera.lookAt(c.x, c.y+eyeH, c.z);
 }
