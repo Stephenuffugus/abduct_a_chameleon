@@ -132,7 +132,26 @@ if(!guestMoved) bad.push('a GUEST pressing START ROUND did nothing - only the ho
   const roles = [];
   for(const c of [A,B]) roles.push(await c.p.evaluate(()=>window.__aac3dRound().myRole));
   const HID = roles[0]==='hider' ? A : B;
-  await HID.p.evaluate(()=>{ try{ window.__aac3dCatchMe(); }catch(_){} });
+  const SEK = HID === A ? B : A;
+  /* ⛔⛔ A REAL CATCH, NOT THE HOOK. The first version of this step called
+     __aac3dCatchMe, which writes `abducted` - the LEGACY flag, and the very one the bug
+     was about. Re-pointed at the broken predicate it still reported winner=seekers, so
+     it proved nothing: I had written the exact test theatre I spent the day deleting.
+     Park the saucer on the hider and hold the beam, and the round has to end the way a
+     round actually ends - through `held`. */
+  const hp = await HID.p.evaluate(()=>{ const r=window.__aac3dPlayer? window.__aac3dPlayer():null;
+    return r ? {x:r.x, z:r.z} : {x:0, z:0}; });
+  await SEK.p.evaluate(p=>{ window.__aac3dPlace(p.x, 12, p.z, 0); }, hp);
+  await new Promise(r=>setTimeout(r,400));
+  await SEK.p.evaluate(()=>{ window.__aac3dBeam(true); });
+  let held=false;
+  for(let t=0;t<50 && !held;t++){
+    await SEK.p.evaluate(p=>{ window.__aac3dPlace(p.x, 12, p.z, 0); window.__aac3dBeam(true); }, hp);
+    held = await HID.p.evaluate(()=>window.__aac3dRound().held);
+    if(!held) await new Promise(r=>setTimeout(r,200));
+  }
+  console.log('   real catch', JSON.stringify({held}));
+  if(!held) bad.push('parking a saucer on a hider and holding the beam never caught them');
   let winner=null, phase=null;
   for(let t=0;t<60;t++){
     const r = await A.p.evaluate(()=>window.__aac3dRound());
@@ -142,6 +161,7 @@ if(!guestMoved) bad.push('a GUEST pressing START ROUND did nothing - only the ho
   }
   console.log('7 caught ends it', JSON.stringify({roles, winner, phase}));
   if(!roles.includes('seeker')) console.log('   (no seeker in this room - step skipped)');
+  else if(!held) console.log('   (never got a catch - the end-of-round claim below is unproven)');
   else if(winner !== 'seekers')
     bad.push(`catching every hider did not end the round for the seekers (winner=${winner}) - the hunt cannot be won, only survived`);
 }
