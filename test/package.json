@@ -36,6 +36,7 @@
   "calib3d": "node calib3d.mjs ../abduct-3d.html",
   "hud3d": "node hud3d.mjs ../abduct-3d.html",
   "lobby3d": "node lobby3d.mjs ../abduct-3d.html",
+  "boot3d": "node boot3d.mjs ../abduct-3d.html",
   "reach3d": "node reach3d.mjs ../abduct-3d.html",
   "combat3d": "node combat3d.mjs ../abduct-3d.html",
   "pick3d": "node pick3d.mjs ../abduct-3d.html && node reach3d.mjs ../abduct-3d.html && node combat3d.mjs ../abduct-3d.html"

@@ -172,7 +172,7 @@
     width:38px; height:38px; font-size:16px; cursor:pointer }
   body.touch #mapsToggle{ top:8px; width:34px; height:34px }
   #levelBar{ top:60px }
-  #rotate{ position:fixed; inset:0; z-index:70; display:none; flex-direction:column; gap:14px;
+  #rotate{ position:fixed; inset:0; z-index:1980; display:none; flex-direction:column; gap:14px;
     align-items:center; justify-content:center; background:var(--bg); text-align:center;
     cursor:pointer; -webkit-tap-highlight-color:transparent }
   #rotate .ph{ font-size:44px; animation:rot 1.6s ease-in-out infinite }
@@ -340,7 +340,7 @@
     #hwCard{ padding:10px 12px }
     #hwBody{ font-size:12px; line-height:1.6 }
   }
-  #tapStart{ position:fixed; inset:0; z-index:65; display:none; flex-direction:column; gap:12px;
+  #tapStart{ position:fixed; inset:0; z-index:1970; display:none; flex-direction:column; gap:12px;
     align-items:center; justify-content:center; background:rgba(8,12,25,.92); text-align:center }
   #tapStart .big{ font-size:22px; font-weight:800; letter-spacing:.1em; color:var(--amber) }
   #tapStart .sm{ color:var(--muted); font-size:12px }
@@ -349,8 +349,30 @@
      how it plays and every control, shown before anything else, once per
      device, with a ? button to read it again. Sits above the orientation gate
      so it is readable in portrait before the game asks you to turn. */
-  #howto{ position:fixed; inset:0; z-index:90; display:none; overflow-y:auto;
-    background:#080c19f2; padding:22px 18px 26px; -webkit-overflow-scrolling:touch }
+  /* ⛔⛔⛔ 2026-08-02 — A FINGER COULD NOT PRESS PLAY, AND TEN GREEN GATES SAID IT COULD.
+     Measured with elementFromPoint on a real touchscreen viewport, never el.click():
+
+       844x390 landscape: the card is 2793px tall (1137 words) in a 390px view, and
+                          ▶ PLAY sits at y=2673 - 2283px BELOW THE FOLD.
+       390x844 portrait:  3750px of card, PLAY at y=3610.
+
+     And scrolling all the way to the bottom did not save you either: at the button's
+     own centre elementFromPoint returned `btn-launchjoin` in landscape and `btn-invite`
+     in portrait - Playroom's lobby mounts ABOVE z-index 90 and puts a third-party invite
+     button exactly where our play button is. So the front door of this game was: read
+     eleven hundred words, scroll two and a half thousand pixels, press PLAY, and open
+     somebody else's invite dialog.
+
+     Every 3D gate walks past this with e.click(), which skips hit testing - the exact
+     technique this project banned after it cost a day on the paint column. A dismissal
+     that cannot fail is not a boot test.
+
+     Two changes: our own overlays go above anything a vendor can mount, and PLAY is
+     PINNED to the bottom of the card so it is on screen at every scroll position and at
+     every viewport. The 1137 words are still 1137 words - trimming them is a content
+     decision, and it is in the notes. */
+  #howto{ position:fixed; inset:0; z-index:2000; display:none; overflow-y:auto;
+    background:#080c19f2; padding:22px 18px 96px; -webkit-overflow-scrolling:touch }
   #howto .in{ max-width:520px; margin:0 auto }
   #howto .kick{ font-size:12px; letter-spacing:.22em; color:var(--cyan); font-weight:800 }
   #howto h2{ margin:6px 0 2px; font-size:26px; color:var(--amber) }
@@ -360,10 +382,14 @@
   #howto li{ font-size:14.5px; line-height:1.5; margin:7px 0; color:var(--txt) }
   #howto li b{ color:var(--amber) }
   #howto .dim{ color:var(--muted); font-size:13px }
-  #howto .go{ display:block; width:100%; min-height:56px; margin-top:20px; border-radius:14px;
+  /* PINNED, not appended. The play button is the only thing on this screen a player has
+     to be able to reach, so it does not live at the end of the prose. */
+  #howto .go{ position:fixed; left:50%; transform:translateX(-50%); bottom:calc(14px + env(safe-area-inset-bottom,0px));
+    width:min(520px, calc(100vw - 36px)); min-height:56px; z-index:2001; border-radius:14px;
     border:1px solid var(--amber); background:var(--amber); color:#12130a;
+    box-shadow:0 -10px 26px rgba(8,12,25,.9);
     font-size:17px; font-weight:800; letter-spacing:.06em; cursor:pointer }
-  #howtoBtn{ position:fixed; right:12px; top:12px; z-index:64; width:48px; height:48px; border-radius:50%;
+  #howtoBtn{ position:fixed; right:12px; top:12px; z-index:1960; width:48px; height:48px; border-radius:50%;
     background:var(--panel); border:1px solid var(--line); color:var(--txt); font-size:19px; font-weight:800; cursor:pointer;
     touch-action:manipulation }
 
@@ -371,7 +397,7 @@
      Sits at z-88: above the pointer-lock prompt (20), the paint studio (25),
      the rotate gate (70) and the tap-to-start card (65), but UNDER #howto (90)
      so the panel's own HOW TO PLAY button lands on top of it, not behind. */
-  #settings{ position:fixed; inset:0; z-index:88; display:none; overflow-y:auto;
+  #settings{ position:fixed; inset:0; z-index:1990; display:none; overflow-y:auto;
     background:rgba(8,12,25,.86); backdrop-filter:blur(4px); padding:18px 16px 26px;
     -webkit-overflow-scrolling:touch }
   #settings.on{ display:block }
