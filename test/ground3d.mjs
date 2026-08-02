@@ -89,6 +89,18 @@ for (let i = 0; i < SEEDS; i++) {
     bad.push(`${tag}: ${L.strandedSpawns} of ${L.hiderSpawns} HIDER SPAWNS ARE SEALED OFF`);
   if (L.biggestRegionPct < 0.97)
     bad.push(`${tag}: the map is in pieces - largest free region holds only ${(L.biggestRegionPct*100).toFixed(0)}% of free space (${L.regions} regions)`);
+  /* ⛔⛔ A PERCENTAGE CANNOT SEE A SEALED ROOM, AND THAT IS WHAT THIS GATE IS FOR.
+     The 97% rule was written when a pocket meant a sliver behind a boulder. The
+     favela generator (2026-08-02) made rooms big enough that sealing a whole one
+     costs only 2% of free space - measured: seed 1000 had a 504-cell room walled
+     off completely and still scored 0.98, a clean pass. A player spawning in
+     there stands in a box for the entire round.
+     So also fail on the SIZE of the biggest orphan. Legitimate pockets measured
+     across 14 seeds top out around 120 cells (30 sq m, a gap behind a stand of
+     trees). A room is 300+. 200 sits clear of the noise and well under a room. */
+  const worst = (L.pockets && L.pockets[0]) || null;
+  if (worst && worst.cells > 200)
+    bad.push(`${tag}: a ${worst.cells}-cell area is SEALED OFF at cell (${worst.gx},${worst.gy}) - that is a whole room nobody can reach`);
   if (L.twoToneOpportunity < 0.25)
     bad.push(`${tag}: the paint has a decision on only ${(L.twoToneOpportunity*100).toFixed(0)}% of the map - one MATCH GROUND tap solves the level`);
   if (L.overheadCoverPct < 0.05)

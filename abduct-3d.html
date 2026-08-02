@@ -2136,36 +2136,191 @@ function makeRandomMap(seed){
      that sealed 91% of maps. Reject any footprint that comes within two cells of
      one already placed - correct by construction, no repair pass needed, and it
      leaves streets between them instead of a collapsed heap. */
-  const placedRects = [];
-  for(let b=0;b<th.buildings;b++){
-    const bw=4+Math.floor(rnd()*4), bh=4+Math.floor(rnd()*4);
+  /* ⭐⭐⭐ 2026-08-02 — A FAVELA, NOT SEVEN SHEDS IN A FIELD.
+     Stephen and Jessie: "we're going to need like an actual build out of buildings
+     like a small favela... there need to be multiple rooms inside the buildings.
+     they need to be split up and there need to be groupings of them too. so think
+     apartments but not 10 story apartments. they need to be smaller structures
+     that are searchable by our seekers."
+     The old generator placed 7-11 identical one-room boxes and REJECTED any that
+     came within two cells of another, so by construction it could only ever build
+     a field with sheds in it. A block is the opposite idea: units that SHARE
+     walls, each split into rooms whose doors do not line up, with alleys between
+     blocks instead of open ground.
+     It exists to serve the ground hunt. An alien who lands has to work a block
+     room by room, and a chameleon inside has somewhere to move TO - which is the
+     whole reason both the sweep and the stun exist. */
+  const placedRects = [];                 // block footprints, exported as sweep zones
+  const wallSet = new Set(), doorSet = new Set();
+  const ckey = (x,y)=> x+','+y;
+  const ROOM_MIN = 3;                     // 3 across = two walls and an interior
+
+  function bsp(r, depth, out){
+    const w = r.x1-r.x0, h = r.y1-r.y0;
+    const canX = w >= ROOM_MIN*2, canY = h >= ROOM_MIN*2;
+    if(depth <= 0 || (!canX && !canY)){ out.push(r); return; }
+    const vert = canX && (!canY || rnd() < (w > h ? 0.7 : 0.3));   // cut the long way, usually
+    if(vert){
+      const cut = r.x0 + ROOM_MIN + Math.floor(rnd()*(w - ROOM_MIN*2 + 1));
+      bsp({x0:r.x0,y0:r.y0,x1:cut,y1:r.y1}, depth-1, out);
+      bsp({x0:cut,y0:r.y0,x1:r.x1,y1:r.y1}, depth-1, out);
+    }else{
+      const cut = r.y0 + ROOM_MIN + Math.floor(rnd()*(h - ROOM_MIN*2 + 1));
+      bsp({x0:r.x0,y0:r.y0,x1:r.x1,y1:cut}, depth-1, out);
+      bsp({x0:r.x0,y0:cut,x1:r.x1,y1:r.y1}, depth-1, out);
+    }
+  }
+  // the run of cells two rects share, or null if they only meet at a corner
+  function shared(a, b){
+    if(a.x1 === b.x0 || b.x1 === a.x0){
+      const x = (a.x1 === b.x0) ? a.x1 : b.x1;
+      const lo = Math.max(a.y0,b.y0), hi = Math.min(a.y1,b.y1);
+      return (hi - lo >= 2) ? { vertical:true, x, lo, hi } : null;
+    }
+    if(a.y1 === b.y0 || b.y1 === a.y0){
+      const y = (a.y1 === b.y0) ? a.y1 : b.y1;
+      const lo = Math.max(a.x0,b.x0), hi = Math.min(a.x1,b.x1);
+      return (hi - lo >= 2) ? { vertical:false, y, lo, hi } : null;
+    }
+    return null;
+  }
+  /* ⛔⛔⛔ THE DOOR RULE THIS PROJECT HAS ALREADY PAID FOR TWICE.
+     A gap at a corner is NOT a door. Two walls meeting perpendicular have AABBs
+     inflated by PLAYER_RADIUS 0.6 on a 3m TILE, and those overlap on the
+     diagonal, so the opening is sealed. The last generator that got this wrong
+     measured 91% of maps sealed and 24% stranding a hider spawn, and was never
+     shipped. Two rules, both ENFORCED here rather than hoped for:
+       1. only ever cut STRICTLY INSIDE a shared run, never its first or last cell
+       2. the two cells the doorway OPENS ONTO must not themselves be walls, so
+          every door is a straight three-cell passage (1.8m clear against a 1.2m
+          body) and never a diagonal squeeze past a wall end. */
+  function carve(sh){
+    const cands = [];
+    for(let at = sh.lo+1; at <= sh.hi-1; at++){
+      const cx = sh.vertical ? sh.x : at, cy = sh.vertical ? at : sh.y;
+      const a = sh.vertical ? ckey(cx-1,cy) : ckey(cx,cy-1);
+      const b = sh.vertical ? ckey(cx+1,cy) : ckey(cx,cy+1);
+      if(wallSet.has(a) || wallSet.has(b)) continue;
+      cands.push([cx,cy]);
+    }
+    if(cands.length){
+      const d = cands[Math.floor(rnd()*cands.length)];
+      doorSet.add(ckey(d[0], d[1]));
+      return true;
+    }
+    /* ⛔ FAILING TO CUT A DOOR IS NOT AN OPTION, IT IS A SEALED ROOM.
+       The first version returned false here and let the spanning tree try
+       another edge - and ground3d measured a map in 13 pieces on 1 seed in 14,
+       because a short shared run can have its ONE legal cell blocked by a
+       perpendicular wall and no other edge to fall back on.
+       So when every candidate is blocked, WIDEN instead of giving up: take the
+       middle of the run and clear the perpendicular cells that were in the way.
+       A wider opening is only a cosmetic difference; an unreachable room is a
+       player standing in a box for a whole round. */
+    const at = sh.lo + 1 + Math.floor((sh.hi - sh.lo - 1)/2);
+    const cx = sh.vertical ? sh.x : at, cy = sh.vertical ? at : sh.y;
+    doorSet.add(ckey(cx, cy));
+    doorSet.add(sh.vertical ? ckey(cx-1,cy) : ckey(cx,cy-1));
+    doorSet.add(sh.vertical ? ckey(cx+1,cy) : ckey(cx,cy+1));
+    return true;
+  }
+
+  const BLOCKS = Math.max(2, Math.round(th.buildings/3));
+  for(let bi=0; bi<BLOCKS; bi++){
+    const bw = 9 + Math.floor(rnd()*8), bh = 8 + Math.floor(rnd()*7);
     let x0=0, y0=0, ok=false;
-    for(let tryN=0; tryN<24 && !ok; tryN++){
-      x0=3+Math.floor(rnd()*(cols-bw-6)); y0=3+Math.floor(rnd()*(rows-bh-6));
+    for(let tryN=0; tryN<40 && !ok; tryN++){
+      x0 = 3 + Math.floor(rnd()*Math.max(1, cols-bw-6));
+      y0 = 3 + Math.floor(rnd()*Math.max(1, rows-bh-6));
       ok = true;
-      for(const r of placedRects){
-        if(x0-2 <= r.x1 && x0+bw+2 >= r.x0 && y0-2 <= r.y1 && y0+bh+2 >= r.y0){ ok=false; break; }
+      /* three cells between blocks, not two: that gap is the ALLEY, and an alley
+         you can actually walk down is half of what makes a favela readable. */
+      for(const r of placedRects)
+        if(x0-3 <= r.x1 && x0+bw+3 >= r.x0 && y0-3 <= r.y1 && y0+bh+3 >= r.y0){ ok=false; break; }
+    }
+    if(!ok) continue;                     // no room left; a sparser town beats a sealed one
+    const block = { x0, y0, x1:x0+bw, y1:y0+bh };
+    placedRects.push(block);
+
+    const units = []; bsp(block, 2, units);                     // 2-4 units sharing walls
+    const rooms = []; for(const u of units) bsp(u, 1, rooms);   // each split again
+
+    for(const r of rooms){
+      for(let x=r.x0;x<=r.x1;x++){ wallSet.add(ckey(x,r.y0)); wallSet.add(ckey(x,r.y1)); }
+      for(let y=r.y0;y<=r.y1;y++){ wallSet.add(ckey(r.x0,y)); wallSet.add(ckey(r.x1,y)); }
+    }
+
+    /* ⛔ CONNECTIVITY BY CONSTRUCTION, NOT BY LUCK. A spanning tree over the rooms
+       means every room reaches every other before a single extra door is
+       considered. The union only happens if the door was actually CUT, so a shared
+       wall with no legal door position leaves the two components apart for a later
+       edge to join instead of silently claiming success. */
+    const parent = rooms.map(function(_,i){ return i; });
+    const find = function(i){ return parent[i]===i ? i : (parent[i] = find(parent[i])); };
+    const edges = [];
+    for(let i=0;i<rooms.length;i++) for(let j=i+1;j<rooms.length;j++){
+      const sh = shared(rooms[i], rooms[j]); if(sh) edges.push({ i:i, j:j, sh:sh });
+    }
+    for(let k=edges.length-1;k>0;k--){ const m=Math.floor(rnd()*(k+1)); const tmp=edges[k]; edges[k]=edges[m]; edges[m]=tmp; }
+    for(const e of edges){
+      const a = find(e.i), b = find(e.j);
+      if(a !== b){ if(carve(e.sh)) parent[a] = b; }
+      else if(rnd() < 0.24) carve(e.sh);      // a loop, so no room is a dead end
+    }
+    // at least two ways in, on different sides: a block is a route, not a trap
+    const sides = [
+      { vertical:true,  x:block.x0, lo:block.y0, hi:block.y1 },
+      { vertical:true,  x:block.x1, lo:block.y0, hi:block.y1 },
+      { vertical:false, y:block.y0, lo:block.x0, hi:block.x1 },
+      { vertical:false, y:block.y1, lo:block.x0, hi:block.x1 }
+    ];
+    for(let k=sides.length-1;k>0;k--){ const m=Math.floor(rnd()*(k+1)); const tmp=sides[k]; sides[k]=sides[m]; sides[m]=tmp; }
+    const wantDoors = 2 + (rnd()<0.5?1:0);
+    let cutN = 0;
+    for(const s of sides){ if(cutN >= wantDoors) break; if(carve(s)) cutN++; }
+
+    /* furnish room by room. Clutter FIRST - put() refuses an occupied cell, so
+       roofing before furnishing leaves a bare interior, and things to stand among
+       are exactly what makes a room worth hiding in. */
+    for(const r of rooms){
+      const iw = r.x1-r.x0-1, ih = r.y1-r.y0-1;
+      if(iw < 1 || ih < 1) continue;
+      const n = 1 + Math.floor(rnd()*3);
+      for(let k=0;k<n;k++){
+        const cx = r.x0+1+Math.floor(rnd()*iw), cy = r.y0+1+Math.floor(rnd()*ih);
+        put(cx, cy, ['crate','barrel','chest','table'][Math.floor(rnd()*4)]);
       }
+      for(let y=r.y0+1;y<r.y1;y++) for(let x=r.x0+1;x<r.x1;x++)
+        if(rnd() < 0.66) put(x,y,'roof');
     }
-    if(!ok) continue;                       // no room left; a sparser town beats a sealed one
-    placedRects.push({ x0, y0, x1:x0+bw, y1:y0+bh });
-    const mx=x0+(bw>>1), my=y0+(bh>>1);
-    const pair = rnd()<0.5;                    // N+S, or E+W: always through-routes
-    for(let x=x0;x<=x0+bw;x++){
-      if(!(pair && x===mx)) put(x,y0,'wall');
-      if(!(pair && x===mx)) put(x,y0+bh,'wall');
+  }
+  // walls LAST: every cell that is a wall and was not chosen as a doorway
+  for(const k2 of wallSet){
+    if(doorSet.has(k2)) continue;
+    const c = k2.split(','); put(+c[0], +c[1], 'wall');
+  }
+  /* ⛔⛔⛔ AND NOW RESERVE THE DOORWAYS, OR THE COVER PASS FILLS THEM IN.
+     This is what actually sealed the rooms, and it was not the door rule at all.
+     The stands-of-cover pass below runs AFTER this and scatters trees, boulders
+     and crates across the whole map with the same put() - and put() only refuses
+     a cell that is already OCCUPIED. A doorway is by definition an empty cell, so
+     a boulder is free to land in one, and a boulder is 2.8 units wide against a
+     3 unit tile. Measured before this fix: a 1045-cell room sealed on one seed
+     and a 504-cell room on another.
+     The old generator got away with it by luck - 7-11 tiny buildings with one or
+     two doorways each is a small target. A favela has doors everywhere.
+     Reserving marks the cell as taken WITHOUT placing anything in it, so nothing
+     downstream can ever choose it. The two cells the door opens onto are reserved
+     too, unless they are walls - a boulder pressed against a doorway inflates its
+     AABB by PLAYER_RADIUS into the gap and narrows a 1.8m opening to nothing. */
+  for(const k2 of doorSet){
+    const c = k2.split(','), dx = +c[0], dy = +c[1];
+    seen.add(ckey(dx,dy));
+    for(const off of [[1,0],[-1,0],[0,1],[0,-1]]){
+      const nx2 = dx+off[0], ny2 = dy+off[1], nk = ckey(nx2,ny2);
+      if(wallSet.has(nk) && !doorSet.has(nk)) continue;   // a wall belongs there
+      seen.add(nk);
     }
-    for(let y=y0;y<=y0+bh;y++){
-      if(!(!pair && y===my)) put(x0,y,'wall');
-      if(!(!pair && y===my)) put(x0+bw,y,'wall');
-    }
-    /* floor clutter FIRST: put() refuses an occupied cell, so roofing before
-       furnishing would leave the interior bare - and things to stand among are
-       exactly what makes an interior worth hiding in */
-    put(mx,my,'crate'); if(rnd()<0.7) put(mx+1,my,'barrel');
-    if(rnd()<0.5) put(mx-1,my,'chest'); if(rnd()<0.5) put(mx,my+1,'table');
-    for(let y=y0+1;y<y0+bh;y++) for(let x=x0+1;x<x0+bw;x++)
-      if(rnd() < 0.62) put(x,y,'roof');
   }
   /* ⭐ COVER COMES IN STANDS, NOT SPRINKLES. Uniform density is the same mistake
      the litter made: it fills a map evenly, which reads as noise and gives a
@@ -2251,8 +2406,12 @@ function makeRandomMap(seed){
      Named at generation so both sides say the same word: the hunter's readout and
      the hider's warning have to agree or the whole exchange of information is
      noise. */
+  /* the sweep zone is the BLOCK, not the room. Stephen: "it's a fairly large zone
+     already... if it pings them then it forces the alien to actually look around
+     that area." A per-room sweep would hand over the answer; a per-block ping says
+     "they are in these six rooms somewhere, go and walk them." */
   const zones = placedRects.map((r,i)=> ({ id:i, x0:r.x0, y0:r.y0, x1:r.x1, y1:r.y1,
-                                           name:'BUILDING ' + (i+1) }));
+                                           name:'BLOCK ' + (i+1) }));
   return { format:'scanner-map', version:1, name:'random_'+(seed%10000), grid:{cols,rows}, terrain:t, objects:objs, spawns, zones };
 }
 
@@ -4194,6 +4353,22 @@ window.__aac3dLevel = function(step){
   }
   const mainId = sizes.indexOf(biggest);
   const stranded = spawnRegions.filter(r=> r < 0 || r !== mainId).length;
+  /* ⭐ WHERE the pockets are, not just how many. "13 regions" tells you a map is
+     broken; a centroid tells you WHICH ROOM, which is the difference between
+     guessing at a generator and fixing it. */
+  const pockets = [];
+  {
+    const acc = sizes.map(()=>({ n:0, x:0, z:0 }));
+    for(let c=0;c<nx*nz;c++){
+      const r = region[c]; if(r < 0 || r === mainId) continue;
+      const p = at(c%nx, (c/nx)|0);
+      acc[r].n++; acc[r].x += p.x; acc[r].z += p.z;
+    }
+    for(let r=0;r<acc.length;r++) if(acc[r].n)
+      pockets.push({ cells:acc[r].n, x:+(acc[r].x/acc[r].n).toFixed(1), z:+(acc[r].z/acc[r].n).toFixed(1),
+                     gx:Math.floor((acc[r].x/acc[r].n + halfW)/TILE), gy:Math.floor((acc[r].z/acc[r].n + halfH)/TILE) });
+    pockets.sort((a,b)=> b.cells-a.cells);
+  }
   // cover distance + the two-tone decision, sampled on the free cells
   let far = 0, twoTone = 0, sampled = 0;
   const dists = [];
@@ -4230,6 +4405,7 @@ window.__aac3dLevel = function(step){
     objects:(MAP.objects||[]).length, walls:objs.wall||0, byType:objs,
     solids:solids.length, paintTargets:paintTargets.length, platforms:platforms.length,
     freeCells:free, regions:sizes.length, biggestRegionPct:+(biggest/Math.max(1,free)).toFixed(3),
+    pockets: pockets.slice(0,10),
     hiderSpawns:spawnRegions.length, strandedSpawns:stranded,
     coverDist:{ p10:q(0.10), median:q(0.5), p90:q(0.90) },
     farFromCoverPct:+(far/Math.max(1,sampled)).toFixed(3),
@@ -7654,7 +7830,7 @@ function updateCamera(role, abd){
        standing in a car park sees. The whole reason a hider was safe under that
        roof was the saucer's viewpoint, so taking the viewpoint away is what
        makes the trade honest in both directions. */
-    if(onFoot()) orbit(localPos, seekerYaw, seekerPitch, 6.5, 1.4);
+    if(onFoot()) orbit(localPos, seekerYaw, seekerPitch, 6.5, 1.4, true);
     else if(seekerView==='topdown'){
       camera.position.set(localPos.x, localPos.y, localPos.z);
       camera.up.set(Math.sin(seekerYaw),0,Math.cos(seekerYaw));
@@ -7680,7 +7856,7 @@ function updateCamera(role, abd){
     camera.up.set(Math.sin(yaw),0,Math.cos(yaw));
     camera.lookAt(localPos.x, 0, localPos.z);
     if(paintOpen) stagePan();          // SKY is a studio view too — keep it clear of the dock
-  }else orbit(localPos, yaw, pitch, 6.5, 1.4);
+  }else orbit(localPos, yaw, pitch, 6.5, 1.4, true);
 }
 /* P38: the dock is on the right, so "centred in the viewport" puts your body half
    under it and under the camera chips. A LENS SHIFT centres you in the space you
@@ -7699,9 +7875,46 @@ function stagePan(){
   if(!_panPx){ if(camera.view && camera.view.enabled) camera.clearViewOffset(); return; }
   camera.setViewOffset(innerWidth, innerHeight, _panPx, 0, innerWidth, innerHeight);
 }
-function orbit(c, y, p, dist, eyeH){
-  const hd=dist*Math.cos(p), h=dist*Math.sin(p);
-  camera.position.set(c.x - Math.sin(y)*hd, c.y + h + 1, c.z - Math.cos(y)*hd);
+/* ⛔⛔⛔ 2026-08-02 — THE CAMERA HAD NO IDEA WALLS EXISTED.
+   A third-person orbit parks the eye 6.5m behind you. Outdoors that is fine.
+   Step inside a room and the eye is 6.5m THROUGH the wall behind you, so the
+   screen fills with one flat unlit slab and you cannot see your own character,
+   the room, or the alien walking in. Caught by looking at a screenshot after the
+   favela landed - twelve gates were green and the interiors were unusable.
+   It was survivable before only because buildings were tiny and rare; a favela
+   is a game played indoors, so this stops being cosmetic and starts being the
+   whole feature.
+   Fix is the standard one: cast from the head to where the camera WANTS to be,
+   and if anything is in the way, pull in to just short of it. `losMeshes` is the
+   same set line of sight already uses, so what blocks the camera is exactly what
+   blocks a hunter's view of you - no third notion of solidity to keep in sync. */
+const _camDir = new THREE.Vector3(), _camFrom = new THREE.Vector3();
+function orbit(c, y, p, dist, eyeH, collide){
+  const hd = dist*Math.cos(p), h = dist*Math.sin(p);
+  let px = c.x - Math.sin(y)*hd, py = c.y + h + 1, pz = c.z - Math.cos(y)*hd;
+  /* ⚖ OPT-IN, AND THE PAINT STUDIO OPTS OUT. The studio camera is a MIRROR, not
+     a view of the world - it sits two metres from your face so you can see a
+     brush stroke land, and pulling it against a wall behind you shoves it inside
+     your own head. studio3d caught that on two viewports the moment collision
+     went in ("a tap on the body did not hit it"), which is exactly the gate
+     doing its job. The saucer opts out too: at 17m up there is nothing to clip
+     and snapping the eye onto a roof mid-flight would be worse than the problem. */
+  if(collide && losMeshes && losMeshes.length){
+    _camFrom.set(c.x, c.y + eyeH, c.z);
+    _camDir.set(px - _camFrom.x, py - _camFrom.y, pz - _camFrom.z);
+    const want = _camDir.length();
+    if(want > 0.05){
+      _camDir.divideScalar(want);
+      ray.set(_camFrom, _camDir); ray.far = want;
+      const hit = ray.intersectObjects(losMeshes, false);
+      if(hit.length){
+        // 0.35 of clearance so the near plane never ends up inside the surface
+        const d = Math.max(0.6, hit[0].distance - 0.35);
+        px = _camFrom.x + _camDir.x*d; py = _camFrom.y + _camDir.y*d; pz = _camFrom.z + _camDir.z*d;
+      }
+    }
+  }
+  camera.position.set(px, py, pz);
   camera.lookAt(c.x, c.y+eyeH, c.z);
 }
 
