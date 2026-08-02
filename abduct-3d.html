@@ -4309,6 +4309,46 @@ window.__aac3dRound = function(){
     soloGrace:+soloGraceLeft().toFixed(1), botExists:!!bot,
     camo:+camoLevel.toFixed(2), match:+myMatch.toFixed(2) };
 };
+/* ⭐ 2026-08-02 — LOOKING IS PART OF THE JOB (see CLAUDE.md).
+   Twelve gates passed on a world with a see-through floor, water that flares to
+   white and an empty void at the edges, because not one of them opens its eyes.
+   These two hooks exist so a camera can be put where a PLAYER ends up - and,
+   more importantly, at the angles nobody would choose but everybody eventually
+   hits: under the floor, at the boundary, face down in the water. */
+let _freeCam = null;
+window.__aac3dFreeCam = function(px,py,pz, lx,ly,lz){
+  if(px === null){ _freeCam = null; return 'off'; }
+  _freeCam = { p:new THREE.Vector3(px,py,pz), l:new THREE.Vector3(lx,ly,lz) };
+  return 'on';
+};
+/* put the player somewhere interesting. Returns what it found so a shot can be
+   labelled honestly - "no water on this map" is a real answer. */
+window.__aac3dTeleport = function(what){
+  if(!MAP) return 'no map';
+  const find = key => {
+    for(let gy=0; gy<mapRows; gy++) for(let gx=0; gx<mapCols; gx++)
+      if(MAP.terrain[gy] && MAP.terrain[gy][gx] === key) return cellToWorld(gx, gy);
+    return null;
+  };
+  if(what === 'edge'){
+    localPos.set(-halfW + 2.5, 0, 0); velY = 0; return 'edge';
+  }
+  if(what === 'water'){
+    const w = find('water'); if(!w) return 'no water on this map';
+    localPos.set(w.x, 0, w.z); velY = 0; return 'water';
+  }
+  if(what === 'under'){
+    // the camera goes under, not the body — moveLocal clamps y to the ground
+    _freeCam = { p:new THREE.Vector3(localPos.x, -3.2, localPos.z),
+                 l:new THREE.Vector3(localPos.x + 6, 1.2, localPos.z + 6) };
+    return 'under';
+  }
+  if(what === 'horizon'){
+    _freeCam = { p:new THREE.Vector3(0, 3, 0), l:new THREE.Vector3(0, 3, -halfH*2) };
+    return 'horizon';
+  }
+  return 'unknown: ' + what;
+};
 window.__aac3dLobbyDbg = function(){
   return { host:isHost(), hsl:hideSecsLocal, raw:getState('hideSecs'),
            ph:getState('phase')||'waiting',
@@ -7341,6 +7381,8 @@ function flyLocal(dt){          // spectator free-fly
 
 function updateCamera(role, abd){
   camera.up.set(0,1,0);
+  // test-only free camera — see __aac3dFreeCam. Never set in normal play.
+  if(_freeCam){ camera.position.copy(_freeCam.p); camera.lookAt(_freeCam.l); return; }
   /* the lens shift belongs to the studio and nothing else, so it is cleared here
      rather than in six branches that would each have to remember */
   if(!paintOpen && camera.view && camera.view.enabled) camera.clearViewOffset();
