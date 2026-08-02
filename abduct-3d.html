@@ -635,8 +635,8 @@
   <div id="reticle"><div class="ring"></div></div>
 
   <div id="controls">
-    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump (get on top of things and paint up there) · <kbd>V</kbd> sky view · <kbd>E</kbd> paint (wet paint DRIPS if you run) · <kbd>T</kbd> taunt · <kbd>F</kbd> decoy · <kbd>R</kbd> hold to FREE a caught teammate · <kbd>H</kbd> switch to HUNTING (solo practice) — EARN while they look and see nothing</div>
-    <div id="ctrlSeeker" class="hidden"><b>Seeker (UFO)</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd>/<kbd>Shift</kbd> altitude · hold <kbd>Mouse</kbd> beam (drains) · <kbd>G</kbd> echo scan (8s fuse, pings anything that MOVED) · <kbd>L</kbd> land and hunt on foot with the freeze ray · <kbd>V</kbd> view</div>
+    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump (get on top of things and paint up there) · <kbd>V</kbd> sky view · <kbd>E</kbd> paint (wet paint DRIPS if you run) · <kbd>T</kbd> taunt · <kbd>F</kbd> decoy · <kbd>C</kbd> sticky tongue · <kbd>X</kbd> jammer · <kbd>R</kbd> hold to FREE a caught teammate · <kbd>H</kbd> switch to HUNTING (solo practice) — EARN while they look and see nothing</div>
+    <div id="ctrlSeeker" class="hidden"><b>Seeker (UFO)</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd>/<kbd>Shift</kbd> altitude · hold <kbd>Mouse</kbd> beam (drains) · on foot it is a STUN GUN · <kbd>G</kbd> echo scan (8s fuse, pings anything that MOVED) · <kbd>L</kbd> land and hunt on foot with the freeze ray · <kbd>V</kbd> view</div>
     <div id="ctrlSpec" class="hidden"><b>Spectating</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · mouse look · back next round</div>
     <div id="ctrlPad" style="margin-top:5px;opacity:.72"><b>Controller</b> — sticks move/look · RT beam · A camo · B decoy · X pose · Y view · RB/LB altitude</div>
     <!-- the ? button cannot be clicked while the mouse is captured, so the key
@@ -845,25 +845,43 @@
       cleared — and running is what gets people caught.</li>
       <li><b>LAND</b> — set the ship down and hunt on foot. A roof is a roof: no
       altitude ever lets you see under one. On the ground you lose the view from above
-      and the wide beam, and you get the <b>freeze ray</b> instead — nine metres, but
-      only inside a narrow cone you have to be aiming, and only in clear sight. A
-      chameleon caught in it is slowed, not stopped, and every one of them can see you
-      standing there. Landing is a decision that says <i>somebody is under that roof</i>.</li>
+      and the beam, and you carry a <b>stun gun</b> instead — nine metres, inside a
+      narrow cone you have to be aiming, in clear sight. A stunned chameleon cannot
+      move for <b>twenty seconds</b>: that is your window to get back to the ship, fly
+      over and beam them up, <b>and a stunned one can be taken straight through a
+      roof</b>. Everyone you have already caught is sitting in that parked ship while
+      you do it.</li>
     </ul>
 
+    <h3>Fighting back</h3>
+    <p>You cannot hurt an alien, but you are not helpless either.</p>
+    <ul>
+      <li><b>STICK</b> — the sticky tongue. It pins an alien where it stands for <b>eight
+      seconds</b>, which is not enough to beat them, only enough to get away and hide again.
+      Long cooldown, and firing it gives your position away.</li>
+      <li><b>JAM</b> — drop a scanner jammer. Any sweep of the block it sits in comes back
+      <b>occupied</b>, whether anybody is in there or not. Plant one across the valley, hide
+      somewhere else, and watch a hunter land and search six empty rooms. An alien on foot who
+      walks into it will break it — and then they know they were played.</li>
+      <li><b>FREE</b> — get your friends out. See below.</li>
+    </ul>
+    <p class="dim">Nobody can be stunned twice in a row: once an effect wears off you are immune
+    for a while, so nothing ever turns into two players locking each other in place forever.</p>
+
     <h3>Getting caught is not the end</h3>
-    <p>A chameleon caught in the beam <b>hangs there for twenty seconds</b> before the ship
-    takes them — lit up like a lantern, visible to everybody on the map. Any other chameleon can
-    walk over and hold <b>FREE</b> for four seconds to cut them loose.</p>
-    <p>It is the most dangerous thing in the game and it is meant to be. You have to leave cover,
-    stand still in the open, right next to the brightest object on the map, while the hunter who
-    put them there decides whether to come back for both of you. Freeing somebody is worth more
-    than surviving a round on your own.</p>
+    <p>A caught chameleon is carried around <b>inside the ship</b>. There is exactly one moment
+    they can be reached: when that alien <b>lands</b> to search a building and leaves the saucer
+    sitting on the ground. Walk up to it and hold <b>FREE</b> for three and a half seconds.</p>
+    <p>That is the whole bargain for the hunter — see under the roofs, or guard what you have
+    caught. They cannot do both. And for you it is the most dangerous thing in the game: you have
+    to leave cover, stand still in the open next to an alien's ship, and hope they are still deep
+    inside a building. Freeing somebody is worth more than surviving a round on your own.</p>
 
     <h3>The controls, on a keyboard</h3>
     <p class="dim">WASD moves, the mouse looks, Space jumps, E paints, V changes view,
-    Q changes pose, T taunts, F drops a decoy, G sweeps the area, L lands the ship or takes
-    off again, R (held) cuts a caught teammate loose, and Escape backs out of the paint studio — or opens Settings when nothing
+    Q changes pose, T taunts, F drops a decoy, C fires the sticky tongue, X plants a jammer,
+    G sweeps the area, L lands the ship or takes off again, R (held) frees a teammate from a
+    parked ship, and Escape backs out of the paint studio — or opens Settings when nothing
     else is open.</p>
 
     <h3>If the looking feels wrong</h3>
@@ -1074,8 +1092,16 @@
         border:1.5px solid var(--amber);color:var(--amber);font-size:22px">🎨</button>
       <button id="tView" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:var(--panel);
         border:1.5px solid var(--line);color:var(--txt);font-size:20px">👁</button>
-      <button id="tPose" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:var(--panel);
-        border:1.5px solid var(--line);color:var(--txt);font-size:20px">🕺</button>
+      <!-- ⛔ POSE LEFT THE TOUCH COLUMN (8/02). The hider's verb count reached nine
+           and hud3d measured the overflow spilling across the middle of a 667px
+           screen - which is Stephen's original "a ton of writing on the screen"
+           complaint arriving as buttons instead of text. Only the RIGHT-12 column
+           sits clear of the sight line, and it holds five. Pose is the one thing
+           here you already set somewhere better: the paint studio has a pose row
+           an inch from the swatch you are choosing, which is where you are
+           thinking about your shape anyway. -->
+      <button id="tStick" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(224,101,94,.16);
+        border:1.5px solid var(--danger);color:#F2A6A0;font-size:11px;font-weight:800">STICK</button>
       <button id="tTaunt" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:rgba(224,101,94,.14);
         border:1.5px solid var(--danger);color:var(--danger);font-size:20px">📣</button>
       <button id="tDecoy" class="tbtn" style="width:62px;height:62px;border-radius:16px;background:rgba(142,127,214,.16);
@@ -1112,6 +1138,14 @@
     <!-- ⭐ CUT THEM LOOSE. Contextual: it only exists while you are standing next
          to somebody in a beam, so it never competes for room in the column and it
          never needs explaining - it appears exactly when it means something. -->
+    <!-- ⭐ ONE CONTEXTUAL SLOT, SHARED. JAM only means anything inside a block and
+         FREE only means anything beside a parked ship, so they are never both the
+         thing you are about to do - and two permanent buttons here is what put 14%
+         of writing across the sight line. FREE wins the slot when both apply,
+         because a friend in a ship outranks a trick. -->
+    <button id="tJam" class="tbtn hidden" style="position:fixed;right:86px;bottom:88px;z-index:12;
+      width:62px;height:62px;border-radius:16px;background:rgba(142,127,214,.18);
+      border:1.5px solid #8E7FD6;color:#C6BAF6;font-size:11px;font-weight:800;line-height:1.1">JAM</button>
     <button id="tFree" class="tbtn hidden" style="position:fixed;right:86px;bottom:88px;z-index:12;
       width:62px;height:62px;border-radius:16px;background:rgba(63,208,224,.20);
       border:1.5px solid var(--cyan);color:var(--cyan);font-size:12px;font-weight:800;line-height:1.1">FREE</button>
@@ -1186,11 +1220,32 @@ const UFO_SKY_ALT = 9;          // the 👁 sky-check height, unchanged: a hunte
    and hear coming. */
 const LAND_ALT   = 14;          // set down from this height or lower
 const FOOT_SPEED = 9.2;         // 0.92x HIDER_SPEED — a hider who runs, escapes
-const FREEZE_R    = 9;          // reach of the ray
+const FREEZE_R    = 9;          // reach of a shot, either side
 const FREEZE_ARC  = 0.52;       // half-angle ~30deg: you must be AIMED at them
-const FREEZE_DRAIN= 0.19;       // battery/sec on foot (the saucer's beam costs 0.25)
-const FREEZE_SLOW = 0.28;       // speed a caught hider keeps — slowed, never frozen solid
-const FREEZE_HOLD = 1.5;        // sec the grip lingers after the ray leaves you
+/* ⭐⭐ 2026-08-02 — THE STUN GUN, AND WHY THE TWO STUNS ARE NOT THE SAME LENGTH.
+   Stephen: "the aliens then need a stun gun so if when they do spot the chameleon
+   they can stun them and they'll have 20 seconds or so to run back to their ship
+   and fly over to him. they should be able to abduct through buildings."
+   And for the other side: "there also could be that sticky tongue that the
+   chameleon has that could hit the alien and stick them in place... there needs to
+   be a cool down and a way to also prevent this from happening or make it very
+   rare so that we don't have a whole bunch of stalemates... that's a broken game
+   right there."
+   He is right that it is broken, and the fix is that the two abilities have
+   DIFFERENT JOBS. The alien's stun has to last long enough to fetch a ship, so it
+   is 20s. The tongue only has to buy a chameleon time to break away and re-hide,
+   which is 8. Making them symmetrical is precisely what would create the standoff
+   he is describing.
+   RESTUN_LOCK is the hard rule underneath both: once you have been stunned you
+   cannot be stunned again for 25 seconds. Chain-locking is impossible by
+   construction rather than by tuning. And a stalemate is never lethal anyway - a
+   stuck alien loses time, nothing else. */
+const STUN_SECONDS   = 20;      // alien's shot: long enough to go and get the ship
+const TONGUE_SECONDS = 8;       // chameleon's tongue: long enough to get away, no more
+const RESTUN_LOCK    = 25;      // nobody can be stunned twice inside this window
+const STUN_CD        = 9;       // alien's shot cooldown
+const TONGUE_CD      = 32;      // the tongue is a real decision, not a spam button
+const JAMMER_CD      = 45;      // one lie at a time
 const SENS = 0.0022;
 const BEAM_RADIUS = 4.2;        // horizontal catch radius under the UFO
 const LOCK_TIME = 2.2;          // sec of sustained beam to abduct
@@ -1239,7 +1294,7 @@ const ABDUCT_POINTS = 100, SURVIVE_POINTS = 60, RESCUE_POINTS = 80;
    that could ruin the game."
    He was right to be careful. Give a hider a weapon and it stops being
    hide-and-seek. So they get NERVE instead of a gun: a caught chameleon hangs in
-   the tractor beam for HELD_SECONDS, lit up like a lantern, and any other hider
+   their captor's saucer, and any other hider
    can walk over and cut them loose. It costs the rescuer everything camouflage is
    for - you have to leave cover, stand in the open next to the brightest object
    on the map, and hold still for four seconds while a hunter who can see the beam
@@ -1247,9 +1302,17 @@ const ABDUCT_POINTS = 100, SURVIVE_POINTS = 60, RESCUE_POINTS = 80;
    ⭐ It also fills the one real gap the research found in the game this is modelled
    on: co-op hiding barely exists there. A second hider currently changes nothing
    about how you play. Now they are the difference between out and still in. */
-const HELD_SECONDS = 20;        // how long you hang there before the ship takes you
-const RESCUE_R = 3.0;           // how close a rescuer must stand
-const RESCUE_TIME = 4.0;        // how long they must hold it
+/* ⭐ AND THE RESCUE MOVED TO THE SHIP. Stephen: "perhaps they could retrieve
+   their friends from the UFO and it would take 3 seconds or four seconds to
+   extract them."
+   Captives ride along in the saucer, so there is only one moment they can be
+   reached: when the alien LANDS to search a building on foot and leaves the ship
+   sitting there. That single fact is what puts a price on landing - see under the
+   roofs, or guard what you have caught, never both. There is no timer any more:
+   you are a prisoner until somebody comes or the round ends, which is also what
+   makes a partner worth having. */
+const RESCUE_R = 3.4;           // how close to the parked ship a rescuer must stand
+const RESCUE_TIME = 3.5;        // how long they must hold it
 
 /* Stephen 7/28: "flavored with lots more color". This is a CAMOUFLAGE game and the
    old palette was sixteen shades of the same dark slate — you could not tell one
@@ -4539,8 +4602,9 @@ window.__aac3dRound = function(){
     abducted:amAbducted(), roundId:getState('roundId')||0,
     // 8/02: the ground hunt + the sweep, so a gate can assert on both
     onfoot:onFoot(), alt:+localPos.y.toFixed(2), canLand: localPos.y <= LAND_ALT,
-    frozen: ((me && me.getState('froz'))||0) > Date.now(),
-    held: amHeld(), heldLeft:+heldLeft().toFixed(1),
+    stunned: amStunned(), stunLeft:+stunLeft().toFixed(1),
+    stunCd:+stunCd.toFixed(1), tongueCd:+tongueCd.toFixed(1), jamCd:+jamCd.toFixed(1),
+    held: amHeld(), prisonShip: !!myPrisonShip(),
     freeProg: +(((me && me.getState('freeProg'))||0)).toFixed(2),
     canFree: !!rescueTarget(),
     zones: (MAP && MAP.zones && MAP.zones.length) || 0,
@@ -4591,6 +4655,48 @@ window.__aac3dTeleport = function(what){
     return 'horizon';
   }
   return 'unknown: ' + what;
+};
+/* test-only: put me exactly here, facing exactly there. The cone shot needs a
+   known geometry or a gate for it is measuring luck. */
+window.__aac3dPlace = function(x, y, z, yaw){
+  localPos.set(x, y, z);
+  if(myRole()==='seeker') seekerYaw = yaw; else window.__yawSet ? window.__yawSet(yaw) : 0;
+  localYaw = yaw;
+  return { x:localPos.x, y:localPos.y, z:localPos.z, yaw:localYaw };
+};
+window.__aac3dFire = function(what){
+  if(what==='stun')   { fireStun();   return { cd:+stunCd.toFixed(1) }; }
+  if(what==='tongue') { fireTongue(); return { cd:+tongueCd.toFixed(1) }; }
+  if(what==='jam')    { dropJammer(); return { cd:+jamCd.toFixed(1) }; }
+  if(what==='clearcd'){ stunCd = tongueCd = jamCd = 0; return 'ok'; }
+  return 'unknown';
+};
+/* test-only: two points `dist` apart on genuinely open ground with clear line of
+   sight between them. A cone-shot gate that places players at a fixed coordinate
+   is measuring whether the map generator happened to leave that spot empty - the
+   first version fired across a building wall and reported the gun broken. */
+window.__aac3dOpenPair = function(dist){
+  dist = dist || 4;
+  const clear = (x,z)=> !solids.some(s=> x>s.minX-PLAYER_RADIUS && x<s.maxX+PLAYER_RADIUS &&
+                                         z>s.minZ-PLAYER_RADIUS && z<s.maxZ+PLAYER_RADIUS);
+  for(let t=0;t<600;t++){
+    const x = (Math.random()*2-1)*(halfW-8), z = (Math.random()*2-1)*(halfH-8);
+    if(terrainKeyAt(x,z)==='void' || !clear(x,z)) continue;
+    for(const ang of [0, Math.PI/2, Math.PI, -Math.PI/2]){
+      const bx = x + Math.sin(ang)*dist, bz = z + Math.cos(ang)*dist;
+      if(terrainKeyAt(bx,bz)==='void' || !clear(bx,bz)) continue;
+      if(!hasLOS({ x:x, y:1.3, z:z }, { x:bx, y:0, z:bz })) continue;
+      return { ax:+x.toFixed(2), az:+z.toFixed(2), bx:+bx.toFixed(2), bz:+bz.toFixed(2), yaw:ang };
+    }
+  }
+  return null;
+};
+window.__aac3dCombat = function(){
+  return { STUN_SECONDS, TONGUE_SECONDS, RESTUN_LOCK, STUN_CD, TONGUE_CD, JAMMER_CD,
+           RESCUE_R, RESCUE_TIME, FREEZE_R, FREEZE_ARC,
+           myStun:+stunLeft().toFixed(1),
+           myImmune:+Math.max(0,(((me&&me.getState('stunImmune'))||0)-Date.now())/1000).toFixed(1),
+           jam: (me && me.getState('jam')) || null };
 };
 window.__aac3dLobbyDbg = function(){
   return { host:isHost(), hsl:hideSecsLocal, raw:getState('hideSecs'),
@@ -5169,6 +5275,7 @@ function gatherGamepad(role, abd){
    here as radians-at-1.0-sensitivity, so LOOK SENSITIVITY and INVERT Y are
    applied in exactly one place and the three inputs can never drift apart. If
    you add a fourth look input, route it through here too. */
+window.__yawSet = function(v){ yaw = v; };
 function applyLook(dx, dy){
   const s = OPT.sens;
   dx *= s; dy *= s * (OPT.invertY ? -1 : 1);
@@ -5402,6 +5509,8 @@ function setupInput(){
     if(e.code==='KeyF') dropDecoy();                             // P37: leave a lie behind
     if(e.code==='KeyG') fireEchoScan();                          // P34: interrogate a zone for movers
     if(e.code==='KeyL'){ if(!setOnFoot(!onFoot())) SFX.lose(); }  // 8/02: set down and hunt on foot
+    if(e.code==='KeyC') fireTongue();                            // 8/02: the sticky tongue
+    if(e.code==='KeyX') dropJammer();                            // 8/02: plant a scanner jammer
     // R is HELD, not tapped — clientTick reads keys['KeyR'] every frame
     if(e.code==='KeyH') togglePractice();                        // solo: swap hiding for hunting
     if(e.code==='KeyQ' || e.code==='BracketRight') cyclePose(1);
@@ -6350,6 +6459,7 @@ const dripPool = [];              // {mesh, dieAt}
 let myScan = null;                // {x,z,r,fireAt,ring,snap:[{id,x,z}]}
 let _scanWarned = false;          // hider: so the sweep alert chirps once, not every frame
 let _freeingWas = null;           // last published rescue target, so we only write on change
+let _lastJamKill = 0;             // so a smashed jammer is only reported once
 /* SCAN_DELAY 8 -> 3: the sweep hands over far less than it used to (a room, not a
    body), so it should not also cost eight seconds of hovering. CLEAR_HOLD is the
    whole risk/reward: a room you swept stays marked for half a minute, which gives
@@ -6573,6 +6683,95 @@ function botTick(dt){
   }
 }
 
+/* ===================== STUN GUN + STICKY TONGUE (8/02) =====================
+   One shot mechanic, two owners, deliberately different numbers. Both are AIMED
+   instant shots inside a 30 degree cone with clear line of sight - not held
+   beams - because a thing you hold is a thing you can hold forever, and forever
+   is how a standoff starts.
+   ⛔ THE ANTI-STALEMATE RULE LIVES HERE AND NOWHERE ELSE: a target inside its
+   RESTUN_LOCK window simply cannot be hit again. Not resisted, not shortened -
+   the shot misses and says so. Two players cannot lock each other in a loop
+   because after the first exchange neither is a legal target for 25 seconds,
+   which is far longer than either effect. */
+let stunCd = 0, tongueCd = 0, jamCd = 0;
+function stunnedNow(st){ return ((st && st.getState('stun'))||0) > Date.now(); }
+function amStunned(){ return stunnedNow(me); }
+function stunLeft(){ return Math.max(0, (((me && me.getState('stun'))||0) - Date.now())/1000); }
+/* the first legal target in front of me, or a reason there is none */
+function coneTarget(wantRole){
+  const yw = localYaw, cosA = Math.cos(FREEZE_ARC);
+  let best = null, bd = FREEZE_R*FREEZE_R;
+  for(const p of players){
+    if(p.state === me) continue;
+    if((p.state.getState('role')||'hider') !== wantRole) continue;
+    if(p.state.getState('abducted') || p.state.getState('held')) continue;
+    const sp = posOf(p), dx = sp.x-localPos.x, dz = sp.z-localPos.z, d2 = dx*dx+dz*dz;
+    if(d2 > bd) continue;
+    const d = Math.sqrt(d2) || 1;
+    if((dx*Math.sin(yw) + dz*Math.cos(yw))/d < cosA) continue;
+    if(!hasLOS({ x:localPos.x, y:localPos.y+1.3, z:localPos.z }, sp)) continue;
+    bd = d2; best = p;
+  }
+  return best;
+}
+function shotSay(msg, bad){ scanSay(msg, bad); }
+function fireStun(){
+  if(myRole()!=='seeker' || amAbducted() || !onFoot()) return;
+  if(stunCd > 0){ SFX.lose(); return; }
+  const t = coneTarget('hider');
+  stunCd = STUN_CD;
+  if(!t){ tone(160, 0.16, 'square', 0.18, 120); shotSay('STUN — MISSED', true); return; }
+  /* ⛔ already stunned recently? Then this is not a hit. Saying so out loud
+     matters: a shot that silently does nothing reads as a broken gun. */
+  if(((t.state.getState('stunImmune'))||0) > Date.now()){
+    tone(200, 0.2, 'square', 0.2, 150); shotSay('SHIELDED — they were just hit', true); return;
+  }
+  t.state.setState('stun', Date.now() + STUN_SECONDS*1000, true);
+  t.state.setState('stunImmune', Date.now() + (STUN_SECONDS + RESTUN_LOCK)*1000, true);
+  me.setState('shot', { t:Date.now(), x:localPos.x, z:localPos.z, yaw:localYaw, kind:'stun' }, true);
+  tone(900, 0.18, 'sawtooth', 0.3, 210); setTimeout(()=>tone(300,0.3,'square',0.22,120), 90);
+  shotSay('STUNNED — GET THE SHIP', false);
+}
+function fireTongue(){
+  if(myRole()!=='hider' || amAbducted() || amHeld() || amStunned()) return;
+  if(tongueCd > 0){ SFX.lose(); return; }
+  const t = coneTarget('seeker');
+  tongueCd = TONGUE_CD;
+  if(!t){ tone(420, 0.14, 'triangle', 0.2, 260); shotSay('MISSED', true); return; }
+  if(((t.state.getState('stunImmune'))||0) > Date.now()){
+    tone(240, 0.2, 'triangle', 0.2, 180); shotSay('IT SLID OFF — too soon', true); return;
+  }
+  t.state.setState('stun', Date.now() + TONGUE_SECONDS*1000, true);
+  t.state.setState('stunImmune', Date.now() + (TONGUE_SECONDS + RESTUN_LOCK)*1000, true);
+  me.setState('shot', { t:Date.now(), x:localPos.x, z:localPos.z, yaw:localYaw, kind:'tongue' }, true);
+  tone(700, 0.1, 'triangle', 0.28, 1300); setTimeout(()=>tone(380,0.26,'sine',0.24,180), 80);
+  /* ⚖ firing GIVES YOU AWAY, and it should. Stillness is the currency of hiding
+     and you just threw something across a room. */
+  stillness = 0; wetUntil = 0;
+  shotSay('STUCK — RUN', false);
+}
+/* ===================== THE SCANNER JAMMER (8/02) =====================
+   Stephen: "a scanner jammer idea is great. the hiders could create a trap or a
+   misdirection with it making the seekers think they are in the scanner range."
+   It attacks the INFORMATION rather than the alien, which is why it fits a game
+   about hiding: a jammer makes its block read OCCUPIED to any sweep, so you plant
+   one in Block 3, hide in Block 1, and watch a hunter land on nothing and search
+   six empty rooms.
+   ⚖ It is honest in both directions. It is invisible from the air - a sweep is
+   the only thing it lies to - but an alien standing in the room SEES it and can
+   break it, and breaking one tells them they have been played, which is real
+   information going the other way. A lie you can never be caught in is not a
+   mechanic, it is a cheat. */
+function dropJammer(){
+  if(myRole()!=='hider' || amAbducted() || amHeld() || amStunned()) return;
+  if(jamCd > 0){ SFX.lose(); return; }
+  jamCd = JAMMER_CD;
+  me.setState('jam', { x:localPos.x, z:localPos.z, t:Date.now() }, true);
+  tone(520, 0.1, 'square', 0.22); setTimeout(()=>tone(760,0.14,'square',0.2), 110);
+  shotSay('JAMMER PLANTED — this block will read occupied', false);
+  stillness = 0;
+}
+
 /* ============================ P34 Wet paint + Echo scan ============================ */
 const DRIP_GEO = new THREE.CircleGeometry(0.34, 10);
 function spawnDrip(x, z, hex){
@@ -6723,13 +6922,31 @@ function scanTick(dt){
       let n = 0;
       for(const p of players){
         if(p.state.getState('role')!=='hider' || p.state.getState('abducted')) continue;
+        if(p.state.getState('held')) continue;              // already in the ship
         const sp = posOf(p);
         if(inZone(myScan.zone, sp.x, sp.z)) n++;
+        /* ⭐ AND THE JAMMER LIES. It reads as one more signature, so a block with
+           a jammer and nobody in it comes back OCCUPIED and the hunter goes and
+           searches six empty rooms. The count is never shown to them for exactly
+           this reason - "two in there" would give the lie away instantly. */
+        const j = p.state.getState('jam');
+        if(j && inZone(myScan.zone, j.x, j.z)) n++;
       }
       markZone(myScan.zone, n > 0);
-      tone(n ? 980 : 220, 0.4, 'sine', 0.3, n ? 1400 : 160);
-      scanSay(n ? (myScan.zone.name + ' — OCCUPIED · ' + n + (n===1?' signature':' signatures'))
-                : (myScan.zone.name + ' — CLEAR'), n > 0);
+      /* ⭐⭐ THE ANSWER IS A NOISE. Stephen: "I want the scanner to make a noise
+         when the player is in the zone... if it highlights the player it's just
+         unfair and they get immediately abducted but if it pings them then it
+         forces the alien to actually look around that area."
+         Three hard pings for occupied, one flat low tone for clear - the sound is
+         the signal and the words are only there so you can tell WHICH block you
+         just ruled out. And it never says how many: a count would give a jammer
+         away and turn a search back into a reveal. */
+      if(n){
+        for(let k=0;k<3;k++) setTimeout(()=>{ tone(1180, 0.11, 'square', 0.30, 1560);
+          setTimeout(()=>tone(880, 0.09, 'square', 0.22), 70); }, k*230);
+        try{ navigator.vibrate && navigator.vibrate([40,60,40]); }catch(_){}
+      } else tone(190, 0.45, 'sine', 0.24, 150);
+      scanSay(myScan.zone.name + (n ? ' — SOMETHING IS IN THERE' : ' — CLEAR'), n > 0);
       scene.remove(myScan.ring); myScan.ring.material.dispose();
       myScan = null;
     }
@@ -6835,7 +7052,6 @@ function setupTouch(){
     }
     if(myRole()==='seeker'){ if(!onFoot()) seekerView = seekerView==='topdown'?'follow':'topdown'; else SFX.lose(); }
     else { hiderView = hiderView==='topdown'?'third':'topdown'; SFX.blip(); } };
-  document.getElementById('tPose').onclick = ()=> cyclePose(1);
   document.getElementById('tTaunt').onclick = ()=> tauntWhistle();
   document.getElementById('tDecoy').onclick = ()=> dropDecoy();
   /* ⛔⛔ EVERY HELD BUTTON WENT THROUGH ITS OWN HAND-ROLLED LISTENER SET AND NO
@@ -6894,11 +7110,18 @@ function setupTouch(){
 
   holdBtn(document.getElementById('tFree'), ()=> touch.free = true,  ()=> touch.free = false);
   holdBtn(document.getElementById('tJump'), ()=> touch.jump = true,  ()=> touch.jump = false);
-  holdBtn(document.getElementById('tBeam'), ()=> setBeam(true),      ()=> setBeam(false));
+  /* ⛔ ON FOOT THE SAME BUTTON IS A TAP, NOT A HOLD. A stun is one shot with a
+     cooldown; holding it would be a held beam again, and a thing you can hold is
+     a thing you can hold forever. */
+  holdBtn(document.getElementById('tBeam'),
+          ()=>{ if(onFoot()) fireStun(); else setBeam(true); },
+          ()=>{ if(!onFoot()) setBeam(false); });
   holdBtn(document.getElementById('tUp'),   ()=> touch.altUp = true, ()=> touch.altUp = false);
   holdBtn(document.getElementById('tDown'), ()=> touch.altDown=true, ()=> touch.altDown= false);
   document.getElementById('tScan').onclick = ()=> fireEchoScan();
   document.getElementById('tLand').onclick = ()=>{ if(!setOnFoot(!onFoot())) SFX.lose(); };
+  document.getElementById('tStick').onclick = ()=> fireTongue();
+  document.getElementById('tJam').onclick = ()=> dropJammer();
 }
 
 /* ============================ Helpers ============================ */
@@ -6910,8 +7133,13 @@ function amAbducted(){ return !!(me && me.getState('abducted')); }
 function onFoot(){ return !!(me && me.getState('onfoot')); }
 /* held in the beam: caught, but not yet taken. You cannot move and you cannot
    hide - you are the brightest thing on the map and you are bait. */
-function amHeld(){ return ((me && me.getState('held'))||0) > Date.now(); }
-function heldLeft(){ return Math.max(0, (((me && me.getState('held'))||0) - Date.now())/1000); }
+function amHeld(){ return !!(me && me.getState('held')); }
+/* where my captor's saucer is sitting, or null while they are still flying it */
+function myPrisonShip(){
+  if(!amHeld()) return null;
+  const cap = players.find(p=> p.state.id === me.getState('heldBy'));
+  return (cap && cap.state.getState('onfoot')) ? cap.state.getState('ship') : null;
+}
 /* the nearest teammate I could cut loose, or null. Range is checked again on the
    host - this is only what the button offers. */
 function rescueTarget(){
@@ -6919,8 +7147,10 @@ function rescueTarget(){
   let best = null, bd = RESCUE_R*RESCUE_R;
   for(const p of players){
     if(p.state === me || p.state.getState('role')!=='hider') continue;
-    if(!(p.state.getState('held')||0)) continue;
-    const at = p.state.getState('heldAt') || posOf(p);
+    if(!p.state.getState('held')) continue;
+    const cap = players.find(q=> q.state.id === p.state.getState('heldBy'));
+    const at = cap && cap.state.getState('onfoot') ? cap.state.getState('ship') : null;
+    if(!at) continue;                        // still airborne: out of reach
     const dx = localPos.x-at.x, dz = localPos.z-at.z, d2 = dx*dx+dz*dz;
     if(d2 <= bd){ bd = d2; best = p; }
   }
@@ -6952,13 +7182,22 @@ function setOnFoot(on){
   if(on){
     if(localPos.y > LAND_ALT) return false;      // you cannot step off at altitude
     setBeam(false);
+    /* ⭐ THE SHIP STAYS WHERE YOU LEFT IT, AND THAT IS THE POINT. Everybody you
+       have caught is inside it, so setting down to search a building is also
+       setting down your prison and walking away from it. */
+    me.setState('ship', { x:localPos.x, z:localPos.z }, true);
     me.setState('onfoot', true, true);
     localPos.y = 0; velY = 0; grounded = true; standingOn = null;
     seekerView = 'follow';                        // there is no overhead view on the ground
     tone(180, 0.5, 'sawtooth', 0.3, 70);
   }else{
     setBeam(false);
+    /* you take off FROM THE SHIP, so you have to walk back to it. Which means a
+       hunter deep inside a block is a long way from their prisoners. */
+    const sh = me.getState('ship');
+    if(sh){ localPos.x = sh.x; localPos.z = sh.z; }
     me.setState('onfoot', false, true);
+    me.setState('ship', null, true);
     localPos.y = Math.max(UFO_MIN_ALT + 2, _flightFloor(localPos.x, localPos.z) + 2);
     velY = 0;
     tone(120, 0.55, 'sawtooth', 0.3, 460);
@@ -7196,9 +7435,11 @@ function freePlayReset(){
        role did before freePlayReset existed - without this the last hunter walks
        the lobby as a landed alien with a freeze ray and no saucer to return to. */
     p.state.setState('onfoot', false, true);
-    p.state.setState('froz', 0, true);
+    p.state.setState('stun', 0, true);
+    p.state.setState('stunImmune', 0, true);
     p.state.setState('held', 0, true);
-    p.state.setState('heldAt', null, true);
+    p.state.setState('heldBy', null, true);
+    p.state.setState('ship', null, true);
     p.state.setState('freeing', null, true);
   }
   setState('hideEnds', 0, true);
@@ -7238,9 +7479,11 @@ function startRound(){
     p.state.setState('lock', 0, true);
     p.state.setState('beam', false, true);
     p.state.setState('onfoot', false, true);      // every round starts in the saucer
-    p.state.setState('froz', 0, true);
+    p.state.setState('stun', 0, true);
+    p.state.setState('stunImmune', 0, true);
     p.state.setState('held', 0, true);
-    p.state.setState('heldAt', null, true);
+    p.state.setState('heldBy', null, true);
+    p.state.setState('ship', null, true);
     p.state.setState('freeing', null, true);
     const sp = seek ? (sSp[si++ % Math.max(1,sSp.length)]) : (hSp[hi++ % Math.max(1,hSp.length)]);
     const w = sp ? cellToWorld(sp.x, sp.y) : {x:0,z:0};
@@ -7279,7 +7522,7 @@ function detectAbductions(dt){
   const seekers = players.filter(p=> p.state.getState('role')==='seeker' && p.state.getState('beam'));
   const hiders  = players.filter(p=> p.state.getState('role')==='hider' && !p.state.getState('abducted'));
   for(const h of hiders){
-    const hp = posOf(h); let by = null, byFoot = false;
+    const hp = posOf(h); let by = null;
     for(const s of seekers){
       const sp = posOf(s); const dx=hp.x-sp.x, dz=hp.z-sp.z, d2 = dx*dx+dz*dz;
       /* ⭐ A LANDED HUNTER CATCHES YOU DIFFERENTLY. The saucer parks a 4.2m circle
@@ -7289,18 +7532,22 @@ function detectAbductions(dt){
          line of sight. Longer reach, far narrower answer. Which is the trade the
          whole feature is: they gave up the sky to get under the roof you are
          hiding beneath. */
-      if(s.state.getState('onfoot')){
-        if(d2 > FREEZE_R*FREEZE_R) continue;
-        if(Math.abs(hp.y - sp.y) > 3.2) continue;               // not up on the roof they are under
-        const yw = ((s.state.getState('xf')||{}).yaw) || 0;
-        const d = Math.sqrt(d2) || 1;
-        if((dx*Math.sin(yw) + dz*Math.cos(yw))/d < Math.cos(FREEZE_ARC)) continue;
-        /* eye height, not ankle height - a ray fired from y=0 clips the first
-           kerb between you and hits nothing it should have hit. */
-        if(!hasLOS({ x:sp.x, y:sp.y+1.3, z:sp.z }, hp)) continue;
-        by = s; byFoot = true; break;
-      }
-      if(d2 <= BEAM_RADIUS*BEAM_RADIUS && hasLOS(sp, hp)){ by = s; break; }
+      /* ⛔ A LANDED ALIEN NO LONGER ABDUCTS. That was the freeze ray, and it
+         quietly meant a hunter who set down once never needed the saucer again.
+         On the ground they carry a STUN GUN instead: hit somebody, then go and
+         fetch the ship. The catch still belongs to the beam, which is what makes
+         the twenty seconds a real journey rather than a formality. */
+      if(s.state.getState('onfoot')) continue;
+      if(d2 > BEAM_RADIUS*BEAM_RADIUS) continue;
+      /* ⭐ AND A STUNNED CHAMELEON CAN BE TAKEN THROUGH A ROOF. Stephen: "they
+         should be able to abduct through buildings. otherwise it just couldn't
+         work." He is right - the whole point of the stun is that you leave them
+         where they are and go and get the ship, and if a roof cancelled that the
+         ability would only ever work outdoors. Line of sight still protects
+         anybody who is NOT stunned, so hiding indoors keeps every bit of its
+         value; being SHOT indoors is what costs you. */
+      if(!stunnedNow(h.state) && !hasLOS(sp, hp)) continue;
+      by = s; break;
     }
     const id = h.state.id;
     // somebody already in the beam cannot be locked again — they are being held,
@@ -7308,16 +7555,15 @@ function detectAbductions(dt){
     if(h.state.getState('held')){ locks[id] = 0; continue; }
     locks[id] = clamp((locks[id]||0) + (by ? dt : -dt*1.6), 0, LOCK_TIME);
     h.state.setState('lock', locks[id]/LOCK_TIME, false);
-    // the grip. Published on the same cadence the lock already is, and it expires
-    // on its own clock so a hunter who looks away stops slowing you a beat later.
-    if(byFoot) h.state.setState('froz', Date.now() + FREEZE_HOLD*1000, false);
+
     if(locks[id] >= LOCK_TIME){
       /* ⭐ CAUGHT, NOT GONE. The lock now hangs them in the beam where it closed,
          with a clock. The hunter has earned the catch and will bank it in
-         HELD_SECONDS - unless somebody comes for them. */
-      h.state.setState('held', Date.now() + HELD_SECONDS*1000, true);
-      h.state.setState('heldAt', { x:hp.x, z:hp.z }, true);
+         the round - unless somebody reaches the ship while it is parked. */
+      h.state.setState('held', true, true);
       h.state.setState('heldBy', by ? by.state.id : null, true);
+      h.state.setState('stun', 0, true);
+      if(by) by.state.setState('score', (by.state.getState('score')||0)+ABDUCT_POINTS, true);
       h.state.setState('lock', 0, false);
       locks[id] = 0;
       SFX.lose();
@@ -7329,41 +7575,37 @@ function detectAbductions(dt){
    whether somebody got out is the worst possible thing to be wrong about */
 const rescueT = {};
 function hostHeldTick(dt){
-  const now = Date.now();
   for(const h of players){
     if(h.state.getState('role')!=='hider') continue;
-    const until = h.state.getState('held') || 0;
-    if(!until){ rescueT[h.state.id] = 0; continue; }
-    const id = h.state.id, at = h.state.getState('heldAt') || posOf(h);
-    /* who is actually cutting them loose: a free hider, close enough, publishing
-       that this is who they are working on. Proximity is checked HERE so a client
-       cannot free somebody from across the map by publishing a name. */
+    if(!h.state.getState('held')){ rescueT[h.state.id] = 0; continue; }
+    /* ⭐ THE ONLY DOOR OUT IS A PARKED SHIP. A captive rides inside their
+       captor's saucer, so there is exactly one moment they are reachable: while
+       that alien is on foot searching a building. If the hunter never lands,
+       nobody comes home - which is the price of a hunter who never looks under a
+       roof, and a perfectly good way to lose slowly. */
+    const cap = players.find(p=> p.state.id === h.state.getState('heldBy'));
+    const ship = cap && cap.state.getState('onfoot') ? cap.state.getState('ship') : null;
+    const id = h.state.id;
     let saver = null;
-    for(const r of players){
+    if(ship) for(const r of players){
       if(r === h || r.state.getState('role')!=='hider') continue;
       if(r.state.getState('abducted') || r.state.getState('held')) continue;
+      if(stunnedNow(r.state)) continue;                 // you cannot work the hatch pinned
       if(r.state.getState('freeing') !== id) continue;
-      const rp = posOf(r), dx = rp.x-at.x, dz = rp.z-at.z;
+      const rp = posOf(r), dx = rp.x-ship.x, dz = rp.z-ship.z;
       if(dx*dx + dz*dz <= RESCUE_R*RESCUE_R){ saver = r; break; }
     }
     rescueT[id] = clamp((rescueT[id]||0) + (saver ? dt : -dt*2), 0, RESCUE_TIME);
     h.state.setState('freeProg', rescueT[id]/RESCUE_TIME, false);
     if(rescueT[id] >= RESCUE_TIME){
       h.state.setState('held', 0, true);
-      h.state.setState('heldAt', null, true);
+      h.state.setState('heldBy', null, true);
       h.state.setState('freeProg', 0, false);
+      /* out of the hatch and immediately in trouble: you are standing next to the
+         ship in the open, and so is the person who got you out. */
+      h.state.setState('spawn', { x:ship.x + 2.2, z:ship.z, alt:0 }, true);
       rescueT[id] = 0;
       if(saver) saver.state.setState('score', (saver.state.getState('score')||0)+RESCUE_POINTS, true);
-      continue;
-    }
-    if(now > until){                                  // nobody came. The ship takes them.
-      const by = h.state.getState('heldBy');
-      const s = by && players.find(p=> p.state.id === by);
-      if(s) s.state.setState('score', (s.state.getState('score')||0)+ABDUCT_POINTS, true);
-      h.state.setState('abducted', true, true);
-      h.state.setState('held', 0, true);
-      h.state.setState('heldAt', null, true);
-      rescueT[id] = 0;
     }
   }
 }
@@ -7433,11 +7675,15 @@ function clientTick(dt){
   clientTick._px = localPos.x; clientTick._pz = localPos.z;
   wetTick(dt, _mvd > 0.02);                                      // P34 wet paint drips while you move
   scanTick(dt);                                                  // P34 echo scan resolution
+  // cooldowns tick for everybody; they are the anti-stalemate rule's teeth
+  if(stunCd > 0)   stunCd   = Math.max(0, stunCd - dt);
+  if(tongueCd > 0) tongueCd = Math.max(0, tongueCd - dt);
+  if(jamCd > 0)    jamCd    = Math.max(0, jamCd - dt);
   if(role==='seeker' && !abd){                                   // P31 beam battery
     // the freeze ray runs off the same cell and costs a little less per second —
     // it has to be held on a moving target through a 30 degree arc, so a shorter
     // fuse would make the ground hunt unplayable rather than merely hard
-    if(beamOn){ beamEnergy = Math.max(0, beamEnergy - (onFoot() ? FREEZE_DRAIN : 0.25)*dt);
+    if(beamOn){ beamEnergy = Math.max(0, beamEnergy - 0.25*dt);
       if(beamEnergy<=0){ setBeam(false); overheat = 3; SFX.lose(); } }
     else if(overheat>0){ overheat -= dt; if(overheat<=0) beamEnergy = Math.max(beamEnergy, 0.4); }
     else beamEnergy = Math.min(1, beamEnergy + dt/7);
@@ -7447,8 +7693,13 @@ function clientTick(dt){
      you, or the rescue is decoration. */
   const active = (phNow==='playing' || phNow==='waiting') && !abd && !seekerBlind() && !amHeld();
   if(amHeld()){
-    const at = me.getState('heldAt');
-    if(at){ localPos.x = at.x; localPos.z = at.z; }
+    /* you are cargo. Parked, you sit beside the ship where a friend could reach
+       you; airborne, you ride along underneath it. */
+    const cap = players.find(p=> p.state.id === me.getState('heldBy'));
+    const sh = cap && cap.state.getState('onfoot') ? cap.state.getState('ship') : null;
+    const cp = cap ? posOf(cap) : null;
+    if(sh){ localPos.set(sh.x + 1.6, 0, sh.z); }
+    else if(cp){ localPos.set(cp.x, Math.max(0, cp.y - 3), cp.z); }
     stillness = 0;
   }
   /* publish who I am cutting loose, so the HOST can check the range and the clock.
@@ -7504,6 +7755,74 @@ function clientTick(dt){
     p.hider.visible = (r==='hider') || pFoot;
     p.ufo.visible   = r==='seeker' && !pFoot;
 
+    /* ⭐ THE JAMMER, ON THE GROUND, WHERE IT CAN BE CAUGHT. Invisible to a sweep
+       by design and invisible from the air in practice (it is 40cm tall), but an
+       alien standing in the room walks straight into it - and breaking one tells
+       them they were played, which is the information that keeps the lie fair. */
+    const jm = (r==='hider') ? p.state.getState('jam') : null;
+    if(jm && !p.jamMesh){
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.3,0.42,8),
+        new THREE.MeshStandardMaterial({ color:0x2A3350, metalness:.5, roughness:.4 }));
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.13,10,8),
+        new THREE.MeshBasicMaterial({ color:0x8E7FD6 }));
+      lamp.position.y = 0.3;
+      g.add(body, lamp); scene.add(g); p.jamMesh = g; p.jamLamp = lamp;
+    }
+    if(p.jamMesh){
+      p.jamMesh.visible = !!jm;
+      if(jm){
+        p.jamMesh.position.set(jm.x, 0.21, jm.z);
+        p.jamLamp.material.color.setHex(Math.sin(now*0.006) > 0 ? 0xB9A9F0 : 0x4A3E7A);
+        // a landed hunter who walks onto it breaks it
+        if(myRole()==='seeker' && onFoot() && !amAbducted()){
+          const dx = localPos.x-jm.x, dz = localPos.z-jm.z;
+          if(dx*dx+dz*dz < 2.6*2.6 && p.state !== me){
+            me.setState('jamKill', { owner:p.state.id, t:Date.now() }, true);
+            tone(240,0.3,'sawtooth',0.3,90); shotSay('JAMMER — you were being played', true);
+          }
+        }
+      }
+    }
+    /* the owner clears their own jammer when a hunter reports smashing it: the
+       kill is published by the seeker and applied by the person who dropped it,
+       so nobody edits anybody else's state. */
+    if(p.state === me && myRole()==='hider' && me.getState('jam')){
+      for(const q of players){
+        if(q.state.getState('role')!=='seeker') continue;
+        const k = q.state.getState('jamKill');
+        if(k && k.owner === me.id && k.t !== _lastJamKill){ _lastJamKill = k.t;
+          me.setState('jam', null, true); shotSay('YOUR JAMMER WAS FOUND', true); }
+      }
+    }
+
+    /* ⭐⭐ THE PARKED SHIP IS A PLACE. It has to be a thing on the ground you can
+       walk up to, because it is the only door a prisoner has - so it is drawn for
+       everybody, it sits exactly where the alien stepped out, and the ring under
+       it says how close you have to be to work the hatch. */
+    const shipAt = (r==='seeker' && pFoot) ? p.state.getState('ship') : null;
+    if(shipAt && !p.shipMesh){
+      const g = new THREE.Group();
+      const dish = new THREE.Mesh(new THREE.CylinderGeometry(2.1,2.1,0.55,22),
+        new THREE.MeshStandardMaterial({ color:0x1b2337, metalness:.45, roughness:.4 }));
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(2.1,0.24,10,26),
+        new THREE.MeshStandardMaterial({ color:p.base.clone(), emissive:p.base.clone(), emissiveIntensity:.55 }));
+      rim.rotation.x = Math.PI/2;
+      const dome2 = new THREE.Mesh(new THREE.SphereGeometry(1.05,16,10,0,Math.PI*2,0,Math.PI/2),
+        new THREE.MeshStandardMaterial({ color:0x3FD0E0, transparent:true, opacity:.5,
+                                         emissive:0x3FD0E0, emissiveIntensity:.35 }));
+      dome2.position.y = 0.28;
+      const ring2 = new THREE.Mesh(new THREE.RingGeometry(RESCUE_R-0.25, RESCUE_R, 40),
+        new THREE.MeshBasicMaterial({ color:0x3FD0E0, transparent:true, opacity:.16,
+                                      side:THREE.DoubleSide, depthWrite:false }));
+      ring2.rotation.x = -Math.PI/2; ring2.position.y = -1.05;
+      g.add(dish, rim, dome2, ring2); scene.add(g); p.shipMesh = g;
+    }
+    if(p.shipMesh){
+      p.shipMesh.visible = !!shipAt;
+      if(shipAt) p.shipMesh.position.set(shipAt.x, 1.15, shipAt.z);
+    }
+
     /* ⭐ A HELD CHAMELEON IS A LANTERN. The column is the whole design: it says
        "somebody is caught, here, and you have twenty seconds" to every hider on
        the map, and it says "bait" to the hunter who put them there. Both readings
@@ -7519,7 +7838,7 @@ function clientTick(dt){
     if(p.heldMesh){
       p.heldMesh.visible = isHeld;
       if(isHeld){
-        const at = p.state.getState('heldAt') || p.group.position;
+        const at = p.group.position;
         p.heldMesh.position.set(at.x, 8, at.z);
         const prog = p.state.getState('freeProg') || 0;
         p.heldMesh.material.color.setHex(prog > 0.02 ? 0x7AB356 : 0x3FD0E0);
@@ -7743,8 +8062,12 @@ function moveLocal(dt, role){
        moving toward cover - which is exactly the read the hider should be making
        - and you can still steer, still turn a corner, still be saved by someone
        taunting the alien away. */
-    const frz = !foot && (me.getState('froz')||0) > Date.now();
-    const base = foot ? FOOT_SPEED : HIDER_SPEED * (frz ? FREEZE_SLOW : 1);
+    /* ⛔ STUNNED MEANS STUNNED. The old freeze ray SLOWED you to 0.28 because it
+       also built the lock, so leaving you some control was the counterplay. A
+       stun does not catch you - it pins you while somebody goes to fetch a ship -
+       so the counterplay is your TEAMMATES and the clock, not your thumbstick.
+       Both roles read the same flag: an alien hit by a tongue is just as stuck. */
+    const base = amStunned() ? 0 : (foot ? FOOT_SPEED : HIDER_SPEED);
     localPos.x += mv.x*base*fx.s*dt; localPos.z += mv.z*base*fx.s*dt;
     resolveWalls();
     /* VERTICAL. Landing only counts while DESCENDING from above the top,
@@ -8077,7 +8400,6 @@ function updateHUD(role, abd){
   })();
   if(touch.on){
     $('tPaint').classList.toggle('hidden', abd || role==='seeker');
-    $('tPose').classList.toggle('hidden', abd || role==='seeker');
     $('tTaunt').classList.toggle('hidden', abd || role==='seeker');
     $('tDecoy').classList.toggle('hidden', abd || role==='seeker');
     /* ⭐ ON FOOT the hunter is a body: it jumps like one, it has no altitude, and
@@ -8091,6 +8413,20 @@ function updateHUD(role, abd){
     $('altUI').classList.toggle('hidden', abd || role!=='seeker' || foot);
     $('tLand').classList.toggle('hidden', abd || role!=='seeker');
     $('tFree').classList.toggle('hidden', !rescueTarget());
+    const hider = role==='hider' && !abd && !amHeld();
+    $('tStick').classList.toggle('hidden', !hider);
+    /* JAM is offered where it does something: inside a block. Out in the open a
+       jammer marks a patch of grass nobody was going to search anyway. */
+    const inBlock = hider && zoneAt(localPos.x, localPos.z).kind === 'building';
+    const freeing = !!rescueTarget();
+    $('tJam').classList.toggle('hidden', !(inBlock && !freeing));
+    /* a cooldown you cannot see is a button that randomly does nothing */
+    const cdLbl = (el, cd, name)=>{ if(!el) return;
+      const t = cd > 0 ? Math.ceil(cd)+'s' : name;
+      if(el.textContent !== t) el.textContent = t;
+      el.style.opacity = cd > 0 ? '.45' : '1'; };
+    cdLbl($('tStick'), tongueCd, 'STICK');
+    cdLbl($('tJam'), jamCd, me && me.getState('jam') ? 'SET' : 'JAM');
     /* ⛔ "im not sure how the scan button works." Nothing on screen ever said.
        It was a button labelled SCAN that made a noise, cost a third of your
        battery, and then eight seconds later something might light up somewhere.
@@ -8100,8 +8436,10 @@ function updateHUD(role, abd){
     const sTxt = myScan ? String(Math.max(0, Math.ceil((myScan.fireAt - performance.now())/1000))) : 'SCAN';
     if(sb.textContent !== sTxt) sb.textContent = sTxt;
     sb.style.opacity = (myScan || beamEnergy < SCAN_COST + 0.05) ? '.5' : '1';
-    const bb = $('tBeam'), bTxt = foot ? 'FREEZE' : 'BEAM';
+    const bb = $('tBeam');
+    const bTxt = foot ? (stunCd > 0 ? Math.ceil(stunCd)+'s' : 'STUN') : 'BEAM';
     if(bb.textContent !== bTxt) bb.textContent = bTxt;
+    bb.style.opacity = (foot && stunCd > 0) ? '.45' : '1';
     const lb = $('tLand');
     const lTxt = foot ? 'TAKE OFF' : (localPos.y > LAND_ALT ? 'TOO HIGH' : 'LAND');
     if(lb.textContent !== lTxt) lb.textContent = lTxt;
@@ -8151,16 +8489,22 @@ function updateHUD(role, abd){
        with no explanation - the freeze ray has to announce itself or it reads as
        the game breaking, which is precisely what this family already sat
        through once tonight. */
-    const iced = (me.getState('froz')||0) > Date.now();
+    const iced = false;
+    if(amStunned()){
+      $('meterLabel').textContent = '⚡ STUNNED — ' + Math.ceil(stunLeft()) + 's · they are going for the ship';
+      fill.style.width = (100*stunLeft()/STUN_SECONDS) + '%';
+      fill.style.background = 'var(--danger)';
+    } else
     /* ⭐ HELD IS ITS OWN STATE AND IT OUTRANKS EVERYTHING. You are not hiding any
        more, you are waiting - and the only number that matters is how long you
        have got and whether anybody is coming. */
     if(amHeld()){
       const prog = me.getState('freeProg') || 0;
       $('meterLabel').textContent = prog > 0.02
-        ? ('🤝 SOMEONE IS CUTTING YOU LOOSE — ' + Math.round(prog*100) + '%')
-        : ('🛸 HELD IN THE BEAM — ' + Math.ceil(heldLeft()) + 's · a teammate can free you');
-      fill.style.width = (prog > 0.02 ? prog*100 : 100*heldLeft()/HELD_SECONDS) + '%';
+        ? ('🤝 SOMEONE IS OPENING THE HATCH — ' + Math.round(prog*100) + '%')
+        : (myPrisonShip() ? '🛸 IN THE SHIP · IT IS ON THE GROUND — a teammate can reach you'
+                          : '🛸 IN THE SHIP · still flying — nobody can reach you up here');
+      fill.style.width = (prog > 0.02 ? prog*100 : 100) + '%';
       fill.style.background = prog > 0.02 ? 'var(--sage,#7ab356)' : 'var(--danger)';
     }
     else if(liveLock>0.02){ $('meterLabel').textContent = iced ? '❄ IN THE RAY — KEEP MOVING, BREAK THEIR LINE'
