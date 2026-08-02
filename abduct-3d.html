@@ -226,6 +226,16 @@
   /* the START button has to look different the instant it is pressed, or a press
      that has not been served yet is indistinguishable from one that was ignored */
   #tStart.waiting{ opacity:.62; border-style:dashed }
+  /* the sweep readout. Top-centre UNDER the clock, never across the sight line -
+     hud3d budgets 8% of the middle and this is chrome, not the game. */
+  #scanRead{ position:fixed; top:74px; left:50%; transform:translateX(-50%) translateY(-6px);
+    z-index:11; pointer-events:none; opacity:0; transition:opacity .18s ease, transform .18s ease;
+    background:rgba(10,14,25,.9); border:1px solid var(--cyan); border-radius:10px;
+    padding:7px 13px; font-family:var(--mono); font-size:12px; font-weight:800;
+    letter-spacing:.1em; color:var(--cyan); white-space:nowrap; backdrop-filter:blur(6px) }
+  #scanRead.on{ opacity:1; transform:translateX(-50%) translateY(0) }
+  #scanRead.hit{ border-color:var(--danger); color:var(--danger) }
+  @media (max-height: 470px){ #scanRead{ top:66px; font-size:10.5px; padding:5px 10px } }
 
   /* ---- PLAY TOGETHER (join by QR) ----------------------------------------
      Sits above everything except the seeker blindfold: you open it from the
@@ -604,6 +614,10 @@
   </div>
 
   <div id="timer" class="hidden"><span id="timerText">0:00</span><small>round</small></div>
+  <!-- ⭐ THE SWEEP'S ANSWER. A hunter needs to be told which room they just ruled
+       in or out, in words, or the whole tool is a noise and a coloured rectangle
+       somewhere behind them. Edge chrome, one line, gone in four seconds. -->
+  <div id="scanRead"></div>
 
   <div id="scores"><h4>Scores</h4><div id="scoreList"></div></div>
 
@@ -621,7 +635,7 @@
   <div id="reticle"><div class="ring"></div></div>
 
   <div id="controls">
-    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump (get on top of things and paint up there) · <kbd>V</kbd> sky view · <kbd>E</kbd> paint (wet paint DRIPS if you run) · <kbd>T</kbd> taunt · <kbd>F</kbd> decoy · <kbd>H</kbd> switch to HUNTING (solo practice) — EARN while they look and see nothing</div>
+    <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump (get on top of things and paint up there) · <kbd>V</kbd> sky view · <kbd>E</kbd> paint (wet paint DRIPS if you run) · <kbd>T</kbd> taunt · <kbd>F</kbd> decoy · <kbd>R</kbd> hold to FREE a caught teammate · <kbd>H</kbd> switch to HUNTING (solo practice) — EARN while they look and see nothing</div>
     <div id="ctrlSeeker" class="hidden"><b>Seeker (UFO)</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd>/<kbd>Shift</kbd> altitude · hold <kbd>Mouse</kbd> beam (drains) · <kbd>G</kbd> echo scan (8s fuse, pings anything that MOVED) · <kbd>L</kbd> land and hunt on foot with the freeze ray · <kbd>V</kbd> view</div>
     <div id="ctrlSpec" class="hidden"><b>Spectating</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · mouse look · back next round</div>
     <div id="ctrlPad" style="margin-top:5px;opacity:.72"><b>Controller</b> — sticks move/look · RT beam · A camo · B decoy · X pose · Y view · RB/LB altitude</div>
@@ -821,11 +835,14 @@
     <ul>
       <li><b>BEAM</b> — hold it over a chameleon for two seconds and they are taken.
       It drains the ship's cell, and it burns out if you empty it.</li>
-      <li><b>SCAN</b> — a sweep of the ground around you. It costs a third of your cell
-      and takes <b>eight seconds</b> to come back — the button counts them down. When it
-      lands it lights up <b>anyone who moved while it was running</b>. It never finds
-      somebody who held still, and the chameleons are told the sweep is happening, so
-      what it really does is pin the whole area in place while you fly in.</li>
+      <li><b>SCAN</b> — sweep the place you are over. Over a building it sweeps
+      <b>that building</b>; over open ground it sweeps a patch. Three seconds later it tells
+      you one thing only: <b>how many chameleons are in there</b> — never where. A swept room
+      stays marked on your view for half a minute, <span class="dim">red for occupied, blue for
+      clear</span>. This is how you narrow a map down: sweep from the air, find the room, then
+      <b>land and search it on foot</b>. The chameleons inside are told their room is being
+      swept, so they get a few seconds to decide whether to run for somewhere you have already
+      cleared — and running is what gets people caught.</li>
       <li><b>LAND</b> — set the ship down and hunt on foot. A roof is a roof: no
       altitude ever lets you see under one. On the ground you lose the view from above
       and the wide beam, and you get the <b>freeze ray</b> instead — nine metres, but
@@ -834,10 +851,19 @@
       standing there. Landing is a decision that says <i>somebody is under that roof</i>.</li>
     </ul>
 
+    <h3>Getting caught is not the end</h3>
+    <p>A chameleon caught in the beam <b>hangs there for twenty seconds</b> before the ship
+    takes them — lit up like a lantern, visible to everybody on the map. Any other chameleon can
+    walk over and hold <b>FREE</b> for four seconds to cut them loose.</p>
+    <p>It is the most dangerous thing in the game and it is meant to be. You have to leave cover,
+    stand still in the open, right next to the brightest object on the map, while the hunter who
+    put them there decides whether to come back for both of you. Freeing somebody is worth more
+    than surviving a round on your own.</p>
+
     <h3>The controls, on a keyboard</h3>
     <p class="dim">WASD moves, the mouse looks, Space jumps, E paints, V changes view,
-    Q changes pose, T taunts, F drops a decoy, G scans, L lands the ship or takes off
-    again, and Escape backs out of the paint studio — or opens Settings when nothing
+    Q changes pose, T taunts, F drops a decoy, G sweeps the area, L lands the ship or takes
+    off again, R (held) cuts a caught teammate loose, and Escape backs out of the paint studio — or opens Settings when nothing
     else is open.</p>
 
     <h3>If the looking feels wrong</h3>
@@ -1083,6 +1109,12 @@
     <button id="tJump" class="tbtn hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;
       width:62px;height:62px;border-radius:16px;background:rgba(122,179,86,.16);
       border:1.5px solid #7ab356;color:#a8e07a;font-size:13px;font-weight:800">JUMP</button>
+    <!-- ⭐ CUT THEM LOOSE. Contextual: it only exists while you are standing next
+         to somebody in a beam, so it never competes for room in the column and it
+         never needs explaining - it appears exactly when it means something. -->
+    <button id="tFree" class="tbtn hidden" style="position:fixed;right:86px;bottom:88px;z-index:12;
+      width:62px;height:62px;border-radius:16px;background:rgba(63,208,224,.20);
+      border:1.5px solid var(--cyan);color:var(--cyan);font-size:12px;font-weight:800;line-height:1.1">FREE</button>
     <div id="altUI" class="hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;display:flex;flex-direction:column;gap:10px">
       <button id="tUp" class="tbtn" style="width:54px;height:54px;border-radius:14px;background:var(--panel);border:1.5px solid var(--line);color:var(--txt);font-size:18px">▲</button>
       <button id="tDown" class="tbtn" style="width:54px;height:54px;border-radius:14px;background:var(--panel);border:1.5px solid var(--line);color:var(--txt);font-size:18px">▼</button>
@@ -1201,7 +1233,23 @@ const GRAVITY = 22;
 const JUMP_V = 11.0;
 const STAND_MAX_TOP = 2.0;
 const BODY_TOP = 1.4;      // anything whose underside is above this, you walk beneath
-const ABDUCT_POINTS = 100, SURVIVE_POINTS = 60;
+const ABDUCT_POINTS = 100, SURVIVE_POINTS = 60, RESCUE_POINTS = 80;
+/* ⭐⭐ 2026-08-02 — BEING CAUGHT IS NOT THE END ANY MORE.
+   Stephen: "we want to give the hiders a means of fighting back. I don't know
+   that could ruin the game."
+   He was right to be careful. Give a hider a weapon and it stops being
+   hide-and-seek. So they get NERVE instead of a gun: a caught chameleon hangs in
+   the tractor beam for HELD_SECONDS, lit up like a lantern, and any other hider
+   can walk over and cut them loose. It costs the rescuer everything camouflage is
+   for - you have to leave cover, stand in the open next to the brightest object
+   on the map, and hold still for four seconds while a hunter who can see the beam
+   decides whether to come back for both of you.
+   ⭐ It also fills the one real gap the research found in the game this is modelled
+   on: co-op hiding barely exists there. A second hider currently changes nothing
+   about how you play. Now they are the difference between out and still in. */
+const HELD_SECONDS = 20;        // how long you hang there before the ship takes you
+const RESCUE_R = 3.0;           // how close a rescuer must stand
+const RESCUE_TIME = 4.0;        // how long they must hold it
 
 /* Stephen 7/28: "flavored with lots more color". This is a CAMOUFLAGE game and the
    old palette was sixteen shades of the same dark slate — you could not tell one
@@ -2191,7 +2239,21 @@ function makeRandomMap(seed){
     const x=2+Math.floor(rnd()*(cols-4)), y=2+Math.floor(rnd()*(rows-4));
     if(t[y][x]!=='water' && t[y][x]!=='lava' && !seen.has(x+','+y)){ spawns.push({x,y,role:'hider'}); placed++; }
   }
-  return { format:'scanner-map', version:1, name:'random_'+(seed%10000), grid:{cols,rows}, terrain:t, objects:objs, spawns };
+  /* ⭐ 2026-08-02 — BUILDINGS BECOME PLACES YOU CAN NAME.
+     Stephen: "perhaps scanning doesn't reveal the player but alerts the abductor
+     into knowing that they have found the zone they're in so they may want to fly
+     around and scan building while they look."
+     There have always been 7-11 real buildings on a map - walls, a doorway, floor
+     clutter, a partial roof - and they were pure scenery because nothing in the
+     game could refer to one. Exporting the rectangles makes a building an
+     ADDRESSABLE ZONE, which is what turns the sweep from "find a person" into
+     "find a room", and gives a hider a reason to care which one they are in.
+     Named at generation so both sides say the same word: the hunter's readout and
+     the hider's warning have to agree or the whole exchange of information is
+     noise. */
+  const zones = placedRects.map((r,i)=> ({ id:i, x0:r.x0, y0:r.y0, x1:r.x1, y1:r.y1,
+                                           name:'BUILDING ' + (i+1) }));
+  return { format:'scanner-map', version:1, name:'random_'+(seed%10000), grid:{cols,rows}, terrain:t, objects:objs, spawns, zones };
 }
 
 function ensureMapPublished(){                 // host seeds the default map into shared state
@@ -4302,6 +4364,11 @@ window.__aac3dRound = function(){
     // 8/02: the ground hunt + the sweep, so a gate can assert on both
     onfoot:onFoot(), alt:+localPos.y.toFixed(2), canLand: localPos.y <= LAND_ALT,
     frozen: ((me && me.getState('froz'))||0) > Date.now(),
+    held: amHeld(), heldLeft:+heldLeft().toFixed(1),
+    freeProg: +(((me && me.getState('freeProg'))||0)).toFixed(2),
+    canFree: !!rescueTarget(),
+    zones: (MAP && MAP.zones && MAP.zones.length) || 0,
+    sweeps: sweepMarks.map(m=>({ name:m.name, occupied:m.occupied })),
     scanWarn:+scanWarnLeft().toFixed(1), goLeft:+Math.max(0,((getState('goEnds')||0)-Date.now())/1000).toFixed(1),
     startAsked: !!getState('startReq'),
     /* the number that matters: is anything at all stopping me being taken */
@@ -5159,6 +5226,7 @@ function setupInput(){
     if(e.code==='KeyF') dropDecoy();                             // P37: leave a lie behind
     if(e.code==='KeyG') fireEchoScan();                          // P34: interrogate a zone for movers
     if(e.code==='KeyL'){ if(!setOnFoot(!onFoot())) SFX.lose(); }  // 8/02: set down and hunt on foot
+    // R is HELD, not tapped — clientTick reads keys['KeyR'] every frame
     if(e.code==='KeyH') togglePractice();                        // solo: swap hiding for hunting
     if(e.code==='KeyQ' || e.code==='BracketRight') cyclePose(1);
     if(e.code==='BracketLeft') cyclePose(-1);
@@ -6105,7 +6173,14 @@ const dripPool = [];              // {mesh, dieAt}
 // P34 ECHO SCAN: hunters pay battery to mark a zone; 8s later, movers inside it get pinged
 let myScan = null;                // {x,z,r,fireAt,ring,snap:[{id,x,z}]}
 let _scanWarned = false;          // hider: so the sweep alert chirps once, not every frame
-const SCAN_COST = 0.35, SCAN_R = 12, SCAN_DELAY = 8, MOVE_EPS = 1.5;
+let _freeingWas = null;           // last published rescue target, so we only write on change
+/* SCAN_DELAY 8 -> 3: the sweep hands over far less than it used to (a room, not a
+   body), so it should not also cost eight seconds of hovering. CLEAR_HOLD is the
+   whole risk/reward: a room you swept stays marked for half a minute, which gives
+   a hider a REASON to move into it - and moving is the one thing that gives you
+   away. SCAN_R is now only the radius of an open-ground sweep; over a building the
+   zone is the building. */
+const SCAN_COST = 0.35, SCAN_R = 12, SCAN_DELAY = 3, CLEAR_HOLD = 30;
 const EARN_SEE_R = 26;            // a hunter this close with clear LOS counts as 'looking'
 function tauntWhistle(){
   if(myRole()!=='hider' || amAbducted()) return;
@@ -6346,22 +6421,55 @@ function wetTick(dt, moving){
     else d.mesh.material.opacity = 0.85 * life;
   }
 }
+/* ⭐⭐ 2026-08-02 — THE SWEEP FINDS A PLACE, NOT A PERSON.
+   Stephen: "perhaps scanning doesn't reveal the player but alerts the abductor
+   into knowing that they have found the zone they're in so they may want to fly
+   around and scan building while they look because that'll at least ping if
+   they're in the building."
+   The old scan was a REVEAL - it lit a body's exact position with a 22m column.
+   That is a completely different verb from what a hunt wants. A reveal ends the
+   search; this NARROWS it, and hands the other half of the information to the
+   hider, who is told their room was swept but not that they were seen.
+   It also finishes a loop the game did not have: SWEEP from the air to find the
+   room, LAND to search it on foot, FREEZE to take them. Three decisions, each a
+   real one, built out of parts that were all already here.
+   ⚖ THE COUNTERPLAY CHANGES, deliberately. Holding still used to beat a scan;
+   occupancy does not care whether you moved, so the answer is now to be somewhere
+   already CLEARED - and getting there means moving, which is the one thing that
+   gives you away. A cleared zone stays marked for CLEAR_HOLD seconds precisely so
+   that gamble exists. */
+function zoneAt(x, z){
+  const zs = (MAP && MAP.zones) || [];
+  const gx = Math.floor((x + halfW)/TILE), gy = Math.floor((z + halfH)/TILE);
+  for(const zn of zs){
+    if(gx >= zn.x0 && gx <= zn.x1 && gy >= zn.y0 && gy <= zn.y1){
+      const a = cellToWorld(zn.x0, zn.y0), b = cellToWorld(zn.x1, zn.y1);
+      return { id:'b'+zn.id, name:zn.name, kind:'building',
+               minX:a.x-TILE/2, maxX:b.x+TILE/2, minZ:a.z-TILE/2, maxZ:b.z+TILE/2 };
+    }
+  }
+  /* open ground still sweeps - it just sweeps a patch instead of a room, so the
+     tool is never dead just because you are not over a building */
+  return { id:'o'+Math.round(x/SCAN_R)+'_'+Math.round(z/SCAN_R), name:'OPEN GROUND', kind:'open',
+           minX:x-SCAN_R, maxX:x+SCAN_R, minZ:z-SCAN_R, maxZ:z+SCAN_R };
+}
+function inZone(zn, x, z){ return x>=zn.minX && x<=zn.maxX && z>=zn.minZ && z<=zn.maxZ; }
 function fireEchoScan(){
   if(myRole()!=='seeker' || amAbducted() || myScan) return;
   if(beamEnergy < SCAN_COST + 0.05){ SFX.lose(); return; }
   beamEnergy -= SCAN_COST;
-  const ring = new THREE.Mesh(new THREE.RingGeometry(SCAN_R-0.4, SCAN_R, 48),
-    new THREE.MeshBasicMaterial({ color:0xF2B33D, transparent:true, opacity:0.5, side:THREE.DoubleSide, depthWrite:false }));
-  ring.rotation.x = -Math.PI/2; ring.position.set(localPos.x, 0.08, localPos.z);
+  const zn = zoneAt(localPos.x, localPos.z);
+  /* the marker is the ZONE's own footprint, so what you see swept and what was
+     actually swept are the same rectangle. A ring that does not match the test
+     makes every result feel arbitrary. */
+  const w = zn.maxX-zn.minX, d = zn.maxZ-zn.minZ;
+  const ring = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
+    new THREE.MeshBasicMaterial({ color:0xF2B33D, transparent:true, opacity:0.16,
+                                  side:THREE.DoubleSide, depthWrite:false }));
+  ring.rotation.x = -Math.PI/2;
+  ring.position.set((zn.minX+zn.maxX)/2, 0.09, (zn.minZ+zn.maxZ)/2);
   scene.add(ring);
-  const snap = [];
-  for(const p of players){
-    if(p.state.getState('role')!=='hider' || p.state.getState('abducted')) continue;
-    const sp = posOf(p); const dx=sp.x-localPos.x, dz=sp.z-localPos.z;
-    if(dx*dx+dz*dz < SCAN_R*SCAN_R) snap.push({ id:p.state.id, x:sp.x, z:sp.z });
-  }
-  myScan = { x:localPos.x, z:localPos.z, ring, fireAt: performance.now() + SCAN_DELAY*1000, pings:[] };
-  myScan.snap = snap;
+  myScan = { zone:zn, ring, fireAt: performance.now() + SCAN_DELAY*1000, pings:[] };
   /* ⛔⛔ 2026-08-02 — "we tried the scan and it did make the player pop up white
      to the alien but it may not be fair."
      He was right, and the unfairness was not the maths - it was the SILENCE. The
@@ -6373,12 +6481,20 @@ function fireEchoScan(){
      Publishing the sweep turns a free reveal into a standoff: the hunter spends
      battery to freeze the whole area in place for eight seconds, and anyone who
      needed to move now has to decide whether it is worth being seen. */
-  me.setState('scan', { x:localPos.x, z:localPos.z, r:SCAN_R,
-                        until: Date.now() + SCAN_DELAY*1000 }, true);
+  /* publish the sweep so the people inside it are told. A hider who is never told
+     cannot play against it, and an unplayable counter is not a hard mechanic - it
+     is a missing one. */
+  me.setState('scan', { minX:zn.minX, maxX:zn.maxX, minZ:zn.minZ, maxZ:zn.maxZ,
+                        name:zn.name, until: Date.now() + SCAN_DELAY*1000 }, true);
   tone(340, 0.3, 'triangle', 0.26, 620); SFX.click();
 }
 /* seconds left on any sweep I am standing inside, 0 if none. Read by the HUD so
    a hider can see the clock they are being asked to hold still for. */
+/* seconds left on a sweep I am standing inside, 0 if none. The hider gets the
+   OTHER half of the information: they are told their room is being swept, and
+   therefore that the hunter is about to know somebody is in here - but not that
+   they personally were seen, because they were not. What they do with three
+   seconds of that knowledge is the game. */
 function scanWarnLeft(){
   if(!me || myRole()!=='hider' || amAbducted()) return 0;
   const now = Date.now(); let best = 0;
@@ -6386,42 +6502,71 @@ function scanWarnLeft(){
     if(p.state === me || p.state.getState('role') !== 'seeker') continue;
     const s = p.state.getState('scan');
     if(!s || now > s.until) continue;
-    const dx = localPos.x - s.x, dz = localPos.z - s.z, r = s.r || SCAN_R;
-    if(dx*dx + dz*dz > r*r) continue;
+    if(localPos.x < s.minX || localPos.x > s.maxX || localPos.z < s.minZ || localPos.z > s.maxZ) continue;
     best = Math.max(best, (s.until - now)/1000);
   }
   return best;
 }
+/* every zone this hunter has swept and what it said. Kept local to the hunter -
+   a sweep is THEIR knowledge, and a shared map of cleared rooms would hand one
+   player's work to everybody. */
+let sweepMarks = [];
+function markZone(zn, occupied){
+  const w = zn.maxX-zn.minX, d = zn.maxZ-zn.minZ;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
+    new THREE.MeshBasicMaterial({ color: occupied ? 0xE0655E : 0x3FD0E0, transparent:true,
+                                  opacity:0.2, side:THREE.DoubleSide, depthWrite:false }));
+  m.rotation.x = -Math.PI/2;
+  m.position.set((zn.minX+zn.maxX)/2, 0.07, (zn.minZ+zn.maxZ)/2);
+  scene.add(m);
+  // one mark per zone: sweeping the same room twice replaces the answer
+  for(let i=sweepMarks.length-1;i>=0;i--) if(sweepMarks[i].id === zn.id){
+    scene.remove(sweepMarks[i].mesh); sweepMarks[i].mesh.material.dispose(); sweepMarks.splice(i,1); }
+  sweepMarks.push({ id:zn.id, name:zn.name, occupied, mesh:m,
+                    dieAt: Date.now() + CLEAR_HOLD*1000 });
+}
+function sweepMarkTick(){
+  const t = Date.now();
+  for(let i=sweepMarks.length-1;i>=0;i--){
+    const s = sweepMarks[i], life = (s.dieAt - t)/(CLEAR_HOLD*1000);
+    if(life <= 0){ scene.remove(s.mesh); s.mesh.material.dispose(); sweepMarks.splice(i,1); }
+    else s.mesh.material.opacity = 0.2 * Math.min(1, life*3);
+  }
+}
 function scanTick(dt){
   const now = performance.now();
+  sweepMarkTick();
   if(myScan){
     const left = (myScan.fireAt - now)/1000;
-    myScan.ring.material.opacity = 0.25 + 0.3*Math.abs(Math.sin(now*0.004));
+    myScan.ring.material.opacity = 0.10 + 0.12*Math.abs(Math.sin(now*0.006));
     if(left <= 0){
-      let hits = 0;
-      for(const rec of myScan.snap){
-        const p = players.find(x=> x.state.id===rec.id);
-        if(!p || p.state.getState('abducted')) continue;
-        const cur = posOf(p); const dx=cur.x-rec.x, dz=cur.z-rec.z;
-        if(dx*dx+dz*dz > MOVE_EPS*MOVE_EPS){                     // they MOVED during the scan — ping their CURRENT spot
-          const col = new THREE.Mesh(new THREE.CylinderGeometry(0.7,0.7,22,10,1,true),
-            new THREE.MeshBasicMaterial({ color:0xF2B33D, transparent:true, opacity:0.5, side:THREE.DoubleSide, depthWrite:false }));
-          col.position.set(cur.x, 11, cur.z); scene.add(col);
-          myScan.pings.push({ mesh:col, dieAt: now + 2600 }); hits++;
-        }
+      /* ⭐ THE ANSWER IS A COUNT, NOT A PLACE. It does not matter whether they
+         moved, whether they are painted well, or where in the room they are -
+         only whether anybody is in there. That is the whole point: it tells the
+         hunter WHICH ROOM to go and search, and leaves the searching to be done. */
+      let n = 0;
+      for(const p of players){
+        if(p.state.getState('role')!=='hider' || p.state.getState('abducted')) continue;
+        const sp = posOf(p);
+        if(inZone(myScan.zone, sp.x, sp.z)) n++;
       }
-      tone(hits ? 980 : 220, 0.4, 'sine', 0.3, hits ? 1400 : 160);
+      markZone(myScan.zone, n > 0);
+      tone(n ? 980 : 220, 0.4, 'sine', 0.3, n ? 1400 : 160);
+      scanSay(n ? (myScan.zone.name + ' — OCCUPIED · ' + n + (n===1?' signature':' signatures'))
+                : (myScan.zone.name + ' — CLEAR'), n > 0);
       scene.remove(myScan.ring); myScan.ring.material.dispose();
-      const pings = myScan.pings; myScan = null;
-      const sweep = ()=>{ const t = performance.now();
-        for(let i=pings.length-1;i>=0;i--){ const g=pings[i];
-          const l=(g.dieAt-t)/2600;
-          if(l<=0){ scene.remove(g.mesh); g.mesh.material.dispose(); pings.splice(i,1); }
-          else g.mesh.material.opacity = 0.5*l; }
-        if(pings.length) requestAnimationFrame(sweep); };
-      sweep();
+      myScan = null;
     }
   }
+}
+let _scanSayT = 0;
+function scanSay(msg, bad){
+  const e = document.getElementById('scanRead'); if(!e) return;
+  clearTimeout(_scanSayT);
+  e.textContent = msg;
+  e.classList.toggle('hit', !!bad);
+  e.classList.add('on');
+  _scanSayT = setTimeout(()=> e.classList.remove('on'), 4200);
 }
 
 /* ============================ P30 Touch (phones) ============================ */
@@ -6430,7 +6575,7 @@ function setupTouch(){
   if(!coarse) return;
   touch.on = true;
   document.body.classList.add('touch');
-  touch.jump = false;
+  touch.jump = false; touch.free = false;
   document.getElementById('touchUI').classList.remove('hidden');
   document.getElementById('clickToPlay').classList.add('hidden');
   // P35: tap once → fullscreen + landscape; the world becomes the whole screen
@@ -6571,6 +6716,7 @@ function setupTouch(){
   addEventListener('pointercancel', e=>{ for(const el of _held) el._rel(e); });
   document.addEventListener('visibilitychange', ()=>{ if(document.hidden) releaseAll(); });
 
+  holdBtn(document.getElementById('tFree'), ()=> touch.free = true,  ()=> touch.free = false);
   holdBtn(document.getElementById('tJump'), ()=> touch.jump = true,  ()=> touch.jump = false);
   holdBtn(document.getElementById('tBeam'), ()=> setBeam(true),      ()=> setBeam(false));
   holdBtn(document.getElementById('tUp'),   ()=> touch.altUp = true, ()=> touch.altUp = false);
@@ -6586,6 +6732,24 @@ function amAbducted(){ return !!(me && me.getState('abducted')); }
    function and not a scattered getState - every branch that has to care asks the
    same question. */
 function onFoot(){ return !!(me && me.getState('onfoot')); }
+/* held in the beam: caught, but not yet taken. You cannot move and you cannot
+   hide - you are the brightest thing on the map and you are bait. */
+function amHeld(){ return ((me && me.getState('held'))||0) > Date.now(); }
+function heldLeft(){ return Math.max(0, (((me && me.getState('held'))||0) - Date.now())/1000); }
+/* the nearest teammate I could cut loose, or null. Range is checked again on the
+   host - this is only what the button offers. */
+function rescueTarget(){
+  if(!me || myRole()!=='hider' || amAbducted() || amHeld()) return null;
+  let best = null, bd = RESCUE_R*RESCUE_R;
+  for(const p of players){
+    if(p.state === me || p.state.getState('role')!=='hider') continue;
+    if(!(p.state.getState('held')||0)) continue;
+    const at = p.state.getState('heldAt') || posOf(p);
+    const dx = localPos.x-at.x, dz = localPos.z-at.z, d2 = dx*dx+dz*dz;
+    if(d2 <= bd){ bd = d2; best = p; }
+  }
+  return best;
+}
 /* The saucer's LOCAL floor. UFO_MIN_ALT is 4.5 so a hunter can duck under an
    awning, but 4.5 is below the top of a wall, and a dish sliding through masonry
    looks broken and hunts unfairly. solids with a null top are full-height walls;
@@ -6857,6 +7021,9 @@ function freePlayReset(){
        the lobby as a landed alien with a freeze ray and no saucer to return to. */
     p.state.setState('onfoot', false, true);
     p.state.setState('froz', 0, true);
+    p.state.setState('held', 0, true);
+    p.state.setState('heldAt', null, true);
+    p.state.setState('freeing', null, true);
   }
   setState('hideEnds', 0, true);
 }
@@ -6896,6 +7063,9 @@ function startRound(){
     p.state.setState('beam', false, true);
     p.state.setState('onfoot', false, true);      // every round starts in the saucer
     p.state.setState('froz', 0, true);
+    p.state.setState('held', 0, true);
+    p.state.setState('heldAt', null, true);
+    p.state.setState('freeing', null, true);
     const sp = seek ? (sSp[si++ % Math.max(1,sSp.length)]) : (hSp[hi++ % Math.max(1,hSp.length)]);
     const w = sp ? cellToWorld(sp.x, sp.y) : {x:0,z:0};
     p.state.setState('spawn', { x:w.x, z:w.z, alt: seek ? UFO_MIN_ALT+6 : 0 }, true);
@@ -6957,15 +7127,67 @@ function detectAbductions(dt){
       if(d2 <= BEAM_RADIUS*BEAM_RADIUS && hasLOS(sp, hp)){ by = s; break; }
     }
     const id = h.state.id;
+    // somebody already in the beam cannot be locked again — they are being held,
+    // and the clock that matters to them now is the rescue window
+    if(h.state.getState('held')){ locks[id] = 0; continue; }
     locks[id] = clamp((locks[id]||0) + (by ? dt : -dt*1.6), 0, LOCK_TIME);
     h.state.setState('lock', locks[id]/LOCK_TIME, false);
     // the grip. Published on the same cadence the lock already is, and it expires
     // on its own clock so a hunter who looks away stops slowing you a beat later.
     if(byFoot) h.state.setState('froz', Date.now() + FREEZE_HOLD*1000, false);
     if(locks[id] >= LOCK_TIME){
-      h.state.setState('abducted', true, true);
-      if(by) by.state.setState('score', (by.state.getState('score')||0)+ABDUCT_POINTS, true);
+      /* ⭐ CAUGHT, NOT GONE. The lock now hangs them in the beam where it closed,
+         with a clock. The hunter has earned the catch and will bank it in
+         HELD_SECONDS - unless somebody comes for them. */
+      h.state.setState('held', Date.now() + HELD_SECONDS*1000, true);
+      h.state.setState('heldAt', { x:hp.x, z:hp.z }, true);
+      h.state.setState('heldBy', by ? by.state.id : null, true);
+      h.state.setState('lock', 0, false);
       locks[id] = 0;
+      SFX.lose();
+    }
+  }
+  hostHeldTick(dt);
+}
+/* the rescue window, resolved by the host because two clients disagreeing about
+   whether somebody got out is the worst possible thing to be wrong about */
+const rescueT = {};
+function hostHeldTick(dt){
+  const now = Date.now();
+  for(const h of players){
+    if(h.state.getState('role')!=='hider') continue;
+    const until = h.state.getState('held') || 0;
+    if(!until){ rescueT[h.state.id] = 0; continue; }
+    const id = h.state.id, at = h.state.getState('heldAt') || posOf(h);
+    /* who is actually cutting them loose: a free hider, close enough, publishing
+       that this is who they are working on. Proximity is checked HERE so a client
+       cannot free somebody from across the map by publishing a name. */
+    let saver = null;
+    for(const r of players){
+      if(r === h || r.state.getState('role')!=='hider') continue;
+      if(r.state.getState('abducted') || r.state.getState('held')) continue;
+      if(r.state.getState('freeing') !== id) continue;
+      const rp = posOf(r), dx = rp.x-at.x, dz = rp.z-at.z;
+      if(dx*dx + dz*dz <= RESCUE_R*RESCUE_R){ saver = r; break; }
+    }
+    rescueT[id] = clamp((rescueT[id]||0) + (saver ? dt : -dt*2), 0, RESCUE_TIME);
+    h.state.setState('freeProg', rescueT[id]/RESCUE_TIME, false);
+    if(rescueT[id] >= RESCUE_TIME){
+      h.state.setState('held', 0, true);
+      h.state.setState('heldAt', null, true);
+      h.state.setState('freeProg', 0, false);
+      rescueT[id] = 0;
+      if(saver) saver.state.setState('score', (saver.state.getState('score')||0)+RESCUE_POINTS, true);
+      continue;
+    }
+    if(now > until){                                  // nobody came. The ship takes them.
+      const by = h.state.getState('heldBy');
+      const s = by && players.find(p=> p.state.id === by);
+      if(s) s.state.setState('score', (s.state.getState('score')||0)+ABDUCT_POINTS, true);
+      h.state.setState('abducted', true, true);
+      h.state.setState('held', 0, true);
+      h.state.setState('heldAt', null, true);
+      rescueT[id] = 0;
     }
   }
 }
@@ -7045,7 +7267,20 @@ function clientTick(dt){
     else beamEnergy = Math.min(1, beamEnergy + dt/7);
   }
   const phNow = getState('phase') || 'waiting';                  // solo rooms never write a phase — undefined IS waiting
-  const active = (phNow==='playing' || phNow==='waiting') && !abd && !seekerBlind();
+  /* ⛔ AND NOT WHILE YOU ARE HANGING IN A BEAM. Being held has to actually hold
+     you, or the rescue is decoration. */
+  const active = (phNow==='playing' || phNow==='waiting') && !abd && !seekerBlind() && !amHeld();
+  if(amHeld()){
+    const at = me.getState('heldAt');
+    if(at){ localPos.x = at.x; localPos.z = at.z; }
+    stillness = 0;
+  }
+  /* publish who I am cutting loose, so the HOST can check the range and the clock.
+     Only while the key or the button is down. */
+  (function(){
+    const want = (keys['KeyR'] || touch.free) ? (rescueTarget() ? rescueTarget().state.id : null) : null;
+    if(want !== _freeingWas){ _freeingWas = want; me.setState('freeing', want, false); }
+  })();
   /* !settingsOpen: on desktop the panel already kills control by releasing the
      lock, but on a phone touch.on stays true, so without this a stick left
      leaning under the panel would keep walking you into the open. */
@@ -7092,6 +7327,29 @@ function clientTick(dt){
     const pFoot = r==='seeker' && !!p.state.getState('onfoot');
     p.hider.visible = (r==='hider') || pFoot;
     p.ufo.visible   = r==='seeker' && !pFoot;
+
+    /* ⭐ A HELD CHAMELEON IS A LANTERN. The column is the whole design: it says
+       "somebody is caught, here, and you have twenty seconds" to every hider on
+       the map, and it says "bait" to the hunter who put them there. Both readings
+       are correct and that is the point. */
+    const heldUntil = p.state.getState('held') || 0;
+    const isHeld = r==='hider' && heldUntil > Date.now() && !gone;
+    if(isHeld && !p.heldMesh){
+      p.heldMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.05,1.05,16,14,1,true),
+        new THREE.MeshBasicMaterial({ color:0x3FD0E0, transparent:true, opacity:0.22,
+                                      side:THREE.DoubleSide, depthWrite:false }));
+      scene.add(p.heldMesh);
+    }
+    if(p.heldMesh){
+      p.heldMesh.visible = isHeld;
+      if(isHeld){
+        const at = p.state.getState('heldAt') || p.group.position;
+        p.heldMesh.position.set(at.x, 8, at.z);
+        const prog = p.state.getState('freeProg') || 0;
+        p.heldMesh.material.color.setHex(prog > 0.02 ? 0x7AB356 : 0x3FD0E0);
+        p.heldMesh.material.opacity = 0.16 + 0.12*Math.abs(Math.sin(now*0.005)) + prog*0.25;
+      }
+    }
 
     // P34: their wet paint dripping onto the world
     const dr = p.state.getState('drip');
@@ -7619,6 +7877,7 @@ function updateHUD(role, abd){
     $('tScan').classList.toggle('hidden', abd || role!=='seeker');
     $('altUI').classList.toggle('hidden', abd || role!=='seeker' || foot);
     $('tLand').classList.toggle('hidden', abd || role!=='seeker');
+    $('tFree').classList.toggle('hidden', !rescueTarget());
     /* ⛔ "im not sure how the scan button works." Nothing on screen ever said.
        It was a button labelled SCAN that made a noise, cost a third of your
        battery, and then eight seconds later something might light up somewhere.
@@ -7680,7 +7939,18 @@ function updateHUD(role, abd){
        the game breaking, which is precisely what this family already sat
        through once tonight. */
     const iced = (me.getState('froz')||0) > Date.now();
-    if(liveLock>0.02){ $('meterLabel').textContent = iced ? '❄ IN THE RAY — KEEP MOVING, BREAK THEIR LINE'
+    /* ⭐ HELD IS ITS OWN STATE AND IT OUTRANKS EVERYTHING. You are not hiding any
+       more, you are waiting - and the only number that matters is how long you
+       have got and whether anybody is coming. */
+    if(amHeld()){
+      const prog = me.getState('freeProg') || 0;
+      $('meterLabel').textContent = prog > 0.02
+        ? ('🤝 SOMEONE IS CUTTING YOU LOOSE — ' + Math.round(prog*100) + '%')
+        : ('🛸 HELD IN THE BEAM — ' + Math.ceil(heldLeft()) + 's · a teammate can free you');
+      fill.style.width = (prog > 0.02 ? prog*100 : 100*heldLeft()/HELD_SECONDS) + '%';
+      fill.style.background = prog > 0.02 ? 'var(--sage,#7ab356)' : 'var(--danger)';
+    }
+    else if(liveLock>0.02){ $('meterLabel').textContent = iced ? '❄ IN THE RAY — KEEP MOVING, BREAK THEIR LINE'
                                                           : '⚠ BEING ABDUCTED — RUN';
       fill.style.width=(liveLock*100)+'%'; fill.style.background='var(--danger)';
       /* ⛔ this read myLock, which is the MULTIPLAYER lock published by a human
@@ -7695,7 +7965,12 @@ function updateHUD(role, abd){
        everything right - and the answer to it is a decision, not a reflex. */
     else if(scanWarnLeft() > 0){
       const sl = scanWarnLeft();
-      $('meterLabel').textContent = '📡 SCANNER SWEEP — HOLD STILL  ' + Math.ceil(sl);
+      /* ⛔ NOT "HOLD STILL" ANY MORE. The sweep counts bodies in a room; it does
+         not care whether you moved, so telling a player to freeze would be
+         telling them to do a thing that cannot help. It reports OCCUPANCY, so the
+         only answers are get out of the room, or accept that a hunter is about to
+         land on it and be somewhere unhelpful when they do. */
+      $('meterLabel').textContent = '📡 SWEEPING THIS AREA — THEY WILL KNOW SOMEONE IS HERE  ' + Math.ceil(sl);
       fill.style.width = (100 * sl/SCAN_DELAY) + '%';
       fill.style.background = 'var(--amber)';
       if(!_scanWarned){ _scanWarned = true; tone(880, 0.14, 'square', 0.2);
