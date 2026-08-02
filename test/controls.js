@@ -84,19 +84,26 @@ async function main(){
   ok('S6 MODE pill present', st().hud.pill && st().hud.pill.h>=40, JSON.stringify(st().hud.pill));
 
   // ---- S1 mode machine ----
-  tapRect(btn('paint'),21); pump(6);
-  ok('S1 tap 🎨 → PAINT (studio open)', st().mode==='PAINT' && st().studio.open===true, 'mode='+st().mode);
+  /* PAINT is no longer a mode. The mixer it opened was deleted 2026-08-02 (every one
+     of its controls measured under 48px, and none could beat the MATCH button next
+     to it), so the machine is MOVE <-> INSPECT and painting is a one-shot verb.
+     These assertions guard the property the old mode kept violating: the player can
+     NEVER end up rooted with no way back to MOVE. */
   tapRect(btn('inspect'),22); pump(6);
-  ok('S1 tap 👁 while painting → INSPECT (mutually exclusive)', st().mode==='INSPECT' && st().studio.open===false, 'mode='+st().mode);
+  ok('S1 tap 👁 → INSPECT', st().mode==='INSPECT', 'mode='+st().mode);
   key('Escape'); pump(6);
   ok('S1 Escape from INSPECT → MOVE', st().mode==='MOVE', 'mode='+st().mode);
-  key('KeyE'); pump(6); ok('S1 KeyE → PAINT', st().mode==='PAINT');
-  // pill escapes paint
   tapRect(st().hud.pill,23); pump(6);
-  ok('S1 MODE pill escapes PAINT → MOVE', st().mode==='MOVE' && st().studio.open===false, 'mode='+st().mode);
-  // regression (review): the studio ✕ must return to MOVE, never strand rooted-in-PAINT with no panel
-  key('KeyE'); pump(4); tapRect(st().studio.closeRect,25); pump(6);
-  ok('S1 studio ✕ returns to MOVE (no rooted limbo)', st().mode==='MOVE' && st().studio.open===false, 'mode='+st().mode);
+  ok('S1 MODE pill lands on MOVE', st().mode==='MOVE', 'mode='+st().mode);
+  // AIM: arming it must never cost you the ability to move or to leave
+  tapRect(btn('aim'),21); pump(6);
+  ok('S1 tap 🎯 arms AIM without changing mode', st().studio.aim===true && st().mode==='MOVE', 'aim='+st().studio.aim+' mode='+st().mode);
+  key('KeyE'); pump(6);
+  ok('S1 KeyE disarms AIM again', st().studio.aim===false, 'aim='+st().studio.aim);
+  tapRect(btn('aim'),24); pump(4);
+  const pc0=st().paintCount; key('KeyQ'); pump(6);
+  ok('S1 MATCH spends the aim and disarms it (no rooted limbo)', st().studio.aim===false && st().paintCount===pc0+1, 'aim='+st().studio.aim+' painted='+st().paintCount);
+  ok('S1 still able to move after aiming', st().mode==='MOVE', 'mode='+st().mode);
 
   // ---- S2 analog speed curve ----
   const jx=Math.floor(VW()*0.25), jy=Math.floor(VH()*0.6);   // left half = move side (right-handed default)

@@ -22,14 +22,10 @@
     -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;
     user-select:none;-webkit-user-select:none;touch-action:none;overscroll-behavior:none;}
   canvas#game{display:block;touch-action:none;position:fixed;inset:0;}
-  /* off-screen hex field the Paint Studio focuses */
-  input#hex{position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;
-    font-family:ui-monospace,Menlo,Consolas,monospace;}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
-<input id="hex" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="7" />
 <script src="qr.js"></script>
 <script src="pages/files-1.js"></script>
 <script src="pages/files-2.js"></script>
@@ -68,7 +64,7 @@ const INSPECT_NUDGE = 45, INSPECT_ZOOM_MUL = 0.78, INSPECT_ZOOM_RATE = 6;
 const VZ_OUT = 0.55, VZ_IN = 1.6, VZ_SEEKER = INSPECT_ZOOM_MUL;    // user view-zoom bounds (multiplies zoomBase while looking)
 const VZ_DETENTS = [VZ_OUT, VZ_SEEKER, 1.0, VZ_IN];                // FAR / SEEKER / NORMAL / CLOSE
 const VZ_RATE = 7, WHEEL_K = 0.0012, PINCH_MIN_D = 32, TAP_SLOP = 12;
-const DIM_HELD = 0.35, HOLD_GLIDE_MUL = 1.5, THREAT_WARN_R = 1.5, RETICLE_HELD_R = 12*TILE;
+const HOLD_GLIDE_MUL = 1.5, THREAT_WARN_R = 1.5, RETICLE_HELD_R = 12*TILE;
 // camo / concealment
 const D_PERFECT = 12, D_EXPOSED = 220;
 const PAINT_SHIFT_SPEED = 300, SHIFT_DELTA_EPS = 4;
@@ -90,7 +86,7 @@ const SPLIT_MIN_W = 0.18;                 // P8-3: min 2nd-tone footprint weight
 const BLEND_SNAP_C = 0.85, GHOST_C = 0.90; // P8-5: melt-in payoff threshold + ghost tier
 const BLEND_LOG_MQ = 0.85, BLEND_LOG_HOLD = 1.0; // P8-6: Blend Book logging threshold + dwell time
 // color / paint
-const STUDIO_SLOWMO = 0.35;
+const LOOK_SLOWMO = 0.35;   // practice only: the world eases off while you study it
 // bot ai — shared thresholds
 const ENTER_SUSPECT = 0.35, EXIT_SUSPECT = 0.15, ENTER_INVEST = 0.60;
 const ENTER_CHASE = 0.85, DROP_CHASE = 0.45;
@@ -948,7 +944,7 @@ const player = { x:0,y:0, vx:0,vy:0, facing:0, prevx:0,prevy:0,
   S:1, mq:0, m:0, conceal:0, C:0, ref:null,
   mqDisplay:0, detDisplay:0, abductT:0, alive:true,
   // render-anim (Pass 2, scalar only — never feeds the sim)
-  animT:0, walkPhase:0, breathP:0, squash:0, blinkT:2, blinkE:0, repaintT:0,
+  animT:0, walkPhase:0, breathP:0, squash:0, blinkT:2, blinkE:0, repaintT:0, paintCount:0,
   pose:'stand', poseBlend:{},
   // P5 abilities
   freeze:false, freezeCap:MAX_CONCEAL_OPEN, dashT:0, dashDx:0, dashDy:0, dashFlare:0, dashRecT:0, lureLeft:LURE_CHARGES,
@@ -1042,27 +1038,23 @@ let joystick = null;            // {id, cx,cy, dx,dy, mag}
 let menuHits = [];              // [{x,y,w,h,fn}] CSS px, rebuilt each menu draw
 let roundHits = [];             // on-screen round buttons
 let input = { mx:0, my:0, creep:false, moveMag:0, speed:0, moveTag:'idle' };
-const hexInput = document.getElementById('hex');
 // ===== mode-based controls (Move / Paint / Inspect) =====
-let ctrlMode = 'MOVE';                       // 'MOVE' | 'PAINT' | 'INSPECT' (distinct from round.mode)
+let ctrlMode = 'MOVE';                       // 'MOVE' | 'INSPECT' (distinct from round.mode)
 const camPan = { x:0, y:0 };                 // camera peek/free-look offset (world units), added to camFollow
 const camFollow = { x:0, y:0 };              // eased follow anchor; cam = clamp(camFollow + camPan)
 let inspectZoomT = 0;                        // 0..1 ease into seeker-altitude zoom
 // P9 Photo Loop state — all render-side (multiplayer-safe: stays per-client, never touches the sim)
-let camLock = false;                         // "the shot is held" — set implicitly by 🎨 from INSPECT (the shutter IS the lock)
 let vz = VZ_SEEKER, vzTarget = VZ_SEEKER;    // user view-zoom on zoomBase; only bites while inspectZoomT>0
 let pinch = null;                            // {a,b,d0,vz0,wx,wy} two-finger zoom gesture
 let panBoost = 1;                            // spotted-while-held glides home faster (never snaps)
 let panMaxRelax = MOVE_PEEK_MAX;             // pan ceiling grows instantly, shrinks as a glide (no one-frame clamp snap)
 let _lastZoomFrame = 0;                      // re-anchor live pan drags whenever zoom moves under them
-let _nudgeSeq = 0;                           // compose-nudge tween token — a re-hold must never resurrect a stale tween
-let holdBracketT = 0;                        // viewfinder corner brackets ease 0..1
 let pendingShot = false;                     // 📷 capture the world layer on the next frame
 const gpCam = { x:0, y:0 };                  // gamepad right-stick camera pan
 let _prevMoveTag = 'idle';
 const _hud = { modeButtons:[], pill:null, recenter:null, zoom:null };
 function clampPan(max){ const m=Math.hypot(camPan.x,camPan.y); if(m>max){ const k=max/m; camPan.x*=k; camPan.y*=k; } }
-function heldCam(){ return ctrlMode==='INSPECT' || (ctrlMode==='PAINT' && camLock); }
+function heldCam(){ return ctrlMode==='INSPECT'; }
 function vzMin(){ return qLevel>=2 ? 0.62 : VZ_OUT; }             // struggling tablets keep the zoom-out fill-rate sane
 function liveZoom(){ return Math.max(ZOOM_MIN*0.55, zoomBase*(1+FX.zoomPunch)*(1+(vz-1)*inspectZoomT)); }
 function panMaxNow(){ return heldCam() ? INSPECT_PAN_MAX*Math.min(1.8,Math.max(1,1/Math.max(vz,0.25))) : MOVE_PEEK_MAX; }
@@ -1080,7 +1072,6 @@ function worldToScreen(wx,wy){ return { x:(wx-cam.x)*zoom+vpW/2, y:(wy-cam.y)*zo
 function inRect(sx,sy,r){ return sx>=r.x && sx<=r.x+r.w && sy>=r.y && sy<=r.y+r.h; }
 
 function gatherInput(){
-  if(ctrlMode==='PAINT' && !studio.open){ ctrlMode='MOVE'; camLock=false; }   // heal any close-without-exit desync (never leave the hider rooted)
   /* sticky-stick heal (playtest 7/30: "controls persist after i went a
      direction"): when the browser eats a pointerup (edge swipes, sheets),
      the joystick survived with stale dx/dy and the character kept walking.
@@ -1109,7 +1100,6 @@ function gatherInput(){
   if(player.freeze){ mx=0; my=0; moveMag=0; speed=0; tag='idle'; }
   // burrowed: rooted underground — a real push on the stick digs you back out
   if(player.burrowT>0){ if(moveMag>0.35){ player.burrowT=0; } else { mx=0; my=0; moveMag=0; speed=0; tag='idle'; } }
-  if(ctrlMode==='PAINT'){ mx=0; my=0; moveMag=0; speed=0; tag='idle'; }   // rooted while painting
   if(tag!==_prevMoveTag){ if((tag==='walk'&&_prevMoveTag==='sneak')||(tag==='sneak'&&_prevMoveTag==='walk')) vibe(12); _prevMoveTag=tag; }
   input.mx=mx; input.my=my; input.creep=creep; input.moveMag=moveMag; input.speed=speed; input.moveTag=tag;
 }
@@ -1194,11 +1184,11 @@ function updateGamepadEdges(){
   if(appState==='ROUND' && roundState!=='PAUSED'){
     const hunt = round && round.mode==='HUNT';
     if(hunt){ if(edge(0)||edge(3)) huntPulse(); }                     // HUNT: A/Y scan pulse
-    else { if(edge(3)||edge(2)) togglePaintMode();                   // Y / X → paint mode
+    else { if(edge(3)||edge(2)) toggleReticle();                     // Y / X → aim the sample
       if(edge(5)) toggleInspect();                                   // RB → inspect mode
       if(edge(6)||edge(4)) instantMatch();                           // LB match
       if(ctrlMode==='INSPECT'){ if(edge(12)) stepDetent(1); if(edge(13)) stepDetent(-1); }   // dpad = zoom detents while looking
-      if(edge(1)){ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); } }  // B backs out one step
+      if(edge(1)){ if(ctrlMode==='INSPECT') exitInspect(); } }  // B backs out one step
     if(edge(9)) togglePause();                                       // Start
   } else {
     // menus AND the paused overlay (both use navList)
@@ -1214,7 +1204,6 @@ function updateGamepadEdges(){
 addEventListener('keydown', e=>{
   ensureAudio();
   if(e.code==='Tab') e.preventDefault();
-  if(document.activeElement===hexInput) return;   // let hex field handle typing
   if(keys.has(e.code)) return; keys.add(e.code);
   if(appState==='ROUND'){
     if(roundState==='PAUSED'){   // paused overlay behaves like a menu
@@ -1231,7 +1220,7 @@ addEventListener('keydown', e=>{
       else if(e.code==='KeyM') setMuted(!settings.muted);
       return;
     }
-    if(e.code==='KeyE'||e.code==='KeyP'||e.code==='Tab'){ togglePaintMode(); }
+    if(e.code==='KeyE'||e.code==='KeyP'||e.code==='Tab'){ toggleReticle(); }
     else if(e.code==='KeyI') toggleInspect();
     else if((e.code==='Minus'||e.code==='Equal') && ctrlMode==='INSPECT'){ stepDetent(e.code==='Minus'?-1:1); }   // zoom detents while looking (studio keeps these keys in PAINT)
     else if(e.code==='KeyQ') instantMatch();
@@ -1246,10 +1235,9 @@ addEventListener('keydown', e=>{
     else if(e.code==='KeyV' && ctrlMode==='MOVE') useAbility('ink');
     else if(e.code==='KeyB' && ctrlMode==='MOVE') useAbility('tongue');
     else if(e.code==='KeyX' && ctrlMode==='MOVE') useAbility('burrow');
-    else if(e.code==='Escape'){ if(ctrlMode==='PAINT') exitPaint(); else if(ctrlMode==='INSPECT') exitInspect(); else togglePause(); }
+    else if(e.code==='Escape'){ if(ctrlMode==='INSPECT') exitInspect(); else togglePause(); }
     else if(e.code==='KeyH' && round && round.diff.practice) round.debug=!round.debug;
     else if(e.code==='KeyM') setMuted(!settings.muted);
-    else if(studio.open) studioKey(e.code);
   } else {
     if(appState==='ONLINE_JOIN'){                                 // P20: type the room code straight from the keyboard
       const mm=/^Key([A-Z])$/.exec(e.code);
@@ -1270,8 +1258,7 @@ addEventListener('keydown', e=>{
 addEventListener('keyup', e=> keys.delete(e.code));
 // losing OS focus (Alt-Tab, click another window) never delivers keyup — clear held state so you don't walk off unattended
 addEventListener('blur', ()=>{ keys.clear(); joystick=null; pointers.clear();
-  if(studio.open) closeStudio();                       // P10: never resume from alt-tab into a dead panel
-  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
+  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; pinch=null;
   if(appState==='ROUND' && roundState==='PLAYING') togglePause(); });
 
 /* ---- pointer ---- */
@@ -1293,7 +1280,6 @@ function onWheel(e){
   if(appState!=='ROUND'||roundState!=='PLAYING'||!round||round.mode==='HUNT'||!player.alive) return;
   ensureAudio();
   if(ctrlMode==='MOVE'){ if(dy>0){ enterInspect(); vz=vzTarget=1; } else return; }   // pulling back = "let me look"
-  else if(ctrlMode==='PAINT'){ if(!camLock){ camLock=true; SFX.shutter(); } }  // desktop graduates into the hold (no nudge — the wheel IS the framing)
   const w=screenToWorld(e.clientX,e.clientY);                    // zoom toward the cursor: camPan-only edit, projections untouched
   vz=clamp(vz*Math.exp(-dy*WHEEL_K), vzMin(), VZ_IN); vzTarget=vz;
   const z=liveZoom();
@@ -1364,24 +1350,13 @@ function onPointerDown(e){
     handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
   // ROUND — paused overlay is a menu (uses navList)
   if(roundState==='PAUSED'){ handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
-  if(studio.open){
-    const consumed = studioPointerDown(id,sx,sy,e.pointerType);
-    if(consumed) return;
-    // HUD stays live while painting (MODE pill, 👁, MATCH, ⏸, 🔊) so there's always an exit
-    for(const h of roundHits){ if(inRect(sx,sy,h)){ h.fn(); pointers.set(id,{sx,sy,role:'ui'}); return; } }
-    const p=studioRects().panel;
-    if(!inRect(sx,sy,p)){
-      if(studio.reticleOn){ pointers.set(id,{sx,sy,role:'reticle'}); studioReticleDrag(sx,sy); return; }
-      if(camLock){                                                   // held shot: drag above the panel reframes, a clean tap hops back to LOOK
-        if(pinch){ pointers.set(id,{sx,sy,role:'ui'}); return; }
-        if(tryStartPinch(id,sx,sy)) return;
-        pointers.set(id,{sx,sy,role:'pan',sx0:sx,sy0:sy,px0:camPan.x,py0:camPan.y,tap:true,tx:sx,ty:sy}); return; }
-      exitPaint(); return;   // unlocked paint: tapping empty space leaves paint → Move (legacy path, tests ride this)
-    }
-    return;
-  }
-  // round on-screen buttons first
+  // round on-screen buttons first — AIM never covers them, so MATCH and the
+  // abilities stay live and there is always a way out of aiming
   for(const h of roundHits){ if(inRect(sx,sy,h)){ h.fn(); pointers.set(id,{sx,sy,role:'ui'}); return; } }
+  /* AIM owns the world while it is armed: drag anywhere to move the ring onto what
+     you want to copy. It disarms itself on MATCH (see doMatch), so unlike the paint
+     mode it replaced there is no state where the player is rooted with no exit. */
+  if(studio.reticleOn && roundState==='PLAYING'){ pointers.set(id,{sx,sy,role:'reticle'}); studioReticleDrag(sx,sy); return; }
   if(roundState==='CAUGHT'||roundState==='TIMEOUT'){ pointers.set(id,{sx,sy,role:'ui'}); return; }
   if(pinch){ pointers.set(id,{sx,sy,role:'ui'}); return; }   // a third finger never fights an active pinch
   if(tryStartPinch(id,sx,sy)) return;           // second finger while a pan finger is live → pinch zoom (P9)
@@ -1401,7 +1376,7 @@ function onPointerDown(e){
 function onPointerMove(e){
   const p=pointers.get(e.pointerId); if(!p) return;
   const sx=e.clientX, sy=e.clientY; p.sx=sx; p.sy=sy;
-  if((p.role==='sv'||p.role==='hue'||p.role==='reticle') && !studio.open) return;  // studio closed mid-drag
+  if(p.role==='reticle' && !studio.reticleOn) return;  // aim disarmed mid-drag
   if(p.role==='joystick' && joystick && joystick.id===e.pointerId){
     let dx=sx-joystick.cx, dy=sy-joystick.cy; const mag=Math.hypot(dx,dy);
     const dead=JOY_DEAD, R=JOY_R;
@@ -1419,9 +1394,7 @@ function onPointerMove(e){
           const mx=(A.sx+B.sx)/2, my=(A.sy+B.sy)/2, z=liveZoom();
           camPan.x=(pinch.wx-(mx-vpW/2)/z)-camFollow.x; camPan.y=(pinch.wy-(my-vpH/2)/z)-camFollow.y;
           clampPan(panMaxNow()); } } }
-  } else if(p.role==='sv'){ studioSV(sx,sy,p.ptype); }
-  else if(p.role==='hue'){ studioHue(sx,sy); }
-  else if(p.role==='reticle'){ studioReticleDrag(sx,sy); }
+  } else if(p.role==='reticle'){ studioReticleDrag(sx,sy); }
   else if(p.role==='sscroll'){ settingsScroll=clamp(p.scroll0-(sy-p.sy0),0,settingsMaxScroll); }
   else if(p.role==='lvscroll'){ if(Math.abs(sy-p.sy0)>TAP_SLOP) p.moved=true;
     if(p.moved) levelScroll=clamp(p.scroll0-(sy-p.sy0),0,levelMaxScroll); }
@@ -1440,7 +1413,6 @@ function onPointerUp(e){
     const s=otherId!=null?pointers.get(otherId):null;              // survivor re-bases to a pan — zero jump (P9 re-seed rule)
     if(s && s.role==='pinch'){ s.role='pan'; s.sx0=s.sx; s.sy0=s.sy; s.px0=camPan.x; s.py0=camPan.y; s.tap=false; }
   }
-  else if(p.role==='pan' && p.tap && !cancelled && ctrlMode==='PAINT' && camLock && studio.open){ exitPaint(); }  // clean tap above the panel hops back to LOOK
   else if(p.role==='lvscroll' && !p.moved && !cancelled && appState===p.app){ handleMenuTap(p.sx,p.sy); }         // level-select tap fires on clean release, same screen only
   else if(p.role==='mdscroll' && !p.moved && !cancelled && appState===p.app){ handleMenuTap(p.sx,p.sy); }         // same for the mode list
 }
@@ -1504,138 +1476,93 @@ function movePlayer(dt){
   player.y=clamp(player.y, PLAYER_RADIUS, worldH-PLAYER_RADIUS);
 }
 
-/* ============================ §3 PAINT STUDIO ============================ */
-const studio = { open:false, state:'CLOSED', reticleOn:false, coachHidden:false, activeTone:0,
-  reticle:{ x:0, y:0, active:false, hideAt:0 } };
-// P8-2/P8-3: which HSV the picker edits — tone 0 (default) or tone 1 (only when split camo is on)
-function activeHSV(){ return (player.splitPaint && studio.activeTone===1 && player.paintHSV2) ? player.paintHSV2 : player.paintHSV; }
-function setPaintFromHSV(){ const H=activeHSV(); const c=hsv2rgb(H.h,H.s,H.v);
-  if(player.splitPaint && studio.activeTone===1) player.targetPaint2={ r:c.r, g:c.g, b:c.b };
-  else player.targetPaint={ r:c.r, g:c.g, b:c.b }; }
+/* ============================ §3 PAINT — ONE VERB ============================
+   THE MIXER IS GONE, AND THE ARITHMETIC IS WHY.
+
+   Until 2026-08-02 the 🎨 button opened a 360x330 modal holding eight controls: an
+   SV square, a hue strip, a hex field, an RGB readout, sixteen terrain presets, a
+   two-tone toggle, a tone A/B selector and a reticle. Two measurements killed it.
+
+   1. IT DID NOT FIT A THUMB. Measured out of that panel's own geometry at every
+      phone size: on 844x390 the presets were 35.9 x 14.6 px, the close box was
+      21 x 20.6, and NOT ONE of the eight controls cleared 48px. The panel ate
+      27-42% of the screen to do it.
+   2. IT COULD NOT WIN. applyMatch sets paint EXACTLY to the terrain reference, and
+      matchQuality returns 1.0 at distance 0. No slider, no hex value and no preset
+      can beat an exact copy, so every mixing control was strictly dominated by the
+      96x64 MATCH button already sitting on the dock beside the one that opened it.
+
+   Stephen, 2026-08-02: "the 2D one doesnt need all the painting tools as it stands."
+
+   What survives is the only choice that was ever real: WHAT you copy. Tap MATCH and
+   you take the ground under your feet. Turn on AIM and you take whatever you drag
+   the reticle onto: the rock you mean to lie beside, the ground you are about to
+   walk into. Two-tone is no longer a toggle to remember, it is simply what MATCH
+   does when you are standing on a seam.
+
+   The cost of painting did not live in the modal either. It lives in updatePaint:
+   pigment crawls at PAINT_SHIFT_SPEED and player.shifting adds SHIFT_SHIMMER to
+   conspicuity, so a repaint still lights you up for a moment. Rooting the player
+   inside a panel was a second, hidden charge for the same thing. */
+const studio = { reticleOn:false, reticle:{ x:0, y:0, active:false, hideAt:0 } };
 function setPaintColor(rgb){ player.targetPaint={ r:rgb.r, g:rgb.g, b:rgb.b };
   player.paintHSV=rgb2hsv(rgb); }
-// P8-3: set a specific tone (0=primary, 1=secondary) — target + HSV together
 function setToneColor(tone,rgb){ if(tone===1){ player.targetPaint2={r:rgb.r,g:rgb.g,b:rgb.b}; player.paintHSV2=rgb2hsv(rgb); }
   else { player.targetPaint={r:rgb.r,g:rgb.g,b:rgb.b}; player.paintHSV=rgb2hsv(rgb); } }
-// set whichever tone the picker is currently editing (presets route here so they honor the active tone)
-function setActivePaintColor(rgb){ if(player.splitPaint && studio.activeTone===1) setToneColor(1,rgb); else setPaintColor(rgb); }
-function activeTarget(){ return (player.splitPaint && studio.activeTone===1)?player.targetPaint2:player.targetPaint; }
-function toggleSplit(){ player.splitPaint=!player.splitPaint; SFX.ui();
-  if(player.splitPaint){ player.targetPaint2={...player.targetPaint}; player.currentPaint2={...player.currentPaint};
-    player.paintHSV2=rgb2hsv(player.targetPaint); studio.activeTone=1; showToast('2-tone camo ON — paint the 2nd tone'); }
-  else { studio.activeTone=0; showToast('2-tone camo off'); }
-  syncHexField(); }
-function openStudio(){ studio.open=true; studio.state='OPEN_IDLE'; SFX.ui(); syncHexField(); }
-function closeStudio(){ studio.open=false; studio.state='CLOSED'; studio.reticle.active=false; studio.coachHidden=false;
-  if(document.activeElement===hexInput) hexInput.blur(); SFX.back(); }
-// ===== control-mode transitions (Move / Paint / Inspect) — P9 "Photo Loop" =====
-// The stillness law: hops between LOOK and PAINT never move the camera; only returning to MOVE does.
-function enterPaint(){ if(!round||roundState!=='PLAYING'||round.mode==='HUNT') return;
-  const fromLook = ctrlMode==='INSPECT';
-  ctrlMode='PAINT'; player.vx=0; player.vy=0; input.mx=0; input.my=0; input.speed=0; input.moveMag=0;
-  joystick=null; freezeHeld=false;
-  if(fromLook){ camLock=true; SFX.shutter(); vibe(10); if(!settings.photosensitive) screenFlash(0.10);   // the shutter IS the lock
-    composeNudge(); coachOnce('seenHoldHint','📌 View held — the pill takes you home'); }
-  else { camPan.x=0; camPan.y=0; }
-  openStudio(); }
-function exitPaint(){ if(studio.open) closeStudio();
-  if(camLock){ camLock=false; ctrlMode='INSPECT'; }              // one step back to LOOK — framing pixel-identical
-  else ctrlMode='MOVE'; }
+function activeTarget(){ return player.targetPaint; }
+// ===== control-mode transitions (Move / Inspect) — P9 "Photo Loop", minus the panel =====
 function enterInspect(){ if(!round||roundState!=='PLAYING'||round.mode==='HUNT') return;
-  const fromHold = ctrlMode==='PAINT' && camLock;
-  if(studio.open) closeStudio(); camLock=false; ctrlMode='INSPECT'; joystick=null;
-  if(!fromHold){ vz=vzTarget=VZ_SEEKER; }                        // fresh look always eases out to seeker altitude
-  if(fromHold) SFX.ui(); else SFX.lookIn();                      // the airlift gets its own whoosh; hops stay subtle
+  ctrlMode='INSPECT'; joystick=null;
+  vz=vzTarget=VZ_SEEKER;                                         // a look always eases out to seeker altitude
+  SFX.lookIn();
   coachOnce('seenLookHint','🤏 pinch or scroll to zoom · drag to look'); }
-function exitInspect(){ ctrlMode='MOVE'; camLock=false; cancelPinch(); SFX.home(); }
-function goHome(){ if(studio.open) closeStudio(); camLock=false; cancelPinch(); ctrlMode='MOVE'; SFX.home(); }  // the pill: ALL the way home
+function exitInspect(){ ctrlMode='MOVE'; cancelPinch(); SFX.home(); }
+function goHome(){ cancelPinch(); ctrlMode='MOVE'; SFX.home(); }  // the pill: ALL the way home
 function coachOnce(flag,msg){ if(tut.active) return; if(settings[flag]) return; settings[flag]=true; saveSettings(); showToast(msg); }  // the tour is the teacher while it runs
-function composeNudge(){ const r=studioRects(), s=worldToScreen(player.x,player.y);   // held paint: keep your body visible above the panel
-  if(s.y > r.panel.y-30 && s.x > r.panel.x-20 && s.x < r.panel.x+r.panel.w+20){
-    const z=Math.max(ZOOM_MIN*0.55, zoomBase*(1+(vzTarget-1)));                       // the SETTLED hold zoom — never a mid-ease liveZoom
-    const want=player.y-(r.panel.y-56-vpH/2)/z;                                       // cam.y that sits the body 56px above the panel
-    const ty=clamp(want-camFollow.y, -INSPECT_PAN_MAX*1.8, INSPECT_PAN_MAX*1.8);
-    // token + guard: the setter self-disarms when the hold ends AND when a newer nudge supersedes it
-    const tok=++_nudgeSeq;
-    if(FX_MOTION>0) tw(camPan.y, ty, 0.26, easeOutCubic, v=>{ if(tok===_nudgeSeq && ctrlMode==='PAINT' && camLock) camPan.y=v; }); else camPan.y=ty; } }
-function togglePaintMode(){ ctrlMode==='PAINT' ? exitPaint() : enterPaint(); }
 function toggleInspect(){ ctrlMode==='INSPECT' ? exitInspect() : enterInspect(); }
 function samplePos(){ return studio.reticleOn && studio.reticle.active ? {x:studio.reticle.x,y:studio.reticle.y} : {x:player.x,y:player.y}; }
-// P8-3: when split camo is on, MATCH samples the two dominant footprint tones into the two paints;
-// otherwise it samples the single footprint mean exactly as before.
+/* MATCH takes the ground it is pointed at. Two-tone is automatic: if the footprint
+   under the sample has a real second tone, you wear both halves; if it is uniform,
+   one flat colour is the perfect answer and a split would only cost you a seam that
+   is not there. This is the whole paint system. */
 function applyMatch(sx,sy){ const ref=terrainReference(sx,sy); const rnd=c=>({r:Math.round(c.r),g:Math.round(c.g),b:Math.round(c.b)});
-  if(player.splitPaint && ref.tones && ref.tones.length>1 && ref.tones[1].w>SPLIT_MIN_W){
-    setToneColor(0, rnd(ref.tones[0].rgb)); setToneColor(1, rnd(ref.tones[1].rgb)); }
-  else if(player.splitPaint){ setToneColor(0, rnd(ref.rgb)); setToneColor(1, rnd(ref.rgb)); }   // uniform ground → both tones = mean
-  else setPaintColor(rnd(ref.rgb));
-  syncHexField(); SFX.match(player.mq); spawnRepaintPuff(); addTrauma(TRAUMA.repaint); punchZoom(0.03,90,260); vibe(12); }
-function doMatch(){ const sp=samplePos(); applyMatch(sp.x,sp.y); }
-function instantMatch(){ applyMatch(player.x,player.y); }   // Q / RT / long-press, works without opening
-
-// panel geometry (logical 360x330). returns screen-space CSS-px rects.
-function studioRects(){
-  const LW=360, LH=330; const scale=Math.min(1, vpW/400)*(vpH<520?0.86:1);
-  const pw=LW*scale, ph=LH*scale;
-  // P10: on narrow (portrait) screens the mode dock owns the bottom band — lift the panel above it
-  const px=(vpW-pw)/2; const py=vpH-ph-16-(vpW<700?78:0);
-  const R=(lx,ly,lw,lh)=>({ x:px+lx*scale, y:py+ly*scale, w:lw*scale, h:lh*scale });
-  return { scale, panel:{x:px,y:py,w:pw,h:ph},
-    sv:R(14,44,200,200), hue:R(222,44,30,200), match:R(262,44,84,40),
-    swatch:R(262,92,84,44), matchPct:R(262,144,84,24), reticle:R(262,178,84,26),
-    coach:R(262,206,84,24), split:R(262,232,84,22),
-    hex:R(14,258,116,26), rgb:R(140,258,110,26),
-    presets:R(14,290,334,34), title:R(14,14,300,20), close:R(326,10,24,24) };
-}
-function studioLocal(sx,sy){ const r=studioRects(); return { x:(sx-r.panel.x)/r.scale, y:(sy-r.panel.y)/r.scale }; }
-function studioPointerDown(id,sx,sy,ptype){
-  const r=studioRects();
-  if(inRect(sx,sy,r.close)){ exitPaint(); return true; }   // ✕ returns to Move (not a rooted no-studio limbo)
-  if(inRect(sx,sy,r.sv)){ pointers.set(id,{sx,sy,role:'sv',ptype}); studioSV(sx,sy,ptype); return true; }
-  if(inRect(sx,sy,r.hue)){ pointers.set(id,{sx,sy,role:'hue'}); studioHue(sx,sy); return true; }
-  if(inRect(sx,sy,r.match)){ doMatch(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
-  if(inRect(sx,sy,r.split)){ toggleSplit(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
-  if(player.splitPaint && inRect(sx,sy,r.swatch)){        // pick which tone the picker edits (left=1st, right=2nd)
-    studio.activeTone = (sx < r.swatch.x + r.swatch.w/2) ? 0 : 1; SFX.ui(); syncHexField(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
-  if(inRect(sx,sy,r.reticle)){ toggleReticle(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
-  if(inRect(sx,sy,r.hex)){ hexInput.focus(); hexInput.select&&hexInput.select(); pointers.set(id,{sx,sy,role:'ui'}); return true; }
-  // presets 8x2
-  const pr=r.presets, cols=8, sw=pr.w/cols, sh=pr.h/2;
-  for(let i=0;i<16;i++){ const cx=pr.x+(i%cols)*sw, cy=pr.y+((i/cols)|0)*sh;
-    if(sx>=cx&&sx<=cx+sw&&sy>=cy&&sy<=cy+sh){ setActivePaintColor(Object.assign({},TERRAIN_RGB[PRESET_ORDER[i]])); syncHexField(); SFX.ui(); spawnRepaintPuff(); pointers.set(id,{sx,sy,role:'ui'}); return true; } }
-  if(inRect(sx,sy,r.panel)){ pointers.set(id,{sx,sy,role:'ui'}); return true; } // consume within panel
-  return false;
-}
-function studioSV(sx,sy,ptype){ const rc=studioRects(), r=rc.sv;
-  const oy=(ptype==='touch')?18*rc.scale:0;          // P8-2: lift the picked point above the fingertip
-  const H=activeHSV();
-  H.s=clamp01((sx-r.x)/r.w); H.v=clamp01(1-((sy-oy)-r.y)/r.h);
-  setPaintFromHSV(); syncHexField(); }
-function studioHue(sx,sy){ const r=studioRects().hue;
-  activeHSV().h=clamp01((sy-r.y)/r.h)*360; setPaintFromHSV(); syncHexField(); }
+  const two = !!(ref.tones && ref.tones.length>1 && ref.tones[1].w>SPLIT_MIN_W);
+  player.splitPaint = two;
+  if(two){ setToneColor(0, rnd(ref.tones[0].rgb)); setToneColor(1, rnd(ref.tones[1].rgb)); }
+  else { setPaintColor(rnd(ref.rgb)); player.targetPaint2={r:player.targetPaint.r,g:player.targetPaint.g,b:player.targetPaint.b}; player.mq2=0; }
+  player.paintCount=(player.paintCount|0)+1;
+  /* THE STILLNESS LAW OUTRANKS THE FEEDBACK KICK. The 3% zoom punch reads as a nice
+     thump when you paint standing on the ground. Up at the seeker's altitude the
+     entire point of the view is that your framing does not move while you work, and
+     lockandlook measured the punch shifting zoom 1.170 -> 1.202 -> 1.197 on a frame
+     that was supposed to be pixel-identical. Feedback that moves the camera is a
+     cost, not a reward, in the one mode where the camera is the tool. */
+  SFX.match(player.mq); spawnRepaintPuff(); addTrauma(TRAUMA.repaint);
+  if(ctrlMode!=='INSPECT') punchZoom(0.03,90,260);
+  vibe(12);
+  showToast(two?'Two tones — you are wearing the seam':'Painted'); }
+function doMatch(){ const sp=samplePos(); applyMatch(sp.x,sp.y);
+  /* AIM is a ONE-SHOT. It disarms the moment it is spent, which is what makes it
+     safe: the mode it replaced could leave a hider rooted with the panel shut, and
+     this file carried a "heal any close-without-exit desync" line to paper over it.
+     A mode that ends itself cannot strand anybody. */
+  if(studio.reticleOn){ studio.reticleOn=false; studio.reticle.active=false; } }
+function instantMatch(){ doMatch(); }   // MATCH button / Q / RT / long-press all take the same sample
+/* AIM: the one choice the mixer never offered. Off, you copy your feet. On, you drag
+   a reticle onto whatever you want to be mistaken for. */
 function toggleReticle(){ studio.reticleOn=!studio.reticleOn; SFX.ui();
-  if(studio.reticleOn){ studio.reticle.x=player.x; studio.reticle.y=player.y; studio.reticle.active=true; studio.reticle.hideAt=nowMs()+3000; }
+  if(studio.reticleOn){ studio.reticle.x=player.x; studio.reticle.y=player.y; studio.reticle.active=true; studio.reticle.hideAt=nowMs()+3000;
+    coachOnce('seenAimHint','🎯 drag the ring onto what you want to copy, then MATCH'); }
   else studio.reticle.active=false; }
 function studioReticleDrag(sx,sy){ const w=screenToWorld(sx,sy);
   // P9: over a held frame you can sample anything you can see (practice) / a generous radius (scored modes)
-  const maxR=camLock ? (round&&round.diff.practice ? 1e9 : RETICLE_HELD_R) : 6*TILE, dx=w.x-player.x, dy=w.y-player.y, d=Math.hypot(dx,dy);
+  /* Reach: unlimited in practice (there is nothing to lose by studying the map),
+     twelve tiles while you are up at the seeker's altitude and can actually see that
+     far, six on the ground. camLock is gone with the held-shot state it described. */
+  const maxR=(round&&round.diff.practice) ? 1e9 : (ctrlMode==='INSPECT' ? RETICLE_HELD_R : 6*TILE), dx=w.x-player.x, dy=w.y-player.y, d=Math.hypot(dx,dy);
   if(d>maxR){ studio.reticle.x=player.x+dx/d*maxR; studio.reticle.y=player.y+dy/d*maxR; }
   else { studio.reticle.x=w.x; studio.reticle.y=w.y; }
   studio.reticle.active=true; studio.reticle.hideAt=nowMs()+3000; }
-function studioKey(code){
-  const H=activeHSV();
-  if(code==='BracketLeft') H.h=(H.h+355)%360; else if(code==='BracketRight') H.h=(H.h+5)%360;
-  else if(code==='Comma') H.v=clamp01(H.v-0.04); else if(code==='Period') H.v=clamp01(H.v+0.04);
-  else if(code==='Minus') H.s=clamp01(H.s-0.04); else if(code==='Equal') H.s=clamp01(H.s+0.04);
-  else if(code==='KeyM') doMatch();
-  else if(/^Digit[1-8]$/.test(code)){ const i=+code.slice(5)-1; setActivePaintColor(Object.assign({},TERRAIN_RGB[PRESET_ORDER[i]])); syncHexField(); SFX.ui(); return; }
-  else return;
-  setPaintFromHSV(); syncHexField();
-}
-// hex field wiring
-function syncHexField(){ if(document.activeElement!==hexInput) hexInput.value=rgb2hex(activeTarget()).toUpperCase(); }
-hexInput.addEventListener('input', ()=>{ const c=hex2rgb(hexInput.value); if(c){ if(player.splitPaint&&studio.activeTone===1) setToneColor(1,c); else setPaintColor(c); } });
-hexInput.addEventListener('keydown', e=>{ if(e.code==='Enter'){ hexInput.blur(); } e.stopPropagation(); });
-hexInput.addEventListener('blur', ()=> syncHexField());
 
 /* ============================ §6 BOT UFO AI ============================ */
 let opennessGrid=null, openCells=[];
@@ -1946,7 +1873,7 @@ function updateUfo(u,dt,D){
     round.metrics.spottedCount++; round.spottedReason=spottedReason(P.mq,P.m,P.S,P.ref.dominantKey);
     round.reasonUntil=nowMs()+2600; SFX.spotted(); addTrauma(TRAUMA.spotted); punchZoom(-0.05,90,420); FX.spottedV=1; spawnShards(P.x,P.y,COL.danger,9); vibe([30,50,30]);
     // forgiving: a kid caught mid-paint/look is sent home with a warning — the camera GLIDES back (never snaps)
-    if(ctrlMode!=='MOVE' && !round.diff.practice){ if(holdBracketT>0.3) spawnShards(P.x,P.y,COL.amber,6);
+    if(ctrlMode!=='MOVE' && !round.diff.practice){ spawnShards(P.x,P.y,COL.amber,6);
       goHome(); panBoost=HOLD_GLIDE_MUL; showToast('Spotted — move!'); }
   }
   if((prev==='CHASE'||prev==='SCAN'||prev==='INVESTIGATE') && u.suspicion<EXIT_SUSPECT && u.state==='PATROL') SFX.relief();
@@ -2040,7 +1967,6 @@ function updateCamera(dt){
   if(!pinch) vz+=(vzTarget-vz)*Math.min(1,dt*VZ_RATE);            // pinch/wheel drive vz 1:1; buttons/keys ease
   zoom=liveZoom();
   if(Math.abs(zoom-_lastZoomFrame)>1e-4){ if(!pinch) reanchorPans(); _lastZoomFrame=zoom; }   // zoom moved under a live drag → re-base its grab
-  holdBracketT+=((camLock?1:0)-holdBracketT)*Math.min(1,dt*(camLock?10:14));
   // (2) eased follow anchor (velocity lookahead ONLY in MOVE)
   const lead=ctrlMode==='MOVE'?1:0;
   const lx=clamp(player.vx*CAM_LOOK_K,-CAM_LOOK_MAX,CAM_LOOK_MAX)*lead, ly=clamp(player.vy*CAM_LOOK_K,-CAM_LOOK_MAX,CAM_LOOK_MAX)*lead;
@@ -2053,7 +1979,6 @@ function updateCamera(dt){
   const gpm=gpLive ? Math.hypot(gpCam.x,gpCam.y) : 0;
   if(gpm>0.02 && (ctrlMode==='MOVE'||heldCam())){ camPan.x+=gpCam.x*420*dt; camPan.y+=gpCam.y*420*dt; }
   // (3) pan: unlocked PAINT pins to the body; MOVE springs home when idle; LOOK / held PAINT hold the framing
-  if(ctrlMode==='PAINT' && !camLock){ camPan.x=0; camPan.y=0; }
   else if(ctrlMode==='MOVE'){ let panActive=gpm>0.02; if(!panActive) for(const pp of pointers.values()){ if(pp.role==='pan'||pp.role==='pinch'){ panActive=true; break; } }
     if(!panActive){ const t=1-Math.exp(-PAN_HOME_RATE*panBoost*dt); camPan.x+=(0-camPan.x)*t; camPan.y+=(0-camPan.y)*t;
       if(Math.hypot(camPan.x,camPan.y)<0.5){ camPan.x=0; camPan.y=0; } } }
@@ -2572,7 +2497,7 @@ function drawRoundHUD(){
   const word = player.conceal>=GHOST_C?'GHOST':(mq>=85?'HIDDEN':(mq>=50?'BLENDING':'EXPOSED'));
   txt(Math.round(mq)+'%', mx+mw/2, my+mh/2-1, 17, '#fff', 'center', '700');
   // advisory nudge tick beside the word while exposed (P8-1) — only if there's a real ground ref
-  if(mq<85 && player.ref && !studio.open){ const co=paintCoach();
+  if(mq<85 && player.ref){ const co=paintCoach();
     txt(word+'  ·  '+co.glyph+' '+co.hint, mx+mw/2, my+mh+8, 9, COL.muted, 'center', '700'); }
   else txt(word, mx+mw/2, my+mh+8, 9, word==='GHOST'?PAL.hidden:COL.muted, 'center', '700');
   // ---- Detection meter (below) ----
@@ -2643,7 +2568,10 @@ function drawRoundHUD(){
   const right=settings.handed!=='left', edge=14, gap=10, BS=Math.round(64*Math.min(1.15,hudScale<1?1:hudScale));
   const ay=vpH-BS-14; let ax = right ? vpW-edge-BS : edge;
   const pushMode=(id,x,w)=>_hud.modeButtons.push({id,x,y:ay,w,h:BS});
-  uiBtn('🎨', ax, ay, BS, BS, ()=> togglePaintMode(), {rad:14, size:24, active:ctrlMode==='PAINT'}); pushMode('paint',ax,BS);
+  /* AIM replaces the button that used to open the mixer. Same slot, same size, and it
+     is now the only paint control besides MATCH itself. */
+  uiBtn('🎯', ax, ay, BS, BS, ()=> toggleReticle(), {rad:14, size:24, active:studio.reticleOn}); pushMode('aim',ax,BS);
+  txt('AIM', ax+BS/2, ay-8, 9, studio.reticleOn?COL.amber:COL.muted, 'center', '600');
   ax += right ? -(BS+gap) : (BS+gap);
   uiBtn('👁', ax, ay, BS, BS, ()=> toggleInspect(), {rad:14, size:22, active:ctrlMode==='INSPECT'}); pushMode('inspect',ax,BS);
   ax += right ? -(96+gap) : (BS+gap);
@@ -2662,9 +2590,8 @@ function drawRoundHUD(){
   else uiBtn('⏸', edge, 14, 40, 40, ()=> togglePause(), {rad:9, size:16});
   uiBtn(settings.muted?'🔇':'🔊', edge+46+(round.online?22:0), 14, 40, 40, ()=> setMuted(!settings.muted), {rad:9, size:14});
   // MODE pill (always visible, always the one road ALL the way home to Move)
-  { const held = ctrlMode==='PAINT' && camLock;
-    const mc = ctrlMode==='PAINT'?COL.amber:(ctrlMode==='INSPECT'?COL.green:COL.cyan);
-    const label = ctrlMode==='PAINT'?(held?'📌 PAINT':'🎨 PAINT'):(ctrlMode==='INSPECT'?'👁 LOOK':'🕹 MOVE');
+  { const mc = ctrlMode==='INSPECT'?COL.green:COL.cyan;
+    const label = ctrlMode==='INSPECT'?'👁 LOOK':'🕹 MOVE';
     const pw=Math.round(96*hudScale), ph=Math.round(Math.max(40,40*hudScale)), pxp=edge, pyp=62;
     ctx.fillStyle='rgba(21,27,44,0.92)'; rr(pxp,pyp,pw,ph,10); ctx.fill();
     ctx.strokeStyle=mc; ctx.lineWidth=2; rr(pxp,pyp,pw,ph,10); ctx.stroke();
@@ -2673,7 +2600,7 @@ function drawRoundHUD(){
     roundHits.push({x:pxp,y:pyp,w:pw,h:ph,fn:()=>{ if(ctrlMode!=='MOVE') goHome(); }}); }
   // P9 camera cluster while looking / holding a shot: ＋ ⌖ － on the MOVE-hand side (buttons cover everything gestures do)
   _hud.zoom=null;
-  const clusterOK = heldCam() && !(studio.open && vpW<700);   // on narrow screens the lifted studio owns that band — pinch/wheel still zoom
+  const clusterOK = heldCam();
   if(clusterOK){
     const rc = right?14:vpW-14-56; let ry=Math.round(vpH*0.5-96);
     uiBtn('＋', rc, ry, 56, 56, ()=>stepDetent(1), {rad:14, size:22}); const zin={x:rc,y:ry,w:56,h:56};
@@ -2697,8 +2624,7 @@ function drawRoundHUD(){
     const rc = right?14:vpW-14-56, ry=Math.round(vpH*0.5-28);
     uiBtn('⌖', rc, ry, 56, 56, ()=>{ camPan.x=0; camPan.y=0; vibe(8); }, {rad:14, size:22}); _hud.recenter={x:rc,y:ry,w:56,h:56}; }
   else _hud.recenter=null;
-  // ---- ability bar (vertical column, action-hand side) — hidden under a held shot; ❄ stays live while looking ----
-  if(!studio.open){
+  // ---- ability bar (vertical column, action-hand side); ❄ stays live while looking ----
   const abx = right ? vpW-edge-44 : edge; const cdMax={dash:DASH_CD,decoy:DECOY_CD,ink:INK_CD,tongue:TONGUE_CD,burrow:BURROW_CD,lure:LURE_CD};
   /* The column grew to seven. Rather than hand-check the arithmetic again every time an
      ability is added, the pitch now shrinks to fit whatever is above it (the timer panel ends
@@ -2741,7 +2667,6 @@ function drawRoundHUD(){
         player.cutOn=!player.cutOn; if(!player.cutOn) player.cutT=0; SFX.ui(); vibe(20); return; }
       if(ab.key==='freeze') freezeHeld=!freezeHeld; else useAbility(ab.key); }});
   });
-  }
   /* THE CUT BUTTON is a TOGGLE, not a hold, and it is not an eighth entry in the ability
      column. Two reasons, both structural rather than stylistic:
      - roundHits only ever fires on pointer DOWN (the array is rebuilt every frame and there is
@@ -2754,7 +2679,6 @@ function drawRoundHUD(){
   if(round.debug){ drawDebug(); }
   // seeker's-eye inspect overlay (lite while painting over a held shot: rings + YOU only, no chrome)
   if(inspectZoomT>0.01) drawInspectOverlay(ctrlMode!=='INSPECT');
-  drawHoldBrackets();
   // joystick visual — sneak/walk knob with a magnitude arc
   if(joystick){ const sneak = input.moveTag!=='walk';
     const kc = (input.speed>0 && !sneak) ? COL.amber : COL.cyan;
@@ -2767,7 +2691,6 @@ function drawRoundHUD(){
     if(input.speed>0) txt(sneak?'SNEAK':'WALK', joystick.cx, joystick.cy-JOY_R-10, 9, kc, 'center','800');
     ctx.globalAlpha=1; }
   // studio
-  if(studio.open) drawStudio();
   drawTour();                                                   // P14 banner stays readable over the studio dim
   // countdown / banners
   if(roundState==='COUNTDOWN'||roundState==='RESUME_COUNTDOWN') drawCountdown();
@@ -2817,13 +2740,13 @@ const TOUR=[
   { icon:'🕹', text:'Push the move side gently to sneak around', test:(dt,t)=> input.speed>0 ? t+dt : t, need:0.9 },
   { icon:'👁', text:'Tap 👁 — rise up to the hunters’ view',      test:(dt,t)=> ctrlMode==='INSPECT' ? t+dt : t, need:0.7 },
   { icon:'🤏', text:'Pinch or scroll to zoom in and out',         test:(dt,t)=> Math.abs(vz-VZ_SEEKER)>0.1 ? t+dt : t, need:0.25 },
-  { icon:'🎨', text:'Tap 🎨 to hold the shot, then press MATCH',  test:(dt,t)=> (studio.open && paintCoach().mqAim>=0.85) ? t+dt : t, need:0.15 },   // AIM match — instant on MATCH; the crawl mustn't gate a kid
+  { icon:'🎨', text:'Press MATCH — you become the ground you stand on', test:(dt,t)=> ((player.paintCount|0)>0 && paintCoach().mqAim>=0.85) ? t+dt : t, need:0.15 },   // the ACT, not the state: at spawn you already match, so a state-only test skipped the lesson
   { icon:'⏱', text:'Now hold still… melt into the ground',       test:(dt,t)=> player.conceal>=0.85 ? t+dt : t, need:0.4 },
 ];
 const tut={ active:false, step:0, t:0, doneT:0 };
 function startTour(){ tut.active=true; tut.step=0; tut.t=0; tut.doneT=0; }
 function endTour(done){ tut.active=false; settings.tourDone=true;
-  settings.seenLookHint=true; settings.seenHoldHint=true; saveSettings();   // the tour teaches what the one-shot hints would
+  settings.seenLookHint=true; settings.seenAimHint=true; saveSettings();   // the tour teaches what the one-shot hints would
   if(done){ SFX.best(); showToast('⭐ You know everything now — happy hiding!'); spawnShards(player.x,player.y,COL.amber,14); } }
 function stepTour(dt){ if(!tut.active) return;
   if(!round||round.mode!=='PRACTICE'){ tut.active=false; return; }
@@ -2847,12 +2770,6 @@ function drawTour(){ if(!tut.active) return;
   roundHits.push({x:x+w-32,y:y+9,w:24,h:24,fn:()=>endTour(false)});
 }
 // P9: viewfinder corner brackets — "the shot is held" (non-breathing; photosensitive-safe)
-function drawHoldBrackets(){ const a=holdBracketT; if(a<=0.02) return; applyScreenTransform();
-  const inset=12+(1-a)*26, L=26;
-  ctx.strokeStyle=COL.amber; ctx.globalAlpha=0.7*a; ctx.lineWidth=3;
-  const cs=[[inset,inset,1,1],[vpW-inset,inset,-1,1],[inset,vpH-inset,1,-1],[vpW-inset,vpH-inset,-1,-1]];
-  for(const [x,y,dx,dy] of cs){ ctx.beginPath(); ctx.moveTo(x+dx*L,y); ctx.lineTo(x,y); ctx.lineTo(x,y+dy*L); ctx.stroke(); }
-  ctx.globalAlpha=1; }
 function drawHuntHUD(){
   const caught=round.hunterCaught||0, total=round.bots.length;
   panel(vpW/2-84,10,168,44,10); txt('CAUGHT  '+caught+' / '+total, vpW/2, 26, 15, COL.cyan,'center','700');
@@ -2958,99 +2875,6 @@ function drawPause(){ ctx.fillStyle='rgba(8,12,25,0.7)'; ctx.fillRect(0,0,vpW,vp
   navListApp=appState;
 }
 
-/* ---- Paint Studio panel ---- */
-let hueGradCache=null;
-function drawStudio(){
-  const r=studioRects();
-  // P9: over a held shot the world stays visible — you paint INSIDE your framed view and watch yourself melt in
-  ctx.fillStyle='rgba(6,10,20,'+(camLock?DIM_HELD:0.72)+')'; ctx.fillRect(0,0,vpW,vpH);
-  if(camLock){ ctx.fillStyle='rgba(10,14,25,0.85)'; rr(r.panel.x,r.panel.y,r.panel.w,r.panel.h,14); ctx.fill(); }  // solid backing keeps slider contrast on bright biomes
-  panel(r.panel.x,r.panel.y,r.panel.w,r.panel.h,14);
-  txt('PAINT STUDIO', r.title.x, r.title.y+8, 12, COL.amber, 'left','700');
-  txt(round.diff.practice?'· slow-mo':'', r.title.x+118, r.title.y+8, 10, COL.muted,'left','500');
-  // close button
-  ctx.strokeStyle=COL.muted; ctx.lineWidth=1.5; rr(r.close.x,r.close.y,r.close.w,r.close.h,6); ctx.stroke();
-  txt('✕', r.close.x+r.close.w/2, r.close.y+r.close.h/2, 13, COL.muted, 'center','700');
-  // SV square (reflects the tone currently being edited — tone 0 by default)
-  const eH=activeHSV();
-  const sv=r.sv; const hueRGB=hsv2rgb(eH.h,1,1);
-  ctx.fillStyle=rgb2hex(hueRGB); ctx.fillRect(sv.x,sv.y,sv.w,sv.h);
-  let g=ctx.createLinearGradient(sv.x,0,sv.x+sv.w,0); g.addColorStop(0,'#fff'); g.addColorStop(1,'rgba(255,255,255,0)');
-  ctx.fillStyle=g; ctx.fillRect(sv.x,sv.y,sv.w,sv.h);
-  g=ctx.createLinearGradient(0,sv.y,0,sv.y+sv.h); g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'#000');
-  ctx.fillStyle=g; ctx.fillRect(sv.x,sv.y,sv.w,sv.h);
-  ctx.strokeStyle=COL.line; ctx.lineWidth=1; ctx.strokeRect(sv.x,sv.y,sv.w,sv.h);
-  const cx=sv.x+eH.s*sv.w, cy=sv.y+(1-eH.v)*sv.h;
-  ctx.strokeStyle='#000'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(cx,cy,7,0,Math.PI*2); ctx.stroke();
-  ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(cx,cy,7,0,Math.PI*2); ctx.stroke();
-  // P8-2 loupe: while a touch drag picks color, float a swatch+match% bubble above the cursor
-  let svTouch=false; for(const pp of pointers.values()){ if(pp.role==='sv'&&pp.ptype==='touch'){ svTouch=true; break; } }
-  if(svTouch && FX_MOTION>0){ const lx=clamp(cx, sv.x+22, sv.x+sv.w-22), ly=sv.y+26;
-    ctx.fillStyle=rgb2hex(hsv2rgb(eH.h,eH.s,eH.v)); ctx.beginPath(); ctx.arc(lx,ly,15,0,TAU); ctx.fill();
-    ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(lx,ly,15,0,TAU); ctx.stroke();
-    txt(Math.round(activeAimMatch().mq*100)+'%', lx, ly, 10, eH.v>0.55?'#111':'#fff','center','800'); }   // match of the color being picked
-  // hue strip
-  const hu=r.hue; const hg=ctx.createLinearGradient(0,hu.y,0,hu.y+hu.h);
-  for(let i=0;i<=6;i++){ const c=hsv2rgb(i*60,1,1); hg.addColorStop(i/6,rgb2hex(c)); }
-  ctx.fillStyle=hg; ctx.fillRect(hu.x,hu.y,hu.w,hu.h); ctx.strokeStyle=COL.line; ctx.strokeRect(hu.x,hu.y,hu.w,hu.h);
-  const hy=hu.y+(eH.h/360)*hu.h; ctx.strokeStyle='#fff'; ctx.lineWidth=2;
-  ctx.strokeRect(hu.x-2,hy-2,hu.w+4,4);
-  // MATCH button
-  uiStudioBtn('MATCH', r.match, COL.cyan, ()=>{});
-  // swatch: default YOU|GROUND; when split camo is on it becomes the two tone chips (active one ringed)
-  const sw=r.swatch; const ref=player.ref?player.ref.rgb:{r:0,g:0,b:0};
-  if(player.splitPaint){
-    ctx.fillStyle=rgb2hex(player.currentPaint); ctx.fillRect(sw.x,sw.y,sw.w/2,sw.h);
-    ctx.fillStyle=rgb2hex(player.currentPaint2); ctx.fillRect(sw.x+sw.w/2,sw.y,sw.w/2,sw.h);
-    ctx.strokeStyle=COL.line; ctx.strokeRect(sw.x,sw.y,sw.w,sw.h);
-    const ax=studio.activeTone===0?sw.x:sw.x+sw.w/2;      // ring the tone being edited
-    ctx.strokeStyle=COL.amber; ctx.lineWidth=2.5; ctx.strokeRect(ax+1,sw.y+1,sw.w/2-2,sw.h-2); ctx.lineWidth=1;
-    txt('TONE 1', sw.x+sw.w*0.25, sw.y+sw.h-6, 7.5, '#000', 'center','700');
-    txt('TONE 2', sw.x+sw.w*0.75, sw.y+sw.h-6, 7.5, '#000', 'center','700');
-  } else {
-    ctx.fillStyle=rgb2hex(player.currentPaint); ctx.fillRect(sw.x,sw.y,sw.w/2,sw.h);
-    ctx.fillStyle=rgb2hex(ref); ctx.fillRect(sw.x+sw.w/2,sw.y,sw.w/2,sw.h);
-    ctx.strokeStyle=COL.line; ctx.strokeRect(sw.x,sw.y,sw.w,sw.h);
-    txt('YOU', sw.x+sw.w*0.25, sw.y+sw.h-6, 8, '#000', 'center','700');
-    txt('GROUND', sw.x+sw.w*0.75, sw.y+sw.h-6, 8, '#000', 'center','700');
-  }
-  // match readout: NOW (crawled body) vs AIM (target color) — teaches that pigment crawls (P8-1)
-  const coach=paintCoach();
-  const nowPct=Math.round(coach.mqNow*100), aimPct=Math.round(coach.mqAim*100);
-  const nowC=coach.mqNow>=0.85?PAL.hidden:(coach.mqNow>=0.5?PAL.blend:PAL.exposed);
-  txt('NOW', r.matchPct.x, r.matchPct.y+7, 8, COL.muted,'left','700');
-  txt(nowPct+'%', r.matchPct.x+r.matchPct.w, r.matchPct.y+6, 14, nowC,'right','800');
-  txt('AIM', r.matchPct.x, r.matchPct.y+19, 8, COL.muted,'left','700');
-  txt(aimPct+'%', r.matchPct.x+r.matchPct.w, r.matchPct.y+18, 11, COL.txt,'right','700');
-  // reticle toggle
-  uiStudioBtn(studio.reticleOn?'◎ RETICLE':'◎ reticle', r.reticle, studio.reticleOn?COL.amber:COL.muted, ()=>{});
-  // coach hint pill — names the single biggest nudge toward the ground color (colorblind-safe: glyph + word)
-  const cr=r.coach, matched=coach.mqNow>=0.85;
-  ctx.fillStyle=matched?'rgba(58,192,160,0.16)':'rgba(10,14,25,0.85)'; rr(cr.x,cr.y,cr.w,cr.h,7); ctx.fill();
-  ctx.strokeStyle=matched?PAL.hidden:COL.line; ctx.lineWidth=1; rr(cr.x,cr.y,cr.w,cr.h,7); ctx.stroke();
-  txt((matched?'✓ matched':coach.glyph+' '+coach.hint), cr.x+cr.w/2, cr.y+cr.h/2, 10.5, matched?PAL.hidden:COL.cyan,'center','700');
-  if(matched){ if(!studio.coachHidden){ studio.coachHidden=true; if(typeof SFX!=='undefined') SFX.confirm(); } }
-  else if(coach.mqNow<0.8) studio.coachHidden=false;
-  // 2-tone camo toggle (P8-3) — beats a two-terrain seam a single flat color caps out on
-  const sp2=r.split, on2=player.splitPaint;
-  ctx.fillStyle=on2?'rgba(242,179,61,0.18)':'rgba(10,14,25,0.85)'; rr(sp2.x,sp2.y,sp2.w,sp2.h,7); ctx.fill();
-  ctx.strokeStyle=on2?COL.amber:COL.line; ctx.lineWidth=1; rr(sp2.x,sp2.y,sp2.w,sp2.h,7); ctx.stroke();
-  txt((on2?'◧ 2-TONE ON':'▢ 2-tone'), sp2.x+sp2.w/2, sp2.y+sp2.h/2, 10, on2?COL.amber:COL.muted,'center','700');
-  // hex field (reflects the tone being edited)
-  ctx.fillStyle='#0A0E19'; rr(r.hex.x,r.hex.y,r.hex.w,r.hex.h,6); ctx.fill(); ctx.strokeStyle=COL.line; rr(r.hex.x,r.hex.y,r.hex.w,r.hex.h,6); ctx.stroke();
-  txt(rgb2hex(activeTarget()).toUpperCase(), r.hex.x+8, r.hex.y+r.hex.h/2, 13, COL.txt,'left','600');
-  txt('HEX', r.hex.x+2, r.hex.y-6, 8, COL.muted,'left','700');
-  // rgb readout
-  const c=player.currentPaint; txt('R'+Math.round(c.r)+' G'+Math.round(c.g)+' B'+Math.round(c.b), r.rgb.x, r.rgb.y+r.rgb.h/2, 12, COL.muted,'left','500');
-  // presets
-  const pr=r.presets, cols=8, swm=pr.w/cols, shm=pr.h/2;
-  for(let i=0;i<16;i++){ const k=PRESET_ORDER[i]; const gx=pr.x+(i%cols)*swm, gy=pr.y+((i/cols)|0)*shm;
-    ctx.fillStyle=TERRAIN_HEX[k]; ctx.fillRect(gx+1,gy+1,swm-2,shm-2); ctx.strokeStyle='rgba(255,255,255,0.12)'; ctx.strokeRect(gx+1,gy+1,swm-2,shm-2); }
-  txt('terrain presets', pr.x, pr.y-6, 8, COL.muted,'left','700');
-}
-function uiStudioBtn(label,r,color,fn){ ctx.fillStyle='rgba(10,14,25,0.9)'; rr(r.x,r.y,r.w,r.h,8); ctx.fill();
-  ctx.strokeStyle=color; ctx.lineWidth=1.5; rr(r.x,r.y,r.w,r.h,8); ctx.stroke();
-  txt(label, r.x+r.w/2, r.y+r.h/2, r.h>34?14:11, color, 'center','700'); }
 
 /* ============================ §2.7 CAMO STEP ============================ */
 function updatePaint(dt){ let maxd=0; const step=PAINT_SHIFT_SPEED*dt;
@@ -3497,16 +3321,16 @@ function triggerAbduction(u,who){ if(round.finalized) return;
      mode branches is local-player-only; the partner path returns before it. */
   if(A!==player){ if(round.mode==='SALVAGE') salvTaken(u,A); return; }
   if(!player.alive) return;
-  if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;   // reset BEFORE the TA respawn so mode never leaks
+  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; pinch=null;   // reset BEFORE the TA respawn so mode never leaks
   if(round.mode==='TA'){ respawnTA(); return; }   // Time Attack: respawn with a time penalty, not game over
   if(round.mode==='SALVAGE'){ salvTaken(u,player); return; }   // taken, not finished: see salvTaken
   player.alive=false; round.caught=true; round.caughtBy=u; roundState='CAUGHT'; player.abductT=0;
   addTrauma(TRAUMA.abduct); hitstopMs(110); punchZoom(0.12,200,600); screenFlash(0.85); vibe([80,60,120]); SFX.lose(); tone(180,0.9,'sine',0.34,1500); noise(0.9,0.12,2400); }
 function endRound(win){ if(round.finalized||roundState==='TIMEOUT'||roundState==='CAUGHT') return;
-  if(win){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null; roundState='TIMEOUT'; round.summaryT=0; SFX.win(); } }
+  if(win){ ctrlMode='MOVE'; camPan.x=0; camPan.y=0; pinch=null; roundState='TIMEOUT'; round.summaryT=0; SFX.win(); } }
 function togglePause(){ if(appState!=='ROUND') return;
   if(round && round.online){ showToast('🌐 no pausing online — use LEAVE to quit'); return; }
-  if(roundState==='PLAYING'){ if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null; roundState='PAUSED'; menuIndex=0; SFX.ui(); stopAllLoops(); }
+  if(roundState==='PLAYING'){ ctrlMode='MOVE'; camPan.x=0; camPan.y=0; pinch=null; roundState='PAUSED'; menuIndex=0; SFX.ui(); stopAllLoops(); }
   else if(roundState==='PAUSED') resumeRound(); }
 function resumeRound(){ showHelp=false; roundState='RESUME_COUNTDOWN'; round.countdown=RESUME_COUNTDOWN; round.lastCount=null; SFX.ui(); }
 function gotoTitle(){ appState='TITLE'; menuIndex=0; showHelp=false; stopAllLoops(); }
@@ -3534,7 +3358,7 @@ function startRound(entry, mode, diff, fixedSeed){
   player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.dashRecT=0; player.cd={dash:0,decoy:0,ink:0,tongue:0,burrow:0,lure:0};
   player.lureLeft=LURE_CHARGES; player.pryT=0; player.cutT=0; player.cutOn=false;
   player.tongueT=0; player.burrowT=0;
-  player.splitPaint=false; studio.activeTone=0; player.mq2=0;
+  player.splitPaint=false; player.mq2=0;
   player.currentPaint2={...player.currentPaint}; player.targetPaint2={...player.targetPaint}; player.paintHSV2=rgb2hsv(player.currentPaint);
   player.prevConceal=0; player.snapT=0; player.snapArmed=true;   // snapCount persists across a session (monotonic)
   rng=mulberry32(seed>>>0);
@@ -3633,9 +3457,9 @@ function startRound(entry, mode, diff, fixedSeed){
     round.coreTotal=round.cores.length;    // frozen here; dropped cargo must never move it
   }
   seedAmbient();   // AFTER gameplay entities — ambient must not consume the seeded RNG stream (keeps DAILY reproducible)
-  appState='ROUND'; roundState='COUNTDOWN'; studio.open=false; studio.reticleOn=false;
+  appState='ROUND'; roundState='COUNTDOWN'; studio.reticleOn=false; studio.reticle.active=false;
   ctrlMode='MOVE'; camFollow.x=cam.x; camFollow.y=cam.y; camPan.x=0; camPan.y=0; inspectZoomT=0; joystick=null;
-  camLock=false; pinch=null; vz=vzTarget=VZ_SEEKER; panBoost=1; holdBracketT=0;   // P9: fresh round, fresh camera
+  pinch=null; vz=vzTarget=VZ_SEEKER; panBoost=1;   // P9: fresh round, fresh camera
   if(mode==='PRACTICE' && !settings.tourDone) startTour(); else tut.active=false;  // P14: first practice = guided tour
   settings.lastMode=mode; settings.lastLevel=Math.max(0,LEVELS.indexOf(entry)); settings.lastDiff=diff.label||'NORMAL'; saveSettings();
 }
@@ -3695,8 +3519,7 @@ function endHunt(win){ if(round.finalized) return;
   const ratio=total?caught/total:0; const perf=0.7*ratio + 0.3*clamp01(1-timeUsed/HUNT_TIME);
   const grade=perf>=GRADE.S?'S':perf>=GRADE.A?'A':perf>=GRADE.B?'B':perf>=GRADE.C?'C':perf>=GRADE.D?'D':'F';
   round.finalized=true; stopAllLoops();
-  if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
-  if(document.activeElement===hexInput) hexInput.blur();   // a focused hex field would eat the summary's keyboard
+  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; pinch=null;
   round.summary={ outcome:win?'WIN':'LOSE', hunt:true, caught, total, score, grade, timeUsed:timeUsed,
     survSec:timeUsed, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0, t0:nowMs() };
   if(round.mode==='HUNT'){ const key=round.entry.display+'|HUNT|'+round.diff.label; const bb=best[key]||{bestScore:0,bestGrade:'F',plays:0};
@@ -3766,8 +3589,7 @@ function endTimeAttack(win){ if(round.finalized) return;
   const grade=perf>=GRADE.S?'S':perf>=GRADE.A?'A':perf>=GRADE.B?'B':perf>=GRADE.C?'C':perf>=GRADE.D?'D':'F';
   round.finalized=true; stopAllLoops();
   // the TA clock can expire mid-paint: leaving PLAYING must close the studio + clear the hold (invariant)
-  if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
-  if(document.activeElement===hexInput) hexInput.blur();
+  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; pinch=null;
   round.summary={ outcome:win?'WIN':'LOSE', ta:true, banked, total, score, grade, timeUsed:TA_TIME-tl,
     survSec:TA_TIME-tl, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0, t0:nowMs() };
   const key=round.entry.display+'|TA|'+round.diff.label, bb=best[key]||{bestScore:0,bestGrade:'F',plays:0};
@@ -4079,11 +3901,9 @@ function salvTaken(u,who){
 function endSalvage(win){ if(round.finalized) return;
   const total=salvTotal(), del=round.delivered, downed=shipsDowned(), tl=Math.max(0,round.timeLeft);
   round.finalized=true; stopAllLoops();
-  // leaving PLAYING must close the studio and clear the held camera (the invariant every
-  // other end-of-round path observes)
-  if(studio.open){ studio.open=false; studio.state='CLOSED'; }
-  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
-  if(document.activeElement===hexInput) hexInput.blur();
+  // leaving PLAYING must clear the held camera (the invariant every other
+  // end-of-round path observes)
+  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; pinch=null;
   const score=Math.max(0, del*250 + downed*600 + (win?Math.round(tl*8):0) + round.salvLives*120);
   const ratio=total?del/total:0;
   const perf=0.5*ratio + 0.3*(win?1:0) + 0.2*clamp01(round.salvLives/(SALV_LIVES[round.diff.label]||3));
@@ -4107,8 +3927,7 @@ function endSalvage(win){ if(round.finalized) return;
 function netCoopEnd(d){
   if(!round||round.finalized) return;
   round.finalized=true; stopAllLoops();
-  if(studio.open){ studio.open=false; studio.state='CLOSED'; }
-  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
+  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; pinch=null;
   round.summary={ outcome:d.win?'WIN':'LOSE', salv:true, coop:true,
     delivered:d.dv|0, total:salvTotal(), downed:d.dn|0, lives:d.lv|0, cutter:!!round.cutter,
     score:d.sc|0, grade:d.gr||'C', survSec:0, timeUsed:0, avgBlendPct:0, streak:0,
@@ -4128,7 +3947,7 @@ function stepSim(dt){
   if(round.online==='guest'){ if(round.coop) stepCoopGuest(dt); else stepGuestNet(dt); return; }   // P20/co-op: the world is streamed, not simulated
   if(round.mode==='HUNT'){ stepHunt(dt); return; }
   if(round.online==='host'){ if(round.coop) stepCoopHost(dt); else stepHostNet(dt); }   // stream snapshots to the other player
-  const slow=(round.diff.practice && (studio.open || ctrlMode==='INSPECT'))?STUDIO_SLOWMO:1; dt*=slow;
+  const slow=(round.diff.practice && ctrlMode==='INSPECT')?LOOK_SLOWMO:1; dt*=slow;
   player.prevx=player.x; player.prevy=player.y;
   gatherInput(); movePlayer(dt);
   const sp=Math.hypot(player.x-player.prevx, player.y-player.prevy)/Math.max(dt,1e-6);
@@ -4738,7 +4557,7 @@ function drawSettings(){
   pushHit(px,y+4,panelW,rowH-8,()=>{ showHelp=true; }); y+=rowH;
   if(rowVisible()){ ctx.fillStyle='rgba(10,14,25,0.8)'; rr(px,y+6,panelW,rowH-12,7); ctx.fill(); ctx.strokeStyle=COL.line; rr(px,y+6,panelW,rowH-12,7); ctx.stroke();
     txt(settings.tourDone?'Replay the guided tour (next Practice)':'Guided tour plays on your next Practice', cx, y+rowH/2, 13, settings.tourDone?COL.cyan:COL.muted,'center','600'); }
-  pushHit(px,y+4,panelW,rowH-8,()=>{ if(settings.tourDone){ settings.tourDone=false; settings.seenLookHint=false; settings.seenHoldHint=false; saveSettings(); SFX.ui(); showToast('🕹 First Flight will play on your next Practice round'); } }); y+=rowH;
+  pushHit(px,y+4,panelW,rowH-8,()=>{ if(settings.tourDone){ settings.tourDone=false; settings.seenLookHint=false; settings.seenAimHint=false; saveSettings(); SFX.ui(); showToast('🕹 First Flight will play on your next Practice round'); } }); y+=rowH;
   settingsMaxScroll=Math.max(0, (y+settingsScroll) - bottom + 8);
   ctx.restore();
   // footer buttons (outside the scroll region — ry:null keeps keyboard auto-scroll off them)
@@ -4962,6 +4781,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
     downed:round.ufos.filter(u=>u.downed).length, need:cutKillsNeeded(), lives:round.salvLives,
     pryT:+(player.pryT||0).toFixed(2), onPry:round.ufos.filter(u=>u.onPry).length,
     timeLeft:Math.round(round.timeLeft), tighten:round.tightenN,
+    hide2p:+hide2pLeft().toFixed(2), spawnGrace:+(round.spawnGrace||0).toFixed(2),   // the two gates a pry waits on
     rig:round.rig?{x:Math.round(round.rig.x),y:Math.round(round.rig.y)}:null,
     corePos:round.cores.map(c=>({x:Math.round(c.x),y:Math.round(c.y),taken:!!c.taken,loose:!!c.loose,
       terrain:terrainAt(Math.floor(c.x/TILE),Math.floor(c.y/TILE))})) }:null,
@@ -4969,12 +4789,11 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   hunt: round&&round.mode==='HUNT'?{ bots: round.bots.length, caught: round.hunterCaught||0, pinged: round.bots.filter(b=>b.pinged>0).length, botStates: round.bots.map(b=>b.state), botC: round.bots.map(b=>+b.C.toFixed(2)), pulseCd:+player.pulseCd.toFixed(2), botPos: round.bots.map(b=>({x:Math.round(b.x),y:Math.round(b.y),caught:b.caught,C:+b.C.toFixed(2),pinged:+(b.pinged>0)})) }:null,
   // ---- P8 "Living Camo" (add-only) ----
   paint:(function(){ const co=paintCoach(); return { mqNow:+co.mqNow.toFixed(3), mqAim:+co.mqAim.toFixed(3), word:co.word, hint:co.hint }; })(),   // mqAim mirrors effMatch (single or 2-tone)
-  studio:{ open:studio.open, svV:+player.paintHSV.v.toFixed(3), activeTone:studio.activeTone||0,
-           t0:rgb2hex(player.targetPaint), t1:rgb2hex(player.targetPaint2),
-           svRect: studio.open?studioRects().sv:null, splitRect: studio.open?studioRects().split:null, closeRect: studio.open?studioRects().close:null },
+  studio:{ aim:!!studio.reticleOn, aimActive:!!studio.reticle.active,
+           t0:rgb2hex(player.targetPaint), t1:rgb2hex(player.targetPaint2) },
   split: !!player.splitPaint, mq2:+((player.mq2||0)).toFixed(3),
   tones: player.ref&&player.ref.tones?player.ref.tones.map(t=>({key:t.key,w:+t.w.toFixed(2)})):null,
-  snapCount: player.snapCount||0, ghostMs: Math.round(round?(round.metrics.ghostMs||0):0),
+  snapCount: player.snapCount||0, paintCount: player.paintCount|0, ghostMs: Math.round(round?(round.metrics.ghostMs||0):0),
   particles: particles.length, dripEmitted: dripEmitted,
   progress:{ blendbook:PROGRESS.blendbook||{}, biomeMedals:PROGRESS.biomeMedals||{}, unlocks:PROGRESS.unlocks,
              xp:PROGRESS.xp||0, level:xpLevel(PROGRESS.xp||0), challenges:PROGRESS.challenges||{}, daily:PROGRESS.daily||{} },
@@ -4982,7 +4801,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   mode:ctrlMode, cam:{x:Math.round(cam.x),y:Math.round(cam.y)}, camFollow:{x:Math.round(camFollow.x),y:Math.round(camFollow.y)},
   camPan:{x:Math.round(camPan.x),y:Math.round(camPan.y)}, zoom:+zoom.toFixed(3),
   inspect:{active:ctrlMode==='INSPECT',zoomT:+inspectZoomT.toFixed(2)},
-  hold:{locked:camLock, vz:+vz.toFixed(3), vzTarget:+vzTarget.toFixed(3), pinch:!!pinch, brackets:+holdBracketT.toFixed(2)},
+  hold:{vz:+vz.toFixed(3), vzTarget:+vzTarget.toFixed(3), pinch:!!pinch},
   tour:{active:tut.active, step:tut.step}, levelOrder:levelOrderNames,
   region: round?{ biome:round.biome||null, tuned:round.diff._regionTuned||null, scanR:Math.round(round.diff.SCAN_R||0) }:null,
   world:{ w:worldW, h:worldH, cols:mapCols, rows:mapRows },
@@ -5014,6 +4833,12 @@ try{ window.__aac = { get state(){ return { appState, roundState,
       // test can reach a late-round state in seconds instead of playing four minutes to it.
       dropCore(x,y){ if(round&&round.cores) round.cores.push({x:x,y:y,taken:false,loose:false,hold:0,need:0}); },
       setClock(sec){ if(round) round.timeLeft=sec; },
+      /* End the 2-player hide phase now. hide2pLeft() is measured against nowMs(),
+         i.e. the WALL CLOCK, so a gate that wants to test prying was really racing
+         a 60 second real-time timer: coop.js reached the pry loop with 2.79s of head
+         start left and reported "the guest can pry a core: carrying=0", which reads
+         as a broken objective and was a stopwatch. */
+      endHidePhase(){ if(round && round.hide2pEnds){ round.hide2pEnds=nowMs(); round.hide2pNet=0; return true; } return false; },
       /* Start a CO-OP round with no peer, so the simulation half (partner body, shared pile,
          a fleet that can target either of us, team lives) can be gated in ONE process instead
          of through two clients and a relay. The wire half is coop.js's job. */
@@ -5021,6 +4846,13 @@ try{ window.__aac = { get state(){ return { appState, roundState,
         NET.coop=true; netStartCoopHost(e, 12345); round.online=null; return true; },
       mateTo(x,y){ if(round&&round.mate){ round.mate.x=x; round.mate.y=y; round.mate.vx=0; round.mate.vy=0; } },
       mateCarry(n2){ if(round&&round.mate) round.mate.carrying=n2|0; },
+      /* Set the target paint directly. Gates used to force a mismatch by pressing a
+         preset key in the paint studio; the studio is gone, and a gate should not
+         need a UI to state "the player is wearing the wrong colour" anyway. Sets the
+         TARGET only, so the pigment crawl (and its drips) stay observable. */
+      setPaint(hex){ const c=hex2rgb(hex); if(!c) return false;
+        player.splitPaint=false; player.mq2=0; setPaintColor(c);
+        player.targetPaint2={r:c.r,g:c.g,b:c.b}; return true; },
       snapCam(){ if(round){ cam.x=player.x; cam.y=player.y; camFollow.x=player.x; camFollow.y=player.y; camPan.x=0; camPan.y=0; } },
       skipCountdown(){ if(round && (roundState==='COUNTDOWN'||roundState==='RESUME_COUNTDOWN')){ round.countdown=0; roundState='PLAYING'; } },
       /* Advance the SIMULATION without drawing. The headless renderer leaks about 17MB of

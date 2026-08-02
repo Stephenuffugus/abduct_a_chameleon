@@ -145,6 +145,11 @@ function makeWin(tag){
        'targets='+JSON.stringify(A.S().coop.targets)); }
 
   // ---- a core pried by the GUEST lands in the SHARED total ----
+  /* Drain the hide phase first. It is measured against the wall clock, so how much
+     of it is left when this block starts depends on how fast the machine ran the
+     blocks above - which made this the flakiest assertion in the suite. */
+  { try{ A.window.__aac.t.endHidePhase(); B.window.__aac.t.endHidePhase(); }catch(_){}
+    await both(6,6); }
   { const st=A.S();
     const c=(st.salv.corePos||[]).find(x=>!x.taken);
     try{ for(let i=0;i<st.ufos;i++) A.window.__aac.t.moveUfo(i,30,30); }catch(_){}
@@ -153,7 +158,7 @@ function makeWin(tag){
     for(let i=0;i<260 && !got;i++){ try{ A.window.__aac.t.mateTo(c.x,c.y); }catch(_){}
       await both(4,4); if(A.S().coop.mate.carrying>0) got=true; }
     if(!got){ const q=A.S(); console.log('   pry probe: mate='+JSON.stringify(q.coop.mate)+
-        ' core='+JSON.stringify(c)+' hide='+q.salv.timeLeft+' grace='+q.spawnGrace+
+        ' core='+JSON.stringify(c)+' hide2p='+q.salv.hide2p+' grace='+q.salv.spawnGrace+
         ' dist='+Math.round(Math.hypot(q.coop.mate.x-c.x,q.coop.mate.y-c.y))); }
     ok('the guest can pry a core', got, 'carrying='+A.S().coop.mate.carrying);
     const rg=A.S().salv.rig;

@@ -37,14 +37,18 @@ let fails=0; const ok=(n,c,x='')=>{ console.log(`${c?'OK  ':'FAIL'}  ${n}${x?'  
  ok('T2 looking advances to step 2', S().tour.step===2, 'step='+S().tour.step);
  for(let i=0;i<8;i++) wheel(120); pump(25);                         // zoom well past the detent
  ok('T3 zooming advances to step 3', S().tour.step===3, 'step='+S().tour.step);
- key('KeyE'); pump(4); key('KeyQ'); pump(20);                       // hold the shot, MATCH via Q (KeyM is the mute key)
+ key('KeyE'); pump(4); key('KeyQ'); pump(20);                       // arm AIM, MATCH via Q (KeyM is the mute key)
  ok('T4 hold+match advances to step 4', S().tour.step===4, 'step='+S().tour.step+' mq='+S().mq);
- key('Escape'); pump(4); key('Escape'); pump(6);                    // back to MOVE, stand still
+ /* ONE Escape, not two. The mode stack used to be MOVE <- LOOK <- PAINT and this
+    test walked all the way down it; PAINT is gone, so a second Escape from MOVE
+    now opens PAUSE and the round stops advancing - which is exactly what it did,
+    silently, and looked like "melting in never finishes". */
+ key('Escape'); pump(6);                                            // back to MOVE, stand still
  pump(400);                                                         // settle → conceal ≥0.85 → done banner → auto-end
  ok('T5 melting in completes the tour', S().tour.active===false, JSON.stringify(S().tour)+' conceal='+S().conceal);
  const stored=JSON.parse(_ls['aac.settings.v1']||'{}');
  ok('T6 tourDone persisted (never returns)', stored.tourDone===true, 'tourDone='+stored.tourDone);
- ok('T7 tour marked the one-shot hints as seen', stored.seenLookHint===true && stored.seenHoldHint===true);
+ ok('T7 tour marked the one-shot hint as seen', stored.seenLookHint===true, 'seenLookHint='+stored.seenLookHint);
  if(errors.length){ console.log('ERRORS:'); [...new Set(errors)].slice(0,6).forEach(e=>console.log('  • '+e.split('\n').slice(0,2).join(' '))); fails+=errors.length; }
  console.log(fails? `\nTOUR: FAIL (${fails})` : '\nTOUR: PASS — first flight teaches by doing and completes; 0 errors');
  process.exit(fails?1:0);

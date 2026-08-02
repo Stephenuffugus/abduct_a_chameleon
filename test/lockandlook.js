@@ -79,7 +79,7 @@ async function main(){
   if(st().appState==='DIFFICULTY_SELECT'){ key('Enter'); await wait(40); pump(8); }
   pump(220);
   ok('L0 reached PLAYING in MOVE', st().roundState==='PLAYING' && st().mode==='MOVE', 'mode='+st().mode+' rs='+st().roundState);
-  ok('L0 __aac exposes hold state', st().hold && typeof st().hold.locked==='boolean' && typeof st().hold.vz==='number', JSON.stringify(st().hold));
+  ok('L0 __aac exposes camera state', st().hold && typeof st().hold.vz==='number' && typeof st().hold.pinch==='boolean', JSON.stringify(st().hold));
 
   // ---- L1 LOOK: free zoom via wheel, bounded, detent keys ----
   key('KeyI'); pump(20);
@@ -116,35 +116,41 @@ async function main(){
   fire('pointermove',{clientX:px-160,clientY:Math.floor(VH()*0.5),pointerId:6});
   fire('pointerup',{clientX:px-160,clientY:Math.floor(VH()*0.5),pointerId:6}); pump(30);
   const F1=frame();
-  key('KeyE'); pump(3);
-  ok('L2 🎨 from LOOK → PAINT with the shot HELD', st().mode==='PAINT' && st().studio.open===true && st().hold.locked===true, 'locked='+st().hold.locked);
+  /* PAINT is no longer a mode and the explicit "held shot" lock is gone with it (see
+     the §3 header in index.html: every control in the panel measured under 48px and
+     none of them could beat the MATCH button next to the one that opened it).
+     What the photo loop was FOR survives, and is what these now assert: you go up to
+     the seeker's altitude, pan until you can see what you are standing in, and paint
+     from there WITHOUT being thrown back to the ground or losing your framing. */
+  key('KeyQ'); pump(3);
   const F2=frame();
-  ok('L2 stillness law: LOOK→PAINT moved nothing', sameFrame(F1,F2,1.5), JSON.stringify({F1,F2}));
-  ok('L2 pan survives into held paint (not zeroed)', Math.hypot(F2.px,F2.py)>10, 'pan='+Math.hypot(F2.px,F2.py).toFixed(1));
-  ok('L2 brackets drawing in', st().hold.brackets>0.05, 'brackets='+st().hold.brackets);
+  ok('L2 MATCH from LOOK keeps you in LOOK', st().mode==='INSPECT', 'mode='+st().mode);
+  ok('L2 stillness law: painting from LOOK moved nothing', sameFrame(F1,F2,1.5), JSON.stringify({F1,F2}));
+  ok('L2 pan survives the paint (not zeroed)', Math.hypot(F2.px,F2.py)>10, 'pan='+Math.hypot(F2.px,F2.py).toFixed(1));
+  ok('L2 the paint actually landed', st().paint.mqAim>=0.85, 'mqAim='+st().paint.mqAim);
 
-  // ---- L3 tap empty space hops BACK to LOOK, framing identical ----
-  tapAt(Math.floor(VW()*0.62), 120, 33); pump(3);
+  // ---- L3 AIM from LOOK samples what you point at, then disarms itself ----
+  key('KeyE'); pump(3);
+  ok('L3 KeyE arms AIM without leaving LOOK', st().studio.aim===true && st().mode==='INSPECT', 'aim='+st().studio.aim+' mode='+st().mode);
+  const px2=Math.floor(VW()*0.62), py2=Math.floor(VH()*0.30);
+  fire('pointerdown',{clientX:px2,clientY:py2,pointerId:33});
+  fire('pointermove',{clientX:px2,clientY:py2,pointerId:33});
+  fire('pointerup',{clientX:px2,clientY:py2,pointerId:33}); pump(3);
+  ok('L3 dragging places the aim ring', st().studio.aimActive===true, 'aimActive='+st().studio.aimActive);
+  const pc=st().paintCount; key('KeyQ'); pump(3);
+  ok('L3 MATCH spends the aim', st().paintCount===pc+1, 'painted='+st().paintCount);
+  ok('L3 and disarms it, so nothing is left holding the world', st().studio.aim===false, 'aim='+st().studio.aim);
   const F3=frame();
-  ok('L3 tap-empty in held paint hops back to LOOK (not MOVE)', st().mode==='INSPECT' && st().studio.open===false, 'mode='+st().mode);
-  ok('L3 framing pixel-identical after the hop', sameFrame(F2,F3,1.5), JSON.stringify({F2,F3}));
-  ok('L3 hold released on the hop', st().hold.locked===false);
+  ok('L3 framing pixel-identical through the aim', sameFrame(F2,F3,1.5), JSON.stringify({F2,F3}));
 
-  // ---- L4 Esc in held paint = one step back; pill = all the way home ----
-  key('KeyE'); pump(3);
-  ok('L4 re-hold works', st().hold.locked===true && st().mode==='PAINT');
-  key('Escape'); pump(3);
-  ok('L4 Esc from held paint → LOOK (one step back)', st().mode==='INSPECT' && !st().hold.locked, 'mode='+st().mode);
-  key('KeyE'); pump(3);
+  // ---- L4 the pill is the one road all the way home ----
   tapRect(st().hud.pill, 34); pump(60);
-  ok('L4 pill from held paint → MOVE, camera glides home', st().mode==='MOVE' && !st().hold.locked && st().inspect.zoomT<0.4 && Math.hypot(st().camPan.x,st().camPan.y)<6,
+  ok('L4 pill from LOOK → MOVE, camera glides home', st().mode==='MOVE' && st().inspect.zoomT<0.4 && Math.hypot(st().camPan.x,st().camPan.y)<6,
      `mode=${st().mode} zoomT=${st().inspect.zoomT} pan=${Math.hypot(st().camPan.x,st().camPan.y).toFixed(1)}`);
 
-  // ---- L5 MOVE-entry paint is byte-identical to the legacy path ----
-  key('KeyE'); pump(3);
-  ok('L5 🎨 from MOVE → unlocked paint, pan pinned to body', st().mode==='PAINT' && st().hold.locked===false && Math.hypot(st().camPan.x,st().camPan.y)<1, 'pan='+Math.hypot(st().camPan.x,st().camPan.y).toFixed(2));
-  tapAt(Math.floor(VW()*0.62), 120, 35); pump(3);
-  ok('L5 tap-empty in unlocked paint exits to MOVE (legacy)', st().mode==='MOVE' && st().studio.open===false, 'mode='+st().mode);
+  // ---- L5 painting from the ground never changes mode ----
+  const pc2=st().paintCount; key('KeyQ'); pump(3);
+  ok('L5 MATCH from MOVE paints and stays in MOVE', st().mode==='MOVE' && st().paintCount===pc2+1, 'mode='+st().mode+' painted='+st().paintCount);
 
   // ---- L6 wheel in MOVE: pulling back enters LOOK; zoom-in stays inert ----
   wheel(-120, VW()*0.5, VH()*0.5); pump(3);
@@ -169,22 +175,20 @@ async function main(){
   ok('L7 survivor pan is continuous (re-anchored, no jump)', dp>2 && dp<120, 'Δpan='+dp.toFixed(1));
   fire('pointerup',{clientX:ax-20,clientY:ay,pointerId:7}); pump(4);
 
-  // ---- L8 reset sweep: pause while held clears the hold ----
-  key('KeyE'); pump(3);
-  ok('L8 held again', st().hold.locked===true);
-  key('KeyP'); pump(3);   // KeyP in PAINT toggles paint mode... (KeyP is a paint toggle) — use pause via Escape chain instead
-  // Escape: held→LOOK, Escape: LOOK→MOVE, Escape: pause
-  if(st().mode==='PAINT'){ key('Escape'); pump(2); }
+  // ---- L8 reset sweep: the Escape chain always terminates, and AIM never survives it ----
+  if(st().mode!=='INSPECT'){ key('KeyI'); pump(3); }   // KeyI TOGGLES: L6's wheel-out may already have us looking
+  if(st().studio.aim!==true){ key('KeyE'); pump(3); }
+  ok('L8 armed and looking', st().mode==='INSPECT' && st().studio.aim===true, 'mode='+st().mode+' aim='+st().studio.aim);
   if(st().mode==='INSPECT'){ key('Escape'); pump(2); }
   key('Escape'); pump(3);
-  ok('L8 Esc chain lands in PAUSED with hold cleared', st().roundState==='PAUSED' && st().hold.locked===false, 'rs='+st().roundState+' locked='+st().hold.locked);
+  ok('L8 Esc chain lands in PAUSED', st().roundState==='PAUSED', 'rs='+st().roundState);
 
   finish();
 }
 function finish(){
   console.log(`\nFINAL mode=${st().mode} vz=${st().hold&&st().hold.vz} zoom=${st().zoom}`);
   const uniq=[...new Set(errors)]; if(uniq.length){ console.log('\nERRORS:'); uniq.slice(0,15).forEach(e=>console.log('  • '+e.split('\n').slice(0,3).join('\n     '))); fails+=uniq.length; }
-  console.log(fails? `\nLOCK&LOOK: FAIL (${fails})` : '\nLOCK&LOOK: PASS — photo loop holds: stillness law, implicit hold, hop-back, pill home, wheel+pinch zoom, resets; 0 errors');
+  console.log(fails? `\nLOCK&LOOK: FAIL (${fails})` : '\nLOCK&LOOK: PASS — the look holds: stillness law, aim-and-spend, pill home, wheel+pinch zoom, resets; 0 errors');
   process.exit(fails?1:0);
 }
 main();

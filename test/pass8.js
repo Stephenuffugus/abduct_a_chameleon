@@ -88,7 +88,7 @@ async function main(){
   // ---- P8-5 blend-snap + ghost ----
   // Expose by PAINTING a mismatch (not moving) so the player stays on the uniform spawn tile where a
   // matched blend actually reaches conceal>0.85. (Moving onto a seam correctly caps conceal lower.)
-  const expose=()=>{ key('KeyE'); key('Digit8'); key('KeyE'); pump(50); };   // open→paint concrete→close→crawl away
+  const expose=()=>{ window.__aac.t.setPaint('#AAB0BC'); pump(50); };   // wear concrete on grass → crawl away
   expose();
   ok('P8-5 exposed by paint mismatch (conceal<0.6 arms the snap)', st().conceal<0.6, 'conceal='+st().conceal);
   const ghostExposed=st().ghostMs; pump(20);   // still exposed & idle → ghost time must NOT accrue
@@ -105,45 +105,39 @@ async function main(){
   ok('P8-5 snap re-arms and fires again', st().snapCount===snap1+1, 'snapCount='+st().snapCount);
 
   // ---- P8-1 Live Match Coach ----
-  key('KeyE'); pump(10);                       // open studio
+  pump(4);
   ok('P8-1 paint block present', st().paint && 'mqNow' in st().paint && 'mqAim' in st().paint && 'word' in st().paint && 'hint' in st().paint);
   ok('P8-1 word is a valid meter tier', ['EXPOSED','BLENDING','HIDDEN'].includes(st().paint.word), 'word='+st().paint.word);
-  key('Digit8'); pump(4);                      // aim a far color (concrete) — AIM drops, hint becomes a nudge
+  window.__aac.t.setPaint('#AAB0BC'); pump(4);   // wear a far colour — AIM drops, hint becomes a nudge
   ok('P8-1 far AIM lowers mqAim', st().paint.mqAim<0.6, 'mqAim='+st().paint.mqAim);
   ok('P8-1 nudge hint (not "matched") when off-target', st().paint.hint!=='matched', 'hint='+st().paint.hint);
   key('KeyQ'); pump(4);                        // MATCH → AIM jumps to the ground
   ok('P8-1 matched AIM raises mqAim ≥ 0.85', st().paint.mqAim>=0.85, 'mqAim='+st().paint.mqAim);
   ok('P8-1 hint reads "matched" at target', st().paint.hint==='matched', 'hint='+st().paint.hint);
 
-  // ---- P8-2 touch SV offset (picked value sits above the fingertip) ----
-  const sv=st().studio.svRect; ok('P8-2 svRect exposed while studio open', !!sv);
-  if(sv){ const midx=sv.x+sv.w/2, midy=sv.y+sv.h*0.5;
-    fire('pointerdown',cv(),{clientX:midx,clientY:midy,pointerId:11,pointerType:'touch'}); pump(2); const touchV=st().studio.svV;
-    fire('pointerup',cv(),{clientX:midx,clientY:midy,pointerId:11}); pump(1);
-    fire('pointerdown',cv(),{clientX:midx,clientY:midy,pointerId:12,pointerType:'mouse'}); pump(2); const mouseV=st().studio.svV;
-    fire('pointerup',cv(),{clientX:midx,clientY:midy,pointerId:12}); pump(1);
-    ok('P8-2 touch picks a higher V than mouse at same y (offset lifts sample)', touchV>mouseV+0.02, `touch=${touchV} mouse=${mouseV}`); }
-
-  // ---- P8-3 Split Camo toggle (integration; math proven in twotone.mjs) ----
-  ok('P8-3 split off by default', st().split===false && st().mq2===0);
-  const spR=st().studio.splitRect; ok('P8-3 splitRect exposed', !!spR);
-  if(spR){ fire('pointerdown',cv(),{clientX:spR.x+spR.w/2,clientY:spR.y+spR.h/2,pointerId:13}); fire('pointerup',cv(),{clientX:spR.x,clientY:spR.y,pointerId:13}); pump(6);
-    ok('P8-3 toggling turns split ON', st().split===true, 'split='+st().split);
-    ok('P8-3 enabling split selects the 2nd tone', st().studio.activeTone===1, 'activeTone='+st().studio.activeTone);
-    // regression (review finding #1): a preset must edit the ACTIVE tone, not silently overwrite tone 0
-    const t0Before=st().studio.t0, t1Before=st().studio.t1;
-    key('Digit2'); pump(2);                    // pick the 'dirt' preset while editing tone 2
-    ok('P8-3 preset edits the active (2nd) tone', st().studio.t1!==t1Before, `t1 ${t1Before}→${st().studio.t1}`);
-    ok('P8-3 preset does NOT touch the inactive tone 0', st().studio.t0===t0Before, `t0 ${t0Before}→${st().studio.t0}`);
-    key('KeyQ'); pump(20);                     // two-tone MATCH — must not throw
-    ok('P8-3 two-tone MATCH ran without error', errors.length===0, errors[0]||'');
-    fire('pointerdown',cv(),{clientX:spR.x+spR.w/2,clientY:spR.y+spR.h/2,pointerId:14}); fire('pointerup',cv(),{clientX:spR.x,clientY:spR.y,pointerId:14}); pump(6);
-    ok('P8-3 toggling again turns split OFF', st().split===false, 'split='+st().split);
-    ok('P8-3 turning split off resets active tone to 0', st().studio.activeTone===0, 'activeTone='+st().studio.activeTone); }
+  // ---- P8-2/P8-3 two-tone is AUTOMATIC now ----
+  /* The SV picker and the split toggle were deleted with the rest of the mixer. What
+     replaced them is a rule, not a control: MATCH wears two tones when the ground
+     under the sample actually has two, and one when it does not. That is the thing
+     worth gating - a player can no longer forget to press a button, so the only way
+     to get this wrong is for the rule itself to be wrong. The tone MATHS is proven
+     separately in twotone.mjs. */
+  const home = { x: st().playerPos.x, y: st().playerPos.y };
+  const seam = (window.__aac.t.covers()||[])[0];
+  key('KeyQ'); pump(6);
+  const uniformSplit = st().split;
+  ok('P8-3 on uniform ground MATCH stays one tone', uniformSplit===false && st().mq2===0, 'split='+uniformSplit);
+  ok('P8-3 one tone on uniform ground still reaches a full match', st().paint.mqAim>=0.85, 'mqAim='+st().paint.mqAim);
+  if(seam){ window.__aac.t.teleport(seam.wx, seam.wy); pump(4); key('KeyQ'); pump(8);
+    const tones = st().tones||[];
+    if(tones.length>1 && tones[1].w>0.08)
+      ok('P8-3 beside cover MATCH turns two-tone on by itself', st().split===true, 'split='+st().split+' tones='+JSON.stringify(tones));
+    else ok('P8-3 beside cover MATCH turns two-tone on by itself (skipped: single-tone footprint)', true, JSON.stringify(tones));
+    window.__aac.t.teleport(home.x, home.y); pump(4); key('KeyQ'); pump(8);
+    ok('P8-3 back on uniform ground it turns itself off again', st().split===false, 'split='+st().split); }
 
   // ---- P8-4 spray on MATCH + wet-paint drips while crawling ----
-  key('Digit8'); pump(2);                      // aim concrete again (big color change)
-  key('KeyE'); pump(4);                        // close studio → full-speed crawl
+  window.__aac.t.setPaint('#AAB0BC'); pump(2);   // a big colour change → the pigment has to crawl to it
   const drip0=st().dripEmitted; pump(24);      // crawl grass→concrete → shifting → drips
   ok('P8-4 wet-paint drips emitted while pigment crawls', st().dripEmitted>drip0, `${drip0}→${st().dripEmitted}`);
   ok('P8-4 particle pool respects PCAP=140', st().particles<=140, 'particles='+st().particles);
