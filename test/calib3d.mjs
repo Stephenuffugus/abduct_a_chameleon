@@ -76,6 +76,27 @@ const S = ALL[roles.indexOf('seeker')] || null;
 const HIDERS = ALL.filter((c,i)=> roles[i] !== 'seeker');
 if(!S){ console.log('FAIL calib3d\n   - no seeker in a two player round, so the blindfold never opened'); await b.close(); srv.close(); process.exit(1); }
 
+/* ⛔ POLL FOR THE PANEL, DO NOT ASSUME IT IS ALREADY THERE — the same rule this
+   file's own header states, applied one step further along.
+   Two real changes on 2026-08-02 made reading it in the same breath as the role
+   a coin flip, and BOTH of them are the product being right:
+     · START ROUND now runs a three second countdown, so the role arrives at an
+       arbitrary moment rather than on the frame after a click. The old code got
+       away with reading straight through only because the previous iteration's
+       500ms sleep happened to sit between the two.
+     · calDeal() is deferred ~32ms so the blindfold PAINTS before the board is
+       built. That was the fix for the phone appearing to hang mid-round, and it
+       means `live` is legitimately false for a frame or two.
+   The assertions below are untouched. This waits for the window to exist and
+   still fails loudly if it never does. */
+for(let t=0; t<60; t++){
+  const st = await S.p.evaluate(()=>({
+    on: document.getElementById('hidewait').classList.contains('on'),
+    live: window.__aac3dCal.state().live }));
+  if(st.on && st.live) break;
+  await wait(250);
+}
+
 // 1. the window opens on the drill
 const opened = await S.p.evaluate(()=>{
   const hw = document.getElementById('hidewait');

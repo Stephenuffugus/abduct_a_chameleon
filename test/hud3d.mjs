@@ -66,8 +66,21 @@ for (const [W,H] of VIEWS) {
     const hits = [];
     for (const el of document.querySelectorAll('body *')) {
       const t = ownText(el); if (!t) continue;
+      /* ⛔ THE OPACITY TEST HAS TO WALK UP. opacity does NOT inherit as a computed
+         value, so a paragraph inside a panel at opacity:0 reports 1.0 for itself
+         and was counted as writing on the player's screen. #recov is exactly
+         that shape - it lives at opacity:0 until a page is actually won - and it
+         is 27,000px, four times the next worst element. Blaming the HUD for text
+         nobody can see sends you off fixing the wrong panel. Checking the whole
+         chain also covers display:none and visibility:hidden ancestors, which
+         had the same hole. */
+      let hidden = false;
+      for (let n = el; n && n !== document.body; n = n.parentElement) {
+        const s = getComputedStyle(n);
+        if (s.display === 'none' || s.visibility === 'hidden' || +s.opacity < 0.05) { hidden = true; break; }
+      }
+      if (hidden) continue;
       const st = getComputedStyle(el);
-      if (st.display === 'none' || st.visibility === 'hidden' || +st.opacity < 0.05) continue;
       const b = el.getBoundingClientRect();
       if (b.width < 2 || b.height < 2) continue;
       const r = { x0:b.left, x1:b.right, y0:b.top, y1:b.bottom };

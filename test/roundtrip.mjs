@@ -37,7 +37,24 @@ if(s0.A.myRole==='seeker'||s0.B.myRole==='seeker') bad.push('somebody was put in
 
 // press START on whichever client shows the button
 for(const c of [A,B]) await c.p.evaluate(()=>{const e=document.getElementById('tStart'); if(e && !e.classList.contains('hidden')) e.click();});
-await new Promise(r=>setTimeout(r,2500));
+
+/* ⭐ 2026-08-02: A ROUND NOW ANNOUNCES ITSELF, AND THAT IS PART OF THE CONTRACT.
+   Stephen's wife pressed START, waited two minutes and could not tell whether
+   anything had happened - the press wrote a silent boolean and the only visible
+   consequence was the phase flipping, whenever the host got round to it. There
+   is a three second 'starting' phase between the ask and the round now, and
+   BOTH clients have to see it: a countdown only one person can see is the same
+   bug in a nicer coat. Then poll to 'playing' rather than sleeping past it. */
+let sawGo = { A:false, B:false };
+for(let t=0; t<40; t++){
+  const g = await snap();
+  if(g.A.phase==='starting') sawGo.A = true;
+  if(g.B.phase==='starting') sawGo.B = true;
+  if(g.A.phase==='playing' && g.B.phase==='playing') break;
+  await new Promise(r=>setTimeout(r,150));
+}
+console.log('1b countdown  ', JSON.stringify(sawGo));
+if(!sawGo.A || !sawGo.B) bad.push('the START countdown was not visible to both players');
 let s1=await snap();
 console.log('2 round begins', JSON.stringify({phase:s1.A.phase, roles:[s1.A.myRole,s1.B.myRole], hideLeft:Math.round(s1.A.hideLeft)}));
 if(s1.A.phase!=='playing') bad.push('START did not begin a round');
@@ -71,9 +88,34 @@ if(s4.A.phase!=='waiting') bad.push('intermission did not hand back to free play
 if(s4.A.myRole==='seeker'||s4.B.myRole==='seeker') bad.push('somebody is still flying a saucer around the lobby');
 if(s4.A.abducted||s4.B.abducted) bad.push('somebody is still marked abducted in free play');
 
+/* ⛔⛔ 6. THE GUEST'S PRESS HAS TO WORK, AND NOTHING HAS EVER PROVEN IT DOES.
+   `startReq` is the ONLY global state key written by somebody other than the
+   host - every other one goes through hostTick, startRound, endRound or a
+   `if(!isHost()) return` guard. Whether playroomkit relays a guest's global
+   write and lets it survive the host's reconciliation is not knowable from this
+   repo (playroomkit is a CDN import, there is no copy on disk). If it does not,
+   then a guest pressing START is a permanent silent no-op - and START ROUND is
+   shown to BOTH players, so half the room would be pressing a dead button while
+   the game says nothing. That is a precise description of what Stephen's wife
+   sat through, and the step above cannot catch it because it presses on both.
+   So: press it on the GUEST alone, from a clean free-play state, and require the
+   room to move. */
+const HOST_C  = (await A.p.evaluate(()=>window.__aac3dRound().host)) ? A : B;
+const GUEST_C = HOST_C === A ? B : A;
+await GUEST_C.p.evaluate(()=>{const e=document.getElementById('tStart');
+  if(e && !e.classList.contains('hidden')) e.click();});
+let guestMoved = false, guestPhase = 'waiting';
+for(let t=0;t<40;t++){
+  guestPhase = await HOST_C.p.evaluate(()=>window.__aac3dRound().phase);
+  if(guestPhase !== 'waiting'){ guestMoved = true; break; }
+  await new Promise(r=>setTimeout(r,150));
+}
+console.log('6 guest starts', JSON.stringify({moved:guestMoved, phase:guestPhase}));
+if(!guestMoved) bad.push('a GUEST pressing START ROUND did nothing - only the host can start a round, and nothing on screen says so');
+
 const errs=[...A.errs,...B.errs];
 if(errs.length) bad.push('JS errors: '+errs.slice(0,2).join(' | '));
 console.log(bad.length ? '\nFAIL roundtrip:\n  - '+bad.join('\n  - ')
-                       : '\nok   roundtrip: free play -> START -> one seeker -> head start -> hunt -> end -> free play');
+                       : '\nok   roundtrip: free play -> START -> one seeker -> head start -> hunt -> end -> free play, and a guest can start one too');
 await b.close(); srv.close();
 process.exit(bad.length?1:0);

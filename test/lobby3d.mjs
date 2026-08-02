@@ -111,8 +111,28 @@ const lobUp = await Promise.all([A,B].map(c => c.p.evaluate(()=>{
            hide:r('tTeamHide'), seek:r('tTeamSeek'),
            time: document.getElementById('lobTimeVal').textContent,
            room: (document.getElementById('lobRoom')||{}).textContent || '',
-           copy: (()=>{ const e=document.getElementById('tCopyLink'); if(!e) return null;
-                        const b=e.getBoundingClientRect(); return {h:Math.round(b.height)}; })(),
+           /* ⭐ THE INVITE IS A PANEL NOW, NOT A BUTTON — so check the whole path.
+              The lobby's COPY LINK moved into PLAY TOGETHER (8/02) because it made
+              the lobby column wide enough to reach the middle of a 667px screen.
+              The rule it was guarding is unchanged and this asserts MORE of it:
+              a 44px way in from the lobby, and behind it a room code, a drawn QR
+              somebody can point a camera at, a scanner, and a copyable link. */
+           copy: (()=>{ const o=document.getElementById('tJoinOpen'); if(!o) return null;
+                        const ob=o.getBoundingClientRect();
+                        o.click();
+                        const p=document.getElementById('joinPanel');
+                        const open = p && !p.classList.contains('hidden');
+                        const cb=document.getElementById('joinCopy').getBoundingClientRect();
+                        const sb=document.getElementById('joinScanBtn').getBoundingClientRect();
+                        const qr=document.getElementById('joinQR');
+                        const px=qr.getContext('2d').getImageData(0,0,qr.width,qr.height).data;
+                        let dark=0; for(let i=0;i<px.length;i+=4) if(px[i]<128) dark++;
+                        const code=document.getElementById('joinRoomCode').textContent;
+                        document.getElementById('joinClose').click();
+                        return { h:Math.round(ob.height), open,
+                                 copyH:Math.round(cb.height), scanH:Math.round(sb.height),
+                                 qrDark:dark, code,
+                                 closed: p.classList.contains('hidden') }; })(),
            who: document.getElementById('lobWho').textContent,
            duplicateHunt: !document.getElementById('tPractice').classList.contains('hidden') };
 })));
@@ -127,7 +147,19 @@ if(!/chosen|random/i.test(lobUp[0].who)) bad.push('with nobody picked, the lobby
    are in it, and give you a link to hand over. */
 if(!/^ROOM [A-Za-z0-9_-]+$/.test(lobUp[0].room)) bad.push(`the lobby does not show a room code ("${lobUp[0].room}")`);
 if(!/2 players/.test(lobUp[0].who)) bad.push(`the lobby does not say how many are in the room ("${lobUp[0].who}")`);
-if(!lobUp[0].copy || lobUp[0].copy.h < 44) bad.push('there is no 44px COPY LINK button to invite anybody with');
+const C = lobUp[0].copy;
+if(!C || C.h < 44)        bad.push('there is no 44px way to invite anybody from the lobby');
+else {
+  if(!C.open)             bad.push('📷 QR did not open the PLAY TOGETHER panel');
+  if(C.copyH < 44)        bad.push(`the panel's COPY LINK is under 44px (${C.copyH})`);
+  if(C.scanH < 44)        bad.push(`the panel's SCAN button is under 44px (${C.scanH})`);
+  /* a canvas that was never drawn into is uniformly white; a real QR is roughly
+     a third to a half dark. Anything under a few hundred dark pixels is a blank
+     square being presented as a code, which is worse than no code at all. */
+  if(C.qrDark < 400)      bad.push(`the join QR did not render (${C.qrDark} dark px) - the panel is showing a blank square`);
+  if(!/^[A-Za-z0-9_-]+$/.test(C.code)) bad.push(`the panel does not show a room code to read out ("${C.code}")`);
+  if(!C.closed)           bad.push('the PLAY TOGETHER panel could not be closed - it is a trap');
+}
 if(lobUp[0].duplicateHunt) bad.push('the solo HUNT button is still up beside the SEEK button - two controls labelled hunt');
 
 // A asks to seek, B asks to hide
@@ -146,7 +178,21 @@ const wind = async (id, times) => {
     await HOST.p.evaluate(bid=>document.getElementById(bid).click(), id);
     await wait(70);
   }
-  await wait(1000);
+  /* ⛔ WAS `await wait(1000)` AND IT FLAKED. This box renders the 3D scene through
+     swiftshader at roughly 11fps, so updateHUD - which is what copies hideSecs
+     onto the label - gets about eleven chances a second, and a flat one second
+     settle after twelve taps is a coin flip under load. It failed once claiming
+     the label read 2:00 at 60s and passed on the very next run with the same
+     build. The state and the label are read in ONE evaluate, so waiting for them
+     to agree is exact, not lenient: if the label never catches up this still
+     returns the mismatch and the assertion below still fails. */
+  for(let t=0; t<40; t++){
+    const r = await HOST.p.evaluate(()=>({ secs: window.__aac3dRound().hideSecs,
+                                           text: document.getElementById('lobTimeVal').textContent }));
+    const want = Math.floor(r.secs/60) + ':' + String(r.secs%60).padStart(2,'0');
+    if(r.text === want) return r;
+    await wait(120);
+  }
   return HOST.p.evaluate(()=>({ secs: window.__aac3dRound().hideSecs,
                                 text: document.getElementById('lobTimeVal').textContent }));
 };

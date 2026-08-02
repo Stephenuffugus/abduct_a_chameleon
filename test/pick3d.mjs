@@ -112,6 +112,7 @@ for (const [W,H] of [[667,375],[932,430]]) {
                    brush: got, matches: !!(peek && got.toLowerCase() === peek.hex.toLowerCase()),
                    score: score == null ? null : +score.toFixed(3),
                    tones, isATone, bestTwo: bestTwo == null ? null : +bestTwo.toFixed(3),
+                   hint: (document.getElementById('pickHint')||{}).textContent || '',
                    stillArmed: document.body.classList.contains('picking') });
     }
     return { before, bb: bb && { w:Math.round(bb.width), h:Math.round(bb.height) },
@@ -135,10 +136,21 @@ for (const [W,H] of [[667,375],[932,430]]) {
   if(real.length < 3) bad.push(`${tag}: only ${real.length}/4 taps hit anything at all`);
   for(const s of real){
     if(!s.matches) bad.push(`${tag}: tapped ${s.peek.name} ${s.peek.hex} but the brush became ${s.brush}`);
-    /* ⭐ the assertion the whole feature exists for */
-    if(s.isATone === false)
-      bad.push(`${tag}: picked ${s.peek.name} ${s.brush}, but the scorer at that spot is asking for ${s.tones.join(' / ')} - the picker and the scorer disagree`);
-    if(s.tones && s.tones.length === 1 && s.score != null && s.score < 0.98)
+    /* ⭐ the assertion the whole feature exists for — CORRECTED 2026-08-02.
+       The old form demanded that every pick be one of the tones weighed at your
+       feet, and that is not achievable: from open ground you can see a hedge
+       forty metres away and tap it. You get its exact colour, and the scorer
+       rightly ignores it, because nothing where you are STANDING is that green.
+       It failed on HEAD as well as on this build - whichever viewport the random
+       map dropped the player in the open - so it was never testing what it said.
+       The real contract has two halves: the brush gets what you tapped (asserted
+       above), and if that colour is not being counted where you are, the game has
+       to SAY SO rather than leave you wondering why your match collapsed. A
+       silent disagreement is the bug; an announced one is a lesson about where to
+       stand. */
+    if(s.isATone === false && !/stand next to it|not being matched/i.test(s.hint))
+      bad.push(`${tag}: picked ${s.peek.name} ${s.brush} which the scorer at that spot does not weigh (it wants ${s.tones.join(' / ')}) - and nothing on screen said so (hint: "${s.hint}")`);
+    if(s.isATone && s.tones && s.tones.length === 1 && s.score != null && s.score < 0.98)
       bad.push(`${tag}: only one surface counts at that spot, yet the picked colour scores ${s.score} instead of full marks`);
     if(s.bestTwo != null && s.bestTwo < 0.98)
       bad.push(`${tag}: even both picked tones together only reach ${s.bestTwo} - the two-tone ceiling is unreachable`);

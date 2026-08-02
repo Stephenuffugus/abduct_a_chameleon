@@ -19,6 +19,30 @@
   canvas{display:block}
   .hidden{display:none !important}
 
+  /* ⛔⛔ 2026-08-02 — "we cant hold the up and down arrows or the beam button
+     because it highlites the words and messes it up."
+     Every control in this game is an inline-styled <button> and NOT ONE of them
+     carried a selection rule - the only `-webkit-tap-highlight-color` in the
+     whole file was on the rotate gate. So a HELD button (▲ ▼ BEAM JUMP - the
+     three you hold longest) triggers the platform long-press: Android starts a
+     text selection on the label and pops the selection handles, iOS raises the
+     callout menu. The selection then swallows the pointerup, which is why it
+     "messes it up" rather than merely looking wrong - the button stays stuck on.
+     preventDefault on pointerdown does NOT stop it: the long-press gesture is
+     recognised by the compositor from the touch stream, not from that event.
+     It has to be denied in CSS, on the whole app, once.
+     Text you might legitimately want to select (a case file page, an input) opts
+     back IN below - that list is short and deliberate. */
+  html,body{ -webkit-user-select:none; -moz-user-select:none; user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent }
+  button,.tbtn,.lbtn,.pview,.sbtn{ -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent }
+  /* a button you HOLD must never be handed to the browser's own gesture
+     recogniser - no scroll, no double-tap zoom, no long-press */
+  .tbtn,#tJump,#tUp,#tDown,#tBeam,#tFreeze,#tLand{ touch-action:none !important }
+  input,textarea,#hwBody,#hwHeading,#hwCard,#lobRoom,#joinCode{
+    -webkit-user-select:text; user-select:text; -webkit-touch-callout:default }
+
   /* ---- top-left status ---- */
   #status{position:fixed;top:14px;left:14px;z-index:10;background:var(--panel);border:1px solid var(--line);
     border-radius:11px;padding:12px 14px;backdrop-filter:blur(8px);min-width:200px;pointer-events:none}
@@ -199,6 +223,45 @@
   #lobRoom{ font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.16em;
     color:var(--amber) }
   #lobby .lbtn.ok{ border-color:var(--cyan); color:var(--cyan) }
+  /* the START button has to look different the instant it is pressed, or a press
+     that has not been served yet is indistinguishable from one that was ignored */
+  #tStart.waiting{ opacity:.62; border-style:dashed }
+
+  /* ---- PLAY TOGETHER (join by QR) ----------------------------------------
+     Sits above everything except the seeker blindfold: you open it from the
+     lobby, and a lobby that a panel can hide behind is no use to anybody. The
+     panel is a GRID with its own header and rows pinned to its edges, the same
+     shape that finally made the paint studio survive a 430px landscape phone -
+     that lesson cost this file two days and is not being relearned. */
+  #joinPanel{ position:fixed; inset:0; z-index:62; display:flex; align-items:center;
+    justify-content:center; background:rgba(4,7,15,.86); backdrop-filter:blur(4px); padding:12px }
+  #joinPanel.hidden{ display:none }
+  #joinPanel .jp{ width:min(94vw,380px); max-height:calc(100dvh - 24px); overflow-y:auto;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px 13px;
+    display:flex; flex-direction:column; gap:9px; text-align:center }
+  #joinPanel .jhd{ display:flex; align-items:center; justify-content:space-between; gap:10px }
+  #joinPanel .jhd b{ font-family:var(--mono); font-size:12px; letter-spacing:.2em; color:var(--cyan) }
+  #joinClose{ width:44px; height:44px; min-width:44px; border-radius:11px; background:#0A0E19;
+    border:1px solid var(--line); color:var(--txt); font-size:18px; cursor:pointer }
+  #joinPanel .jlab{ font-family:var(--mono); font-size:9.5px; letter-spacing:.2em; color:var(--muted-2) }
+  #joinRoomCode{ font-family:var(--mono); font-size:23px; font-weight:800; letter-spacing:.24em;
+    color:var(--amber); word-break:break-all }
+  #joinQR{ width:min(60vw,200px); height:auto; align-self:center; border-radius:8px;
+    background:#fff; padding:6px; image-rendering:pixelated }
+  #joinPanel .jhint{ font-size:10.5px; line-height:1.5; color:var(--muted) }
+  #joinScan{ display:none; flex-direction:column; gap:6px }
+  #joinPanel.scanning #joinScan{ display:flex }
+  #joinPanel.scanning #joinMine{ display:none }
+  #joinVideo{ width:100%; max-height:38vh; border-radius:10px; border:1px solid var(--cyan);
+    background:#000; object-fit:cover }
+  #joinMsg{ font-family:var(--mono); font-size:10.5px; line-height:1.5; color:var(--amber); min-height:16px }
+  #joinPanel .jrow{ display:flex; gap:7px; align-items:center }
+  #joinPanel .jrow > *{ flex:1 1 auto }
+  #joinPanel .jrow .lbtn{ min-height:48px }
+  #joinCode{ min-height:48px; flex:1 1 auto; min-width:0; border-radius:11px; background:#0A0E19;
+    border:1.5px solid var(--line); color:var(--txt); padding:0 11px; font-family:var(--mono);
+    font-size:14px; letter-spacing:.12em; text-align:center }
+  #joinGo{ flex:0 0 74px }
   #hwClose{ display:none }
   #hidewait.spec #hwClose{ display:block }
   #tStart{ position:fixed; left:12px; top:114px; z-index:14; min-height:48px; min-width:132px;
@@ -438,8 +501,10 @@
     padding:7px 10px; max-width:min(46vw,300px); display:none }
   #paintTeach.on{ display:block }
   @media (max-height: 470px){ #paintTeach{ font-size:9.5px; padding:5px 8px } }
-  /* JUMP owns bottom-left and does nothing while the studio is open (movement is
-     suspended), so it would be pure collision with the teach line. */
+  /* JUMP does nothing useful with the studio open, so it goes away rather than
+     sitting there inviting a tap that cannot work. (It used to live at
+     bottom-LEFT, on top of the teach line; since 8/02 it is on the right, but
+     hiding it while painting is still correct.) */
   body.painting #tJump{ display:none !important }
   /* the paint-match meter is centred on the VIEWPORT, which while docked means
      centred half under the dock. Re-centre it on the stage. --dockw is the dock
@@ -557,7 +622,7 @@
 
   <div id="controls">
     <div id="ctrlHider"><b>Hider</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump (get on top of things and paint up there) · <kbd>V</kbd> sky view · <kbd>E</kbd> paint (wet paint DRIPS if you run) · <kbd>T</kbd> taunt · <kbd>F</kbd> decoy · <kbd>H</kbd> switch to HUNTING (solo practice) — EARN while they look and see nothing</div>
-    <div id="ctrlSeeker" class="hidden"><b>Seeker (UFO)</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd>/<kbd>Shift</kbd> altitude · hold <kbd>Mouse</kbd> beam (drains) · <kbd>G</kbd> echo scan (pings anything that moves) · <kbd>V</kbd> view</div>
+    <div id="ctrlSeeker" class="hidden"><b>Seeker (UFO)</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd>/<kbd>Shift</kbd> altitude · hold <kbd>Mouse</kbd> beam (drains) · <kbd>G</kbd> echo scan (8s fuse, pings anything that MOVED) · <kbd>L</kbd> land and hunt on foot with the freeze ray · <kbd>V</kbd> view</div>
     <div id="ctrlSpec" class="hidden"><b>Spectating</b> — <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · mouse look · back next round</div>
     <div id="ctrlPad" style="margin-top:5px;opacity:.72"><b>Controller</b> — sticks move/look · RT beam · A camo · B decoy · X pose · Y view · RB/LB altitude</div>
     <!-- the ? button cannot be clicked while the mouse is captured, so the key
@@ -654,11 +719,48 @@
       <span id="lobTimeVal">2:00</span>
       <button id="tTimeUp" class="lbtn sq" type="button">+</button>
     </div>
+    <!-- ⛔ COPY LINK USED TO SIT HERE AND IT MADE THE LOBBY THE WIDEST THING ON A
+         SMALL PHONE. #lobby #tStart is width:100%, so the column is as wide as
+         its widest row, and COPY LINK + 📷 QR + ROOM CODE came to 269px - which
+         at 667x375 reaches into the DEAD CENTRE of the screen. test/hud3d.mjs
+         caught it. The panel behind 📷 QR carries COPY LINK, the room code and
+         the scanner together, so one button here does the job of two and the
+         lobby ends up narrower than it was before any of this was added. -->
     <div class="lrow" id="lobRoomRow">
-      <button id="tCopyLink" class="lbtn" type="button">COPY LINK</button>
+      <button id="tJoinOpen" class="lbtn" type="button">📷 QR</button>
       <span id="lobRoom">—</span>
     </div>
     <div id="lobWho"></div>
+  </div>
+
+  <!-- ⭐ PLAY TOGETHER. One panel that answers both halves of "how do we get in
+       the same game": here is my room as a code you can scan, and here is a
+       camera to scan yours. Manual entry underneath because BarcodeDetector does
+       not exist on iOS Safari and a family should never be stopped by that. -->
+  <div id="joinPanel" class="hidden">
+    <div class="jp">
+      <div class="jhd"><b>PLAY TOGETHER</b><button id="joinClose" type="button">✕</button></div>
+      <div id="joinMine">
+        <div class="jlab">YOUR ROOM</div>
+        <div id="joinRoomCode">—</div>
+        <canvas id="joinQR" width="220" height="220"></canvas>
+        <div class="jhint">Point the other phone's camera at this, or tap 📷 SCAN over there.</div>
+      </div>
+      <div id="joinScan">
+        <video id="joinVideo" playsinline muted></video>
+        <div class="jhint">Hold their code in the frame.</div>
+      </div>
+      <div id="joinMsg"></div>
+      <div class="jrow">
+        <button id="joinScanBtn" class="lbtn" type="button">📷 SCAN</button>
+        <button id="joinCopy" class="lbtn" type="button">COPY LINK</button>
+      </div>
+      <div class="jrow">
+        <input id="joinCode" type="text" inputmode="latin" autocomplete="off"
+               spellcheck="false" placeholder="or type their room code">
+        <button id="joinGo" class="lbtn" type="button">GO</button>
+      </div>
+    </div>
   </div>
   <!-- A round is something you ASK FOR now. Before 2026-08-02 one started by
        itself the moment a second connection appeared, which put one of you in a
@@ -690,22 +792,53 @@
     is standing on. Get it right and you recover a page of the <b>Abduction Files</b>,
     which is the only way to read them. Three a wait, and no more.</p>
 
+    <h3>Getting into the same game</h3>
+    <p>The panel on the left is the lobby. It shows your <b>room</b>, how many people
+    are actually in it, and whether they picked <b>HIDE</b> or <b>SEEK</b>. If it says
+    only you are here, you are not in the same room as the other person — tap
+    <b>📷 QR</b>, hold their phone's code in the frame, and you will land in theirs.
+    They can also just point their camera at your code, or you can type it in.</p>
+    <p>Nothing starts on its own. Somebody presses <b>START ROUND</b>, everybody sees a
+    three-second countdown, and then the round begins. Until then it is free play:
+    everyone is a chameleon, nobody can be caught, and the paint studio is open.</p>
+
     <h3>The controls, on a phone</h3>
+    <p>The <b>left half of the screen moves you and does nothing else</b>. Every
+    button is on the right, so you never have to stop walking to press one.</p>
     <ul>
       <li><b>Left half of the screen</b> moves you</li>
       <li><b>Right half</b> looks around</li>
+      <li><b>JUMP</b> sits by your right thumb — get on top of a crate and paint yourself up there</li>
       <li>The <b>paint</b> button (🎨) opens the paint studio, where you colour your own body</li>
       <li>The <b>view</b> button (👁) switches between your own eyes and a look from above</li>
       <li>The <b>pose</b> button (🕺) changes your shape, because a shape can hide as well as a colour</li>
       <li>The <b>taunt</b> button (📣) pulls a hunter somewhere you are not</li>
       <li>The <b>decoy</b> button (👥) leaves behind something that looks like you</li>
-      <li><b>BEAM</b> and <b>SCAN</b> appear when you are the hunter, and <b>▲ ▼</b> change your altitude</li>
+      <li>A hunter gets <b>BEAM</b>, <b>SCAN</b>, <b>LAND</b> and <b>▲ ▼</b> for altitude</li>
+    </ul>
+
+    <h3>Hunting: the three tools</h3>
+    <ul>
+      <li><b>BEAM</b> — hold it over a chameleon for two seconds and they are taken.
+      It drains the ship's cell, and it burns out if you empty it.</li>
+      <li><b>SCAN</b> — a sweep of the ground around you. It costs a third of your cell
+      and takes <b>eight seconds</b> to come back — the button counts them down. When it
+      lands it lights up <b>anyone who moved while it was running</b>. It never finds
+      somebody who held still, and the chameleons are told the sweep is happening, so
+      what it really does is pin the whole area in place while you fly in.</li>
+      <li><b>LAND</b> — set the ship down and hunt on foot. A roof is a roof: no
+      altitude ever lets you see under one. On the ground you lose the view from above
+      and the wide beam, and you get the <b>freeze ray</b> instead — nine metres, but
+      only inside a narrow cone you have to be aiming, and only in clear sight. A
+      chameleon caught in it is slowed, not stopped, and every one of them can see you
+      standing there. Landing is a decision that says <i>somebody is under that roof</i>.</li>
     </ul>
 
     <h3>The controls, on a keyboard</h3>
-    <p class="dim">WASD moves, the mouse looks, E paints, V changes view, Q changes
-    pose, T taunts, F drops a decoy, G scans, and Escape backs out of the paint
-    studio — or opens Settings when nothing else is open.</p>
+    <p class="dim">WASD moves, the mouse looks, Space jumps, E paints, V changes view,
+    Q changes pose, T taunts, F drops a decoy, G scans, L lands the ship or takes off
+    again, and Escape backs out of the paint studio — or opens Settings when nothing
+    else is open.</p>
 
     <h3>If the looking feels wrong</h3>
     <p class="dim">Settings has a <b>look sensitivity</b> slider, an <b>invert
@@ -925,20 +1058,46 @@
         border:1.5px solid var(--cyan);color:var(--cyan);font-size:13px;font-weight:800">BEAM</button>
       <button id="tScan" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(242,179,61,.14);
         border:1.5px solid var(--amber);color:var(--amber);font-size:13px;font-weight:800">SCAN</button>
+      <!-- ⭐ 8/02: get out of the saucer. A hunter's set is 👁 BEAM SCAN LAND = four,
+           inside the five-button budget the column was measured for. -->
+      <button id="tLand" class="tbtn hidden" style="width:62px;height:62px;border-radius:16px;background:rgba(142,127,214,.18);
+        border:1.5px solid #8E7FD6;color:#C6BAF6;font-size:12px;font-weight:800;line-height:1.15">LAND</button>
     </div>
-    <!-- JUMP sits bottom-left, the spot altUI occupies for seekers, so the two
-         never collide: altUI is seeker-only and this is hider-only. The right
-         column is already at five buttons and a sixth does not fit a 375px
-         landscape phone (5x52+4x8=292 is the whole budget). -->
-    <button id="tJump" class="tbtn hidden" style="position:fixed;left:12px;bottom:14px;z-index:12;
+    <!-- ⛔⛔ 2026-08-02 — "the jump button should be on the right side and not the
+         left side. you cant walk and jump if the button is on the left side."
+         He is exactly right, and the same defect was sitting on the seeker's
+         controls unreported. #stickL is the movement stick: left:0/bottom:0,
+         46vw x 52vh. JUMP was pinned at left:12/bottom:14 - INSIDE that stick,
+         under the very thumb that is holding a direction. One thumb cannot hold
+         a stick and press a button beneath it, so jumping meant stopping.
+         #altUI (▲ ▼) had the identical problem for seekers: you could fly, or
+         you could change altitude, never both - which is very likely half of
+         "the ufo cant go low enough".
+         THE LAW NOW: the LEFT half of the screen is movement and nothing else.
+         Every button lives on the right, where the thumb only visits the look
+         stick in flicks instead of holding it down.
+         Geometry: #tbtns is right:12 with 62px buttons, so it owns 12..74. These
+         sit at right:86 (86..148) - a 12px gap, and 22px on short screens where
+         the media query drops both to 52px. JUMP is hider-only and altUI is
+         seeker-only, so they still share the slot without ever colliding. -->
+    <button id="tJump" class="tbtn hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;
       width:62px;height:62px;border-radius:16px;background:rgba(122,179,86,.16);
       border:1.5px solid #7ab356;color:#a8e07a;font-size:13px;font-weight:800">JUMP</button>
-    <div id="altUI" class="hidden" style="position:fixed;left:12px;bottom:14px;z-index:12;display:flex;flex-direction:column;gap:10px">
+    <div id="altUI" class="hidden" style="position:fixed;right:86px;bottom:14px;z-index:12;display:flex;flex-direction:column;gap:10px">
       <button id="tUp" class="tbtn" style="width:54px;height:54px;border-radius:14px;background:var(--panel);border:1.5px solid var(--line);color:var(--txt);font-size:18px">▲</button>
       <button id="tDown" class="tbtn" style="width:54px;height:54px;border-radius:14px;background:var(--panel);border:1.5px solid var(--line);color:var(--txt);font-size:18px">▼</button>
     </div>
   </div>
 
+<!-- ⭐ 8/02: the join QR. Stephen: "there should be a scanner in the game menu too
+     so when someones in the lobby picking their character or whatever, they can
+     scan and jump in a game from there."
+     The 2D game has had this since July (host screen draws a QR, the other phone
+     scans it, ?join=CODE lands them in the room) and the 3D game had NOTHING -
+     the only way to hand over a room was to read the address bar out loud, which
+     is very likely why two phones in this house ended up in two different rooms.
+     Same vendored qrcode-generator (MIT, Kazuhiko Arase) the 2D game uses. -->
+<script src="qr.js"></script>
 <!-- THE ABDUCTION FILES page bank, shared with the 2D game. These are plain
      classic scripts that append to window.AAC_FILES; see docs/ABDUCTION-FILES-CANON.md -->
 <script src="pages/files-1.js"></script>
@@ -975,7 +1134,31 @@ const SEEKER_PER = 6;           // ~1 seeker per this many players (min 1)
 const SEND_HZ = 15;             // network transform updates / sec
 const HIDER_SPEED = 10;
 const UFO_SPEED = 18;
-const UFO_MIN_ALT = 9, UFO_MAX_ALT = 42;
+/* ⛔ 2026-08-02 — "the ufo cant go low enough i think." Two separate things were
+   true. The floor really was 9m, which is above every roof, canopy and awning in
+   the level, so a hider under cover was untouchable by design. And ▲▼ sat on top
+   of the movement stick (see #altUI), so descending meant stopping - a saucer
+   that cannot fly and sink at the same time FEELS like it cannot sink.
+   The floor drops to 4.5 - low enough to duck under a canopy edge and read a
+   body properly - and _flightFloor() lifts it locally over anything solid so the
+   saucer skims a wall instead of sliding through it. */
+const UFO_MIN_ALT = 4.5, UFO_MAX_ALT = 42;
+const UFO_SKY_ALT = 9;          // the 👁 sky-check height, unchanged: a hunter's honest working altitude
+/* ⭐ AND THE REAL ANSWER TO OVERHEAD COVER: get out and walk.
+   Stephen 8/02: "with all of the roofs and stuff for peopel to hide under, we may
+   need to make it so aliens can come down and beam themselves down to the ground
+   where they can search on foot, they would need a freeze gun or soemthing".
+   A saucer cannot see under a roof at any altitude, so no altitude number was ever
+   going to fix it. Landing does, and it costs the hunter everything the saucer was
+   good at: no overhead view, no 4.2m catch circle, and a body that hiders can see
+   and hear coming. */
+const LAND_ALT   = 14;          // set down from this height or lower
+const FOOT_SPEED = 9.2;         // 0.92x HIDER_SPEED — a hider who runs, escapes
+const FREEZE_R    = 9;          // reach of the ray
+const FREEZE_ARC  = 0.52;       // half-angle ~30deg: you must be AIMED at them
+const FREEZE_DRAIN= 0.19;       // battery/sec on foot (the saucer's beam costs 0.25)
+const FREEZE_SLOW = 0.28;       // speed a caught hider keeps — slowed, never frozen solid
+const FREEZE_HOLD = 1.5;        // sec the grip lingers after the ray leaves you
 const SENS = 0.0022;
 const BEAM_RADIUS = 4.2;        // horizontal catch radius under the UFO
 const LOCK_TIME = 2.2;          // sec of sustained beam to abduct
@@ -992,10 +1175,17 @@ const HIDE_MIN = 60, HIDE_MAX = 300, HIDE_STEP = 30;   // the host may set 1-5 m
 /* ⛔ a build stamp on screen, because "is he even running the new one" cost a
    whole test session. The room link carries whatever ?v= the host's tab had, so
    an old link quietly hands an old build to everybody who opens it. */
-const BUILD = '0802q';
+const BUILD = '0802r';
 let hideSecsLocal = null;       // the host's own copy, so a burst of taps all land
 const ROUND_SECONDS = 150;
 const INTERMISSION = 7;
+/* the visible gap between asking for a round and being in one. Three seconds is
+   long enough that nobody is surprised by a role change and short enough that
+   nobody taps START a second time. */
+const GO_COUNT = 3;
+let _servedReq = null;          // host: the last start token it acted on, so one press = one round
+let _reqSeq = 0;                // client: makes this device's tokens unique
+let _askedAt = 0;               // client: when I pressed START, so the button can answer me
 const CAMO_RAMP = 1.4;          // sec to full camouflage while still
 const CAMO_MIN_OPACITY = 0.16;  // how faint a fully-camo'd hider gets
 const DECOY_CD = 18;            // P37: seconds between decoy drops
@@ -1486,6 +1676,8 @@ async function init(){
     onPlayerJoin(handleJoin);
     loadLevelList();
     started = true;
+    // the room's heartbeat, off the animation loop on purpose — see hostLoop()
+    setInterval(hostLoop, 60);
     // setupTouch() hid this two lines ago — re-showing it unconditionally put a
     // desktop pointer-lock prompt ("Click to capture mouse") over the game on
     // every phone, right after the player got past the rotate gate.
@@ -3447,18 +3639,39 @@ function calClearBodies(){
    what a paint job WOULD score before building the rig: the canvas is a flat
    two-band fill, so the averages are just the two colours and effMatch is pure.
    Cheap enough to search over, and it agrees with the measurement exactly. */
-function calPaintFor(x, z, acc){
+/* ⛔⛔⛔ 2026-08-02 — THIS FUNCTION IS WHY THE GAME "KEPT FREEZING AND STOPPING"
+   FOR THE SEEKER, AND ONLY FOR THE SEEKER.
+   calFrame's ramp calls calPaintFor 35 times for ONE spot, varying only `acc`.
+   Every one of those calls did `targetTonesAt` TWICE and `supportAt` once - and
+   targetTonesAt is a linear scan of paintTargets, which on a shipped map is
+   roughly a thousand entries. That is ~105 full scans of the world to place ONE
+   body. Times three bodies, times up to four attempts, plus twelve skinned-rig
+   clones, 36 canvas readbacks, 88 raycasts and a BLOCKING GPU pixel readback -
+   all inside a single synchronous task, fired from inside a render frame, on the
+   blindfold that only a hunter ever sees. On a phone that is seconds of dead
+   screen, three times a round.
+   Nothing about the spot changes as `acc` moves. Measure the place ONCE and pass
+   it in: 105 scans become 3. */
+function calSpotAt(x, z){
   const tones = targetTonesAt(x, z);
   if(!tones || !tones.length) return null;
+  const sup = supportAt(x, z);
+  return { tones, sup, plat: targetTonesAt(x, z, sup.plat) };
+}
+const _calC1 = new THREE.Color(), _calC2 = new THREE.Color();
+function calPaintFor(x, z, acc, spot){
+  const S = spot || calSpotAt(x, z);
+  if(!S) return null;
+  const tones = S.tones;
   const top = calShade('#' + tones[0].color.getHexString(), acc);
   const bot = tones.length > 1 ? calShade('#' + tones[1].color.getHexString(), acc) : top;
   const o1 = {r:0,g:0,b:0}, o2 = {r:0,g:0,b:0};
-  new THREE.Color(top).getRGB(o1, THREE.SRGBColorSpace);
-  new THREE.Color(bot).getRGB(o2, THREE.SRGBColorSpace);
+  // scratch colours: this runs 35+ times per spot and allocated two every pass
+  _calC1.set(top).getRGB(o1, THREE.SRGBColorSpace);
+  _calC2.set(bot).getRGB(o2, THREE.SRGBColorSpace);
   const T = { r:o1.r*255, g:o1.g*255, b:o1.b*255 }, B = { r:o2.r*255, g:o2.g*255, b:o2.b*255 };
   const all = { r:(T.r+B.r)/2, g:(T.g+B.g)/2, b:(T.b+B.b)/2 };
-  const sup = supportAt(x, z);
-  return { top, bot, sup, mq: effMatch(all, T, B, targetTonesAt(x, z, sup.plat)).mq };
+  return { top, bot, sup:S.sup, spot:S, mq: effMatch(all, T, B, S.plat).mq };
 }
 function calMakeBody(x, z, acc, pre){
   const paint = pre || calPaintFor(x, z, acc);
@@ -3478,7 +3691,7 @@ function calMakeBody(x, z, acc, pre){
   const av = _cvAvg(dg.paint.cv,0,1), avT = _cvAvg(dg.paint.cv,0,0.5), avB = _cvAvg(dg.paint.cv,0.5,1);
   /* the number we SHOW is the one the game's own scorer gives this body where
      it is standing - not the number we asked for. Measured beats promised. */
-  const mq = effMatch(av, avT, avB, targetTonesAt(x, z, sup.plat)).mq;
+  const mq = effMatch(av, avT, avB, (paint.spot && paint.spot.plat) || targetTonesAt(x, z, sup.plat)).mq;
   const op = 1 - mq*(1 - CAMO_MIN_OPACITY);          // exactly what a seeker sees
   for(const mm of dg.skin) mm.opacity = op;
   const b = { root, x, z, top:sup.top, mq, tex:dg.paint.tex };
@@ -3506,9 +3719,17 @@ function calDeal3D(){
     }
     return null;
   }
+  /* ⛔ AND A HARD WALL-CLOCK CEILING ON THE WHOLE DEAL. Four attempts was a
+     quality decision made with no bound on what it costs the player - and the
+     player paying is the one staring at an opaque panel waiting for their round
+     to start. calDeal2D() is not a failure state, it is the composed board that
+     trains the same colour call instantly. Better a clean abstract board now
+     than a photograph after the phone has locked up. */
+  const t0 = performance.now();
   for(let attempt = 0; attempt < 4; attempt++){
     spots.length = 0; calBodyDecoys.length = 0; calClearBodies();
     if(calFrame(acc, pickSpot, W, H, cv)) return true;
+    if(performance.now() - t0 > 60) break;
   }
   calClearBodies();
   return false;
@@ -3522,8 +3743,12 @@ function calFrame(acc, pickSpot, W, H, cv){
      that really lands on this round's number, and if this spot cannot produce
      it, hand back and let the caller try another one. */
   let bestQ = null, bestErr = 9;
+  // measure the SPOT once, then walk the ramp over it — 35 identical world scans
+  // were the single biggest cost in the whole blindfold
+  const homeSpot = calSpotAt(home.x, home.z);
+  if(!homeSpot) return false;
   for(let a = 0.30; a <= 0.995; a += 0.02){
-    const q = calPaintFor(home.x, home.z, a);
+    const q = calPaintFor(home.x, home.z, a, homeSpot);
     if(!q) return false;
     const e = Math.abs(q.mq - acc);
     if(e < bestErr){ bestErr = e; bestQ = q; }
@@ -3548,8 +3773,10 @@ function calFrame(acc, pickSpot, W, H, cv){
     /* search down until this decoy really would score a clear step worse than
        the answer where IT is standing; give up rather than ship a liar board */
     let pre = null;
+    const decoySpot = calSpotAt(dx, dz);            // same hoist as the ramp above
+    if(!decoySpot) continue;
     for(let a = acc - 0.20; a >= 0.28; a -= 0.06){
-      const q = calPaintFor(dx, dz, Math.max(0.28, a));
+      const q = calPaintFor(dx, dz, Math.max(0.28, a), decoySpot);
       if(q && q.mq <= real.mq - 0.08){ pre = q; break; }
     }
     if(!pre) continue;
@@ -4002,6 +4229,7 @@ window.__aac3dRoundSkip = function(what){
   if(what === 'round'){ setState('hideEnds', Date.now() - 1, true);
                         setState('roundEnds', Date.now() - 1, true); }
   if(what === 'inter')  setState('interEnds', Date.now() - 1, true);
+  if(what === 'go')     setState('goEnds',    Date.now() - 1, true);   // skip the START countdown
   /* ⛔ test-only: HOLD the intermission open. It is seven seconds, and a gate
      that has to notice the phase change, click a button and read the result
      inside seven seconds over synced state on a starved box is a coin flip, not
@@ -4071,10 +4299,21 @@ window.__aac3dRound = function(){
     team: (me && me.getState('team')) || null, host: isHost(),
     myRole:myRole(), myHasRole:!!(me && me.getState('role')),
     abducted:amAbducted(), roundId:getState('roundId')||0,
+    // 8/02: the ground hunt + the sweep, so a gate can assert on both
+    onfoot:onFoot(), alt:+localPos.y.toFixed(2), canLand: localPos.y <= LAND_ALT,
+    frozen: ((me && me.getState('froz'))||0) > Date.now(),
+    scanWarn:+scanWarnLeft().toFixed(1), goLeft:+Math.max(0,((getState('goEnds')||0)-Date.now())/1000).toFixed(1),
+    startAsked: !!getState('startReq'),
     /* the number that matters: is anything at all stopping me being taken */
     canBeCaught: phase==='playing' && hideLeft()<=0 && myRole()==='hider' && !amAbducted(),
     soloGrace:+soloGraceLeft().toFixed(1), botExists:!!bot,
     camo:+camoLevel.toFixed(2), match:+myMatch.toFixed(2) };
+};
+window.__aac3dLobbyDbg = function(){
+  return { host:isHost(), hsl:hideSecsLocal, raw:getState('hideSecs'),
+           ph:getState('phase')||'waiting',
+           lobHidden: document.getElementById('lobby').classList.contains('hidden'),
+           hudRuns:_hudRuns, tickErrs:_tickErrs };
 };
 window.__aac3dBot = function(op){
   if(op === 'endGrace'){ botGraceEnds = Date.now(); botLiveAt = Date.now(); }
@@ -4818,7 +5057,29 @@ function handleJoin(state){
   beamMesh.position.y=-5; beamMesh.visible=false;
   ufo.add(saucer, rim, dome, beamMesh); ufo.visible=false;
 
-  group.add(hider, ufo); scene.add(group);
+  /* ⭐ THE FREEZE RAY. A cone laid on its side so it fires FORWARD out of a
+     standing body, sized to FREEZE_R and the arc detectAbductions actually
+     tests - if the shape you see and the shape that catches you are two
+     different numbers, every catch feels like a cheat.
+     ⛔⛔ IT HANGS OFF `group`, NOT `hider`, AND THAT IS NOT A STYLE CHOICE.
+     The paint studio derives your silhouette by walking `myBody.hider` and
+     rasterising EVERY mesh's UVs into a 192² mask (buildBodyMask), and it paints
+     you by raycasting that same subtree. A cone parented to the body has UVs
+     covering the whole 0..1 square, so the silhouette went to 100% - a rectangle
+     instead of a person - and the ray hit the cone instead of the chest. Caught
+     by test/studio3d.mjs, which failed on all four viewports the moment this was
+     added and passed on HEAD. `group` already carries the player's yaw
+     (`p.group.rotation.y = localYaw`), so the cone points exactly where it did
+     and the rig stays clean. */
+  const freezeMesh = new THREE.Mesh(
+    new THREE.ConeGeometry(Math.tan(FREEZE_ARC)*FREEZE_R, FREEZE_R, 18, 1, true),
+    new THREE.MeshBasicMaterial({ color:0x9BE8FF, transparent:true, opacity:.17,
+                                  side:THREE.DoubleSide, depthWrite:false }));
+  freezeMesh.rotation.x = -Math.PI/2;        // point down +Z, the body's forward
+  freezeMesh.position.set(0, 1.15, FREEZE_R/2);
+  freezeMesh.visible = false;
+
+  group.add(hider, ufo, freezeMesh); scene.add(group);
 
   // ground targeting ring — shows the catch radius under a beaming UFO
   const groundRing = new THREE.Mesh(
@@ -4827,7 +5088,7 @@ function handleJoin(state){
   );
   groundRing.rotation.x = -Math.PI/2; groundRing.visible = false; scene.add(groundRing);
 
-  const p = { state, group, hider, ufo, beamMesh, groundRing, skin:dg.skin, accent:dg.accent, joints:dg.joints,
+  const p = { state, group, hider, ufo, beamMesh, freezeMesh, groundRing, skin:dg.skin, accent:dg.accent, joints:dg.joints,
               mixer:dg.mixer, actions:dg.actions, curAction:null,
               paint:dg.paint, lastPtex:null, stillT:0, lastX:0, lastZ:0, opShown:null,
               appliedPose:'idle', base, target:new THREE.Vector3(), targetYaw:0, prevAbducted:false, abductT:-1 };
@@ -4848,7 +5109,8 @@ function setupInput(){
         const ring = ['front','side','back','sky'];      // same meaning as the eye button
         setPaintView(ring[(ring.indexOf(paintView) + 1) % ring.length]); SFX.blip();
       }
-      else if(myRole()==='seeker') seekerView = seekerView==='topdown' ? 'follow' : 'topdown';
+      // there is no overhead view from the ground — that is what you traded away
+      else if(myRole()==='seeker'){ if(!onFoot()) seekerView = seekerView==='topdown' ? 'follow' : 'topdown'; else SFX.lose(); }
       else { hiderView = hiderView==='topdown' ? 'third' : 'topdown'; SFX.blip(); }   // P30: check yourself from the abductors' sky
     }
     if(e.code==='KeyE'){ setPaintOpen(!paintOpen); }                                   // P30: E = the paint studio
@@ -4856,6 +5118,7 @@ function setupInput(){
     if(e.code==='KeyT') tauntWhistle();                          // P33: bait them closer
     if(e.code==='KeyF') dropDecoy();                             // P37: leave a lie behind
     if(e.code==='KeyG') fireEchoScan();                          // P34: interrogate a zone for movers
+    if(e.code==='KeyL'){ if(!setOnFoot(!onFoot())) SFX.lose(); }  // 8/02: set down and hunt on foot
     if(e.code==='KeyH') togglePractice();                        // solo: swap hiding for hunting
     if(e.code==='KeyQ' || e.code==='BracketRight') cyclePose(1);
     if(e.code==='BracketLeft') cyclePose(-1);
@@ -5319,7 +5582,20 @@ function doPick(cx, cy){
   if(!s){ SFX.click(); pickSay('nothing there to match', 1); return false; }
   setBrush(s.hex);                       // brush only - the Director paints with it himself
   SFX.blip();
-  pickSay('picked ' + s.name + ' · now paint with it', 1);
+  /* ⛔ THE EYEDROPPER COULD HAND YOU A COLOUR THE SCORER REFUSES, AND SAY NOTHING.
+     Standing in the open you can still see a hedge forty metres off and tap it -
+     you get its exact green, and then your match sits at 22% because at YOUR feet
+     the only surface being weighed is the sand. test/pick3d.mjs has been failing
+     on this since before today (it fails on HEAD too, at whichever viewport the
+     random map happens to put you in the open), and it reads as the picker being
+     broken when the picker is right and the PLACE is wrong.
+     The maths is Stephen's call and is untouched. What was missing is the
+     sentence: tell them the thing they just sampled is not being counted where
+     they are standing, and that walking to it fixes it. */
+  const tones = targetTonesAt(localPos.x, localPos.z, standingOn) || [];
+  const counted = tones.some(t => '#'+t.color.getHexString().toLowerCase() === s.hex.toLowerCase());
+  if(!counted) pickSay('picked ' + s.name + ' — but nothing here is being matched against it. Stand next to it.', 0);
+  else pickSay('picked ' + s.name + ' · now paint with it', 1);
   return true;
 }
 function paintStroke(px, py){
@@ -5480,23 +5756,26 @@ function setupPaintUI(){
   const _tp = document.getElementById('tPractice');
   if(_tp) _tp.onclick = ()=> togglePractice();
   const _ts = document.getElementById('tStart');
-  if(_ts) _ts.onclick = ()=>{ setState('startReq', true, true); SFX.click(); };
+  /* ⭐ A BUTTON MUST ANSWER THE FINGER THAT PRESSED IT. The old handler wrote a
+     boolean and returned; if the host never served it the screen was identical
+     to before the press, forever. Now the press is acknowledged locally on the
+     spot, and if the room has not moved within four seconds the button says so
+     instead of pretending. */
+  if(_ts) _ts.onclick = ()=>{
+    if((getState('phase')||'waiting') !== 'waiting') return;
+    _reqSeq++; _askedAt = performance.now();
+    setState('startReq', { by:(me && me.id) || 'x', n:((me && me.id) || 'x')+'#'+_reqSeq }, true);
+    SFX.click();
+  };
   /* ⛔ THERE WAS NO WAY TO INVITE ANYBODY FROM INSIDE THE GAME. The room lives
      in location.hash and the only way to hand it over was to read the address
      bar out loud. That is the whole reason a second device may never have been
-     in the same room. */
-  const _cl = document.getElementById('tCopyLink');
-  if(_cl) _cl.onclick = ()=>{
-    const url = location.href;
-    const done = ()=>{ _cl.textContent = 'LINK COPIED'; _cl.classList.add('ok');
-      setTimeout(()=>{ _cl.textContent = 'COPY LINK'; _cl.classList.remove('ok'); }, 2200); };
-    try{
-      if(navigator.clipboard && navigator.clipboard.writeText)
-        navigator.clipboard.writeText(url).then(done, ()=>prompt('Copy this link:', url));
-      else prompt('Copy this link:', url);
-    }catch(_){ prompt('Copy this link:', url); }
-    SFX.click();
-  };
+     in the same room. The lobby's own COPY LINK button is gone as of 8/02 - it
+     made the lobby column wide enough to reach the middle of a 667px screen -
+     and #joinCopy inside the PLAY TOGETHER panel does exactly the same thing
+     next to the QR and the room code, which is where somebody looking to share
+     a room is already looking. */
+  setupJoinPanel();
   const _th = document.getElementById('tTeamHide'), _tk = document.getElementById('tTeamSeek');
   if(_th) _th.onclick = ()=>{ me && me.setState('team','hide', true); SFX.click(); };
   if(_tk) _tk.onclick = ()=>{ me && me.setState('team','seek', true); SFX.click(); };
@@ -5587,6 +5866,145 @@ function setupPaintUI(){
   });
 }
 
+/* ===================== PLAY TOGETHER — join by QR (8/02) =====================
+   Stephen: "there should be a scanner in the game menu too so when someones in
+   the lobby picking their character or whatever, they can scan and jump in a
+   game from there."
+   Two phones ending up in two different rooms is the single most likely
+   explanation for half of what went wrong in that playtest: every client sees
+   ONE player, so the lobby says nothing is wrong and the round simply never
+   starts. Reading a Playroom room code out of an address bar over a kitchen
+   table is not a mechanism. This is.
+   ⛔ BarcodeDetector does not exist on iOS Safari and getUserMedia needs HTTPS
+   and a permission the player can refuse. Every one of those is a dead end with
+   no message unless it is handled, so the manual code box is not a fallback -
+   it is always on screen, and the camera is the shortcut. */
+let joinStream = null, joinRaf = 0, _qrCode = null;
+function roomCode(){ return (location.hash.match(/r=([A-Za-z0-9_-]+)/) || [,''])[1] || ''; }
+function joinDrawQR(){
+  const cv = document.getElementById('joinQR'); if(!cv) return;
+  const code = roomCode();
+  if(_qrCode === code) return;                    // cheap: only redraw when the room changes
+  _qrCode = code;
+  const c2 = cv.getContext('2d');
+  c2.fillStyle = '#fff'; c2.fillRect(0,0,cv.width,cv.height);
+  // window.qrcode explicitly: qr.js is a CLASSIC script and this is a module, so
+  // naming the global is clearer than relying on it leaking into module scope
+  if(!code || typeof window.qrcode !== 'function') return;
+  try{
+    const q = window.qrcode(0,'M');
+    q.addData(location.href);                     // the WHOLE link: build, room and all
+    q.make();
+    const n = q.getModuleCount(), pad = 4;
+    const px = Math.max(1, Math.floor((cv.width - pad*2) / n));
+    const off = Math.floor((cv.width - n*px)/2);
+    c2.fillStyle = '#000';
+    for(let r=0;r<n;r++) for(let c=0;c<n;c++) if(q.isDark(r,c)) c2.fillRect(off+c*px, off+r*px, px, px);
+  }catch(_){ /* a missing QR is a nuisance; the code and the link still work */ }
+}
+function joinSay(m){ const e = document.getElementById('joinMsg'); if(e) e.textContent = m || ''; }
+function joinScanStop(){
+  if(joinRaf){ cancelAnimationFrame(joinRaf); joinRaf = 0; }
+  if(joinStream){ for(const t of joinStream.getTracks()) t.stop(); joinStream = null; }
+  const v = document.getElementById('joinVideo'); if(v) v.srcObject = null;
+  document.getElementById('joinPanel').classList.remove('scanning');
+}
+function setJoinOpen(on){
+  const p = document.getElementById('joinPanel'); if(!p) return;
+  p.classList.toggle('hidden', !on);
+  if(on){ joinDrawQR();
+    const rc = document.getElementById('joinRoomCode');
+    if(rc) rc.textContent = roomCode() || 'not in a room yet';
+    /* the build stamp lives here now. It used to ride on #lobWho, permanently on
+       screen - "is he even running the new one" cost a whole test session, so it
+       stays somewhere findable, just not somewhere it is charged against the
+       player's view of the game every frame. */
+    joinSay('build ' + BUILD); }
+  else joinScanStop();
+}
+/* Accepts anything a camera might see: the full link, a bare hash, or somebody
+   typing the five characters off the other screen. */
+function joinFromText(t){
+  if(!t) return false;
+  const s = String(t).trim();
+  let code = null;
+  const m = s.match(/[#?&]r=([A-Za-z0-9_-]+)/);
+  if(m) code = m[1];
+  else if(/^[A-Za-z0-9_-]{3,16}$/.test(s)) code = s;
+  if(!code) return false;
+  if(code === roomCode()){ joinSay('That is this room — you are already in it.'); return false; }
+  joinScanStop();
+  joinSay('Joining ' + code + '…');
+  /* ⛔ Playroom keeps the room in the hash, and a hash write alone does NOT
+     reload - the SDK has already joined. Rewriting only the r= key preserves
+     anything else living in there (?v= builds, dev flags). */
+  let h = location.hash.replace(/^#/,'');
+  h = /(^|&)r=/.test(h) ? h.replace(/(^|&)r=[^&]*/, '$1r='+code) : (h ? h+'&r='+code : 'r='+code);
+  location.hash = h;
+  setTimeout(()=> location.reload(), 120);
+  return true;
+}
+async function joinScanStart(){
+  const p = document.getElementById('joinPanel'), v = document.getElementById('joinVideo');
+  if(typeof BarcodeDetector === 'undefined'){
+    joinSay('This browser cannot read a code with the camera. Type it in below instead.'); return;
+  }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    joinSay('No camera available here. Type the code in below.'); return;
+  }
+  try{
+    joinStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } } });
+  }catch(e){
+    joinSay('Camera not allowed. Type the code in below instead.'); return;
+  }
+  p.classList.add('scanning');
+  v.srcObject = joinStream;
+  try{ await v.play(); }catch(_){}
+  joinSay('Looking…');
+  let det = null;
+  try{ det = new BarcodeDetector({ formats:['qr_code'] }); }
+  catch(_){ joinSay('This browser cannot read QR codes. Type the code in below.'); joinScanStop(); return; }
+  const tick = async ()=>{
+    if(!joinStream) return;
+    try{
+      const found = await det.detect(v);
+      if(found && found.length && joinFromText(found[0].rawValue)) return;
+    }catch(_){ /* a frame that will not decode is normal; keep looking */ }
+    if(joinStream) joinRaf = requestAnimationFrame(tick);
+  };
+  joinRaf = requestAnimationFrame(tick);
+}
+function setupJoinPanel(){
+  const o = document.getElementById('tJoinOpen');
+  if(o) o.onclick = ()=>{ setJoinOpen(true); SFX.click(); };
+  const c = document.getElementById('joinClose');
+  if(c) c.onclick = ()=>{ setJoinOpen(false); SFX.click(); };
+  const s = document.getElementById('joinScanBtn');
+  if(s) s.onclick = ()=>{ SFX.click(); joinScanStart(); };
+  const g = document.getElementById('joinGo'), inp = document.getElementById('joinCode');
+  const go = ()=>{ if(!joinFromText(inp && inp.value)) joinSay('That does not look like a room code.'); };
+  if(g) g.onclick = ()=>{ SFX.click(); go(); };
+  if(inp) inp.addEventListener('keydown', e=>{ if(e.key === 'Enter'){ e.preventDefault(); go(); } });
+  const cp = document.getElementById('joinCopy');
+  if(cp) cp.onclick = ()=>{
+    const url = location.href;
+    const done = ()=>{ cp.textContent = 'COPIED'; cp.classList.add('ok');
+      setTimeout(()=>{ cp.textContent = 'COPY LINK'; cp.classList.remove('ok'); }, 2000); };
+    try{
+      if(navigator.clipboard && navigator.clipboard.writeText)
+        navigator.clipboard.writeText(url).then(done, ()=> prompt('Copy this link:', url));
+      else prompt('Copy this link:', url);
+    }catch(_){ prompt('Copy this link:', url); }
+    SFX.click();
+  };
+  // Escape closes it, like every other panel in this file
+  addEventListener('keydown', e=>{
+    if(e.code === 'Escape' && !document.getElementById('joinPanel').classList.contains('hidden')){
+      e.preventDefault(); setJoinOpen(false);
+    }
+  });
+}
+
 /* ============================ P32 Solo practice bot ============================ */
 // Alone in the room? A training UFO hunts YOU. It sees you by how badly your paint
 // matches (visibility = 1 - camoLevel), beams you like a real seeker, and catching
@@ -5646,6 +6064,7 @@ let wetUntil = 0, dripT = 0;
 const dripPool = [];              // {mesh, dieAt}
 // P34 ECHO SCAN: hunters pay battery to mark a zone; 8s later, movers inside it get pinged
 let myScan = null;                // {x,z,r,fireAt,ring,snap:[{id,x,z}]}
+let _scanWarned = false;          // hider: so the sweep alert chirps once, not every frame
 const SCAN_COST = 0.35, SCAN_R = 12, SCAN_DELAY = 8, MOVE_EPS = 1.5;
 const EARN_SEE_R = 26;            // a hunter this close with clear LOS counts as 'looking'
 function tauntWhistle(){
@@ -5903,7 +6322,35 @@ function fireEchoScan(){
   }
   myScan = { x:localPos.x, z:localPos.z, ring, fireAt: performance.now() + SCAN_DELAY*1000, pings:[] };
   myScan.snap = snap;
+  /* ⛔⛔ 2026-08-02 — "we tried the scan and it did make the player pop up white
+     to the alien but it may not be fair."
+     He was right, and the unfairness was not the maths - it was the SILENCE. The
+     rule is already a good one: the sweep only pings people who MOVED during it,
+     so holding still beats it. But the hider was never told a sweep was running,
+     so "hold still for eight seconds" was a counter nobody could possibly play.
+     That is not a hard mechanic, it is an invisible one. The 2D game has warned
+     the hider since July ("⚠ SCANNED — you are exposed!") and this one never did.
+     Publishing the sweep turns a free reveal into a standoff: the hunter spends
+     battery to freeze the whole area in place for eight seconds, and anyone who
+     needed to move now has to decide whether it is worth being seen. */
+  me.setState('scan', { x:localPos.x, z:localPos.z, r:SCAN_R,
+                        until: Date.now() + SCAN_DELAY*1000 }, true);
   tone(340, 0.3, 'triangle', 0.26, 620); SFX.click();
+}
+/* seconds left on any sweep I am standing inside, 0 if none. Read by the HUD so
+   a hider can see the clock they are being asked to hold still for. */
+function scanWarnLeft(){
+  if(!me || myRole()!=='hider' || amAbducted()) return 0;
+  const now = Date.now(); let best = 0;
+  for(const p of players){
+    if(p.state === me || p.state.getState('role') !== 'seeker') continue;
+    const s = p.state.getState('scan');
+    if(!s || now > s.until) continue;
+    const dx = localPos.x - s.x, dz = localPos.z - s.z, r = s.r || SCAN_R;
+    if(dx*dx + dz*dz > r*r) continue;
+    best = Math.max(best, (s.until - now)/1000);
+  }
+  return best;
 }
 function scanTick(dt){
   const now = performance.now();
@@ -6025,29 +6472,119 @@ function setupTouch(){
       setPaintView(ring[(ring.indexOf(paintView) + 1) % ring.length]);
       SFX.blip(); return;
     }
-    if(myRole()==='seeker') seekerView = seekerView==='topdown'?'follow':'topdown';
+    if(myRole()==='seeker'){ if(!onFoot()) seekerView = seekerView==='topdown'?'follow':'topdown'; else SFX.lose(); }
     else { hiderView = hiderView==='topdown'?'third':'topdown'; SFX.blip(); } };
   document.getElementById('tPose').onclick = ()=> cyclePose(1);
   document.getElementById('tTaunt').onclick = ()=> tauntWhistle();
   document.getElementById('tDecoy').onclick = ()=> dropDecoy();
-  const jb = document.getElementById('tJump');
-  jb.addEventListener('pointerdown', e=>{ e.preventDefault(); touch.jump = true; });
-  const _jUp = ()=>{ touch.jump = false; };
-  jb.addEventListener('pointerup', _jUp); jb.addEventListener('pointercancel', _jUp);
-  jb.addEventListener('pointerleave', _jUp);
+  /* ⛔⛔ EVERY HELD BUTTON WENT THROUGH ITS OWN HAND-ROLLED LISTENER SET AND NO
+     TWO WERE THE SAME. tJump had preventDefault + up/cancel/leave, tBeam had
+     preventDefault + up/cancel, and tUp/tDown - the two Stephen actually
+     complained about - had NOTHING: no preventDefault, no cancel, no leave.
+     Two failures follow from that.
+     1. SELECTION. Holding ▼ long-presses its own label, Android raises the text
+        selection handles, and the selection gesture eats the pointerup. Denied in
+        CSS now (see the top of the file); denied here too for the events CSS
+        cannot reach - contextmenu, selectstart, dragstart.
+     2. STUCK INPUT. A finger that slides off a button never fires pointerup on
+        it, so the flag stays true and the saucer climbs forever with nothing
+        pressed. setPointerCapture nails the whole gesture to the button so the
+        release always lands, lostpointercapture is the belt-and-braces, and a
+        window-level release (blur / tab hidden / pointerup anywhere) clears
+        everything - because the one guarantee a game needs is that letting go
+        always stops.
+     ⚠ pointerleave does NOT fire while a pointer is captured. It was in the old
+     tJump handler and could never have run. lostpointercapture is the real one. */
+  /* ⚠ THE SAFETY NET MUST NOT BREAK TWO-THUMB PLAY. A window-level pointerup
+     that releases EVERY held button would mean tapping 🎨 with the right thumb
+     lets go of JUMP under the left - the game is played with two thumbs at once,
+     so a release is only ever for the pointer that actually lifted. Hence the id
+     match. Only blur and a hidden tab release everything, and those genuinely
+     mean every finger is gone. */
+  const _held = [];
+  function holdBtn(el, on, off){
+    if(!el) return;
+    el._pid = null;
+    el._rel = (e)=>{
+      if(el._pid === null) return;
+      if(e && e.pointerId !== undefined && e.pointerId !== el._pid) return;
+      el._pid = null; off();
+    };
+    el._relAny = ()=>{ if(el._pid !== null){ el._pid = null; off(); } };
+    _held.push(el);
+    el.addEventListener('pointerdown', e=>{
+      e.preventDefault();
+      if(el._pid !== null) return;                 // already held by another finger
+      try{ el.setPointerCapture(e.pointerId); }catch(_){}
+      el._pid = e.pointerId; on();
+    });
+    el.addEventListener('pointerup', el._rel);
+    el.addEventListener('pointercancel', el._rel);
+    el.addEventListener('lostpointercapture', el._rel);
+    el.addEventListener('contextmenu', e=> e.preventDefault());
+    el.addEventListener('selectstart', e=> e.preventDefault());
+    el.addEventListener('dragstart', e=> e.preventDefault());
+  }
+  const releaseAll = ()=>{ for(const el of _held) el._relAny(); };
+  addEventListener('blur', releaseAll);
+  addEventListener('pointerup', e=>{ for(const el of _held) el._rel(e); });
+  addEventListener('pointercancel', e=>{ for(const el of _held) el._rel(e); });
+  document.addEventListener('visibilitychange', ()=>{ if(document.hidden) releaseAll(); });
+
+  holdBtn(document.getElementById('tJump'), ()=> touch.jump = true,  ()=> touch.jump = false);
+  holdBtn(document.getElementById('tBeam'), ()=> setBeam(true),      ()=> setBeam(false));
+  holdBtn(document.getElementById('tUp'),   ()=> touch.altUp = true, ()=> touch.altUp = false);
+  holdBtn(document.getElementById('tDown'), ()=> touch.altDown=true, ()=> touch.altDown= false);
   document.getElementById('tScan').onclick = ()=> fireEchoScan();
-  const tb = document.getElementById('tBeam');
-  tb.addEventListener('pointerdown', e=>{ e.preventDefault(); setBeam(true); });
-  tb.addEventListener('pointerup', ()=> setBeam(false));
-  tb.addEventListener('pointercancel', ()=> setBeam(false));
-  const up=document.getElementById('tUp'), dn=document.getElementById('tDown');
-  up.addEventListener('pointerdown', ()=> touch.altUp=true);   up.addEventListener('pointerup', ()=> touch.altUp=false);
-  dn.addEventListener('pointerdown', ()=> touch.altDown=true); dn.addEventListener('pointerup', ()=> touch.altDown=false);
+  document.getElementById('tLand').onclick = ()=>{ if(!setOnFoot(!onFoot())) SFX.lose(); };
 }
 
 /* ============================ Helpers ============================ */
 function myRole(){ return (me && me.getState('role')) || 'hider'; }
 function amAbducted(){ return !!(me && me.getState('abducted')); }
+/* ⭐ ON FOOT. The one bit of state that turns a saucer into a person, so it is a
+   function and not a scattered getState - every branch that has to care asks the
+   same question. */
+function onFoot(){ return !!(me && me.getState('onfoot')); }
+/* The saucer's LOCAL floor. UFO_MIN_ALT is 4.5 so a hunter can duck under an
+   awning, but 4.5 is below the top of a wall, and a dish sliding through masonry
+   looks broken and hunts unfairly. solids with a null top are full-height walls;
+   everything else reports a standable top. 2.2 of clearance keeps the 1.9-radius
+   dish off whatever it is skimming. Same O(solids) cost resolveWalls already pays
+   every frame for every hider. */
+const WALL_CLEAR = 6.0;
+function _flightFloor(x, z){
+  let f = UFO_MIN_ALT;
+  for(const s of solids){
+    if(x < s.minX-1.9 || x > s.maxX+1.9 || z < s.minZ-1.9 || z > s.maxZ+1.9) continue;
+    const h = (s.top == null) ? WALL_CLEAR : s.top + 2.2;
+    if(h > f) f = h;
+  }
+  return Math.min(f, UFO_MAX_ALT);
+}
+/* Get out and walk, or get back in. Landing is a COMMITMENT: you give up the
+   overhead view and the 4.2m catch circle for a 9m ray you have to aim, and every
+   hider can see you standing there. That trade is the whole feature - a hunter
+   who lands has decided somebody is under that roof. */
+function setOnFoot(on){
+  if(myRole()!=='seeker' || amAbducted()) return false;
+  if(on === onFoot()) return false;
+  if(on){
+    if(localPos.y > LAND_ALT) return false;      // you cannot step off at altitude
+    setBeam(false);
+    me.setState('onfoot', true, true);
+    localPos.y = 0; velY = 0; grounded = true; standingOn = null;
+    seekerView = 'follow';                        // there is no overhead view on the ground
+    tone(180, 0.5, 'sawtooth', 0.3, 70);
+  }else{
+    setBeam(false);
+    me.setState('onfoot', false, true);
+    localPos.y = Math.max(UFO_MIN_ALT + 2, _flightFloor(localPos.x, localPos.z) + 2);
+    velY = 0;
+    tone(120, 0.55, 'sawtooth', 0.3, 460);
+  }
+  return true;
+}
 function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 function angleDelta(from,to){ let d=(to-from)%(Math.PI*2); if(d>Math.PI)d-=Math.PI*2; if(d<-Math.PI)d+=Math.PI*2; return d; }
 function posOf(p){ if(p.state===me) return {x:localPos.x,y:localPos.y,z:localPos.z};
@@ -6134,9 +6671,34 @@ function loop(){
     if(isHost()) ensureMapPublished();
     const mv = getState('mapV');
     if(mv !== undefined && mv !== builtMapV && getState('map')){ buildWorld(getState('map')); builtMapV = mv; }
-    if(MAP){ if(isHost()) hostTick(dt); clientTick(dt); }
+    /* ⛔ ONE THROW USED TO END THE GAME. loop() is the animation callback; an
+       exception out of clientTick leaves nothing on screen moving and no message
+       anywhere, which is indistinguishable from the phone freezing. Log the
+       first few and keep drawing. */
+    if(MAP){ try{ clientTick(dt); }catch(e){ if(_tickErrs++ < 4) console.error('clientTick', e); } }
   }
   renderer.render(scene, camera);
+}
+let _tickErrs = 0, _hostErrs = 0, _hostLast = 0;
+/* ⛔⛔⛔ THE ROOM'S AUTHORITATIVE CLOCK WAS INSIDE requestAnimationFrame.
+   hostTick had exactly one call site and it was this animation loop, and rAF is
+   PAUSED in a backgrounded tab and on a phone whose screen has gone dark. So the
+   moment the host's device dimmed - one child putting a phone down for ten
+   seconds - START ROUND stopped being served, hide clocks stopped expiring and
+   rounds stopped ending, while every other phone kept rendering a perfectly
+   lively lobby that would never do anything. This project already has a standing
+   rule that a liveness signal must never be built on rAF; the room's own heartbeat
+   was built on it.
+   A timer keeps running when a tab is hidden (throttled to about 1Hz, which is
+   still a working clock), so the phases now advance no matter what the host's
+   screen is doing. clientTick stays on rAF, where drawing belongs. */
+function hostLoop(){
+  const t = Date.now();
+  const dt = Math.min(0.25, _hostLast ? (t - _hostLast)/1000 : 0.05);
+  _hostLast = t;
+  if(!started || !MAP) return;
+  try{ if(isHost()) hostTick(dt); }
+  catch(e){ if(_hostErrs++ < 4) console.error('hostTick', e); }
 }
 
 /* ---- host: authoritative game state ---- */
@@ -6147,7 +6709,40 @@ function hostTick(dt){
   const hiders = players.filter(p=> p.state.getState('role')==='hider');
   const alive = hiders.filter(p=> !p.state.getState('abducted'));
 
-  if(players.length < 2){ if(phase!=='waiting') setState('phase','waiting',true); return; }
+  /* ⛔⛔⛔ THIS EARLY RETURN WAS A LOADED GUN. It sends the room back to
+     'waiting' when everybody leaves but steps over 'startReq' on the way out, so
+     a press that never got served stayed TRUE in shared state indefinitely. The
+     next time a second person opened the link, hostTick's very next pass read
+     that stale latch and started a round nobody had asked for - which is the
+     exact bug the free-play rework was written to kill, reintroduced through the
+     back door. The request dies with the room. */
+  if(players.length < 2){
+    if(phase!=='waiting'){
+      setState('phase','waiting',true);
+      /* ⛔⛔⛔ AND THIS IS THE ONE THAT ANSWERS "i tried clicking seek but it
+         fucking sent her back to the waiting menu."
+         This branch forced the room back to 'waiting' and did NOT call
+         freePlayReset() - the only OTHER place that writes 'waiting' (the
+         intermission hand-back) always did. So the moment one of three phones
+         blipped for a second (screen dimmed, app switched, wifi hiccup ->
+         playroom onQuit -> players drops to 1) the survivors were dumped into
+         the lobby MID ROUND with every scrap of that round still live:
+           · role stayed 'seeker', so the last hunter kept flying a saucer
+             around a lobby - the exact state freePlayReset's own comment says
+             must never happen;
+           · abducted stayed true, so a caught player sat there Spectating;
+           · hideEnds stayed in the future, and #hidewait is an OPAQUE
+             full-screen overlay at z-index 64 while #lobby is z-14. A seeker
+             was therefore pinned behind a black panel for the REMAINDER of the
+             old two minute head start, with START ROUND sitting underneath it
+             untappable.
+         That is her whole report in one missing function call: sent back to the
+         waiting menu, and two more minutes before anything worked. */
+      freePlayReset();
+    }
+    if(getState('startReq')) setState('startReq', null, true);
+    return;
+  }
 
   /* ⛔⛔ 2026-08-02 — A ROUND USED TO START THE INSTANT A SECOND CONNECTION
      APPEARED, and that is what made the game untestable.
@@ -6162,8 +6757,37 @@ function hostTick(dt){
      Now a round is something you ASK FOR. Until somebody presses START, the room
      stays in 'waiting', which is the free-play state: no UFO, no clock, nobody
      can be caught, the paint studio and the practice range are both open. */
+  /* ⛔⛔ 2026-08-02 FAMILY PLAYTEST — "my wife started the round and after she
+     waited the two minutes, the timer hasnt started, it still says start round.
+     if she clicks hider, seeker, or start round, she has to wait two fucking
+     minutes again."
+     START ROUND wrote a silent boolean into shared state and that was the entire
+     interaction. If the host's tick did not serve it - host mid-stall, host
+     still seeing one player because presence had not settled, request landing
+     while the phase was not 'waiting' - then NOTHING on the presser's screen
+     changed. Same lobby, same button, no error, no clock. So you press it again.
+     And again. A request that can fail silently is not a control, it is a guess.
+     Now: the ask is a TOKEN the host consumes exactly once and nulls, and it
+     goes through a visible three second countdown that every client renders.
+     Whatever happens, the room says out loud what it is doing. */
   if(phase==='waiting'){
-    if(getState('startReq')){ setState('startReq', false, true); startRound(); }
+    const req = getState('startReq');
+    if(req && req.n !== _servedReq){
+      _servedReq = req.n;
+      setState('startReq', null, true);
+      setState('lastAsk', req.by || null, true);
+      setState('goEnds', now + GO_COUNT*1000, true);
+      setState('phase', 'starting', true);
+    }
+    return;
+  }
+  /* the three seconds between asking and playing. It is not ceremony: two phones
+     need a beat to agree on roles and spawns before anybody is judged on where
+     they are standing, and a round that begins on a count nobody can miss is the
+     difference between "we started" and "what just happened to me". */
+  if(phase==='starting'){
+    if(getState('startReq')) setState('startReq', null, true);   // no queue-jumping
+    if(now > (getState('goEnds')||0)) startRound();
     return;
   }
   if(phase==='intermission'){
@@ -6188,6 +6812,11 @@ function freePlayReset(){
     p.state.setState('abducted', false, true);
     p.state.setState('beam', false, true);
     p.state.setState('lock', 0, true);
+    /* ⛔ AND PUT THEM BACK IN THEIR BODY. onfoot outlives a round the same way
+       role did before freePlayReset existed - without this the last hunter walks
+       the lobby as a landed alien with a freeze ray and no saucer to return to. */
+    p.state.setState('onfoot', false, true);
+    p.state.setState('froz', 0, true);
   }
   setState('hideEnds', 0, true);
 }
@@ -6225,6 +6854,8 @@ function startRound(){
     p.state.setState('abducted', false, true);
     p.state.setState('lock', 0, true);
     p.state.setState('beam', false, true);
+    p.state.setState('onfoot', false, true);      // every round starts in the saucer
+    p.state.setState('froz', 0, true);
     const sp = seek ? (sSp[si++ % Math.max(1,sSp.length)]) : (hSp[hi++ % Math.max(1,hSp.length)]);
     const w = sp ? cellToWorld(sp.x, sp.y) : {x:0,z:0};
     p.state.setState('spawn', { x:w.x, z:w.z, alt: seek ? UFO_MIN_ALT+6 : 0 }, true);
@@ -6262,14 +6893,35 @@ function detectAbductions(dt){
   const seekers = players.filter(p=> p.state.getState('role')==='seeker' && p.state.getState('beam'));
   const hiders  = players.filter(p=> p.state.getState('role')==='hider' && !p.state.getState('abducted'));
   for(const h of hiders){
-    const hp = posOf(h); let by = null;
+    const hp = posOf(h); let by = null, byFoot = false;
     for(const s of seekers){
-      const sp = posOf(s); const dx=hp.x-sp.x, dz=hp.z-sp.z;
-      if(dx*dx+dz*dz <= BEAM_RADIUS*BEAM_RADIUS && hasLOS(sp, hp)){ by = s; break; }
+      const sp = posOf(s); const dx=hp.x-sp.x, dz=hp.z-sp.z, d2 = dx*dx+dz*dz;
+      /* ⭐ A LANDED HUNTER CATCHES YOU DIFFERENTLY. The saucer parks a 4.2m circle
+         over your head and needs nothing but to be above you. On the ground there
+         is no "above" - the freeze ray reaches 9m but only inside a 30 degree arc
+         they have to be AIMING at you, only on your own level, and only in clear
+         line of sight. Longer reach, far narrower answer. Which is the trade the
+         whole feature is: they gave up the sky to get under the roof you are
+         hiding beneath. */
+      if(s.state.getState('onfoot')){
+        if(d2 > FREEZE_R*FREEZE_R) continue;
+        if(Math.abs(hp.y - sp.y) > 3.2) continue;               // not up on the roof they are under
+        const yw = ((s.state.getState('xf')||{}).yaw) || 0;
+        const d = Math.sqrt(d2) || 1;
+        if((dx*Math.sin(yw) + dz*Math.cos(yw))/d < Math.cos(FREEZE_ARC)) continue;
+        /* eye height, not ankle height - a ray fired from y=0 clips the first
+           kerb between you and hits nothing it should have hit. */
+        if(!hasLOS({ x:sp.x, y:sp.y+1.3, z:sp.z }, hp)) continue;
+        by = s; byFoot = true; break;
+      }
+      if(d2 <= BEAM_RADIUS*BEAM_RADIUS && hasLOS(sp, hp)){ by = s; break; }
     }
     const id = h.state.id;
     locks[id] = clamp((locks[id]||0) + (by ? dt : -dt*1.6), 0, LOCK_TIME);
     h.state.setState('lock', locks[id]/LOCK_TIME, false);
+    // the grip. Published on the same cadence the lock already is, and it expires
+    // on its own clock so a hunter who looks away stops slowing you a beat later.
+    if(byFoot) h.state.setState('froz', Date.now() + FREEZE_HOLD*1000, false);
     if(locks[id] >= LOCK_TIME){
       h.state.setState('abducted', true, true);
       if(by) by.state.setState('score', (by.state.getState('score')||0)+ABDUCT_POINTS, true);
@@ -6344,7 +6996,10 @@ function clientTick(dt){
   wetTick(dt, _mvd > 0.02);                                      // P34 wet paint drips while you move
   scanTick(dt);                                                  // P34 echo scan resolution
   if(role==='seeker' && !abd){                                   // P31 beam battery
-    if(beamOn){ beamEnergy = Math.max(0, beamEnergy - dt/4);
+    // the freeze ray runs off the same cell and costs a little less per second —
+    // it has to be held on a moving target through a 30 degree arc, so a shorter
+    // fuse would make the ground hunt unplayable rather than merely hard
+    if(beamOn){ beamEnergy = Math.max(0, beamEnergy - (onFoot() ? FREEZE_DRAIN : 0.25)*dt);
       if(beamEnergy<=0){ setBeam(false); overheat = 3; SFX.lose(); } }
     else if(overheat>0){ overheat -= dt; if(overheat<=0) beamEnergy = Math.max(beamEnergy, 0.4); }
     else beamEnergy = Math.min(1, beamEnergy + dt/7);
@@ -6391,7 +7046,12 @@ function clientTick(dt){
   for(const p of players){
     const r = p.state.getState('role') || 'hider';
     const gone = !!p.state.getState('abducted');
-    p.hider.visible = r==='hider'; p.ufo.visible = r==='seeker';
+    /* ⭐ A LANDED HUNTER IS A BODY, NOT A SAUCER. Same rig every hider uses, so
+       it walks, jumps and animates for free - the saucer simply is not there
+       while they are out of it. */
+    const pFoot = r==='seeker' && !!p.state.getState('onfoot');
+    p.hider.visible = (r==='hider') || pFoot;
+    p.ufo.visible   = r==='seeker' && !pFoot;
 
     // P34: their wet paint dripping onto the world
     const dr = p.state.getState('drip');
@@ -6518,11 +7178,39 @@ function clientTick(dt){
       for(const m of p.accent){ m.opacity = opv; }
     }
 
+    /* ⭐ AND HE IS NOT INVISIBLE DOWN THERE. Camouflage is the hider's mechanic;
+       a hunter on the ground is always fully opaque and always animating, so
+       "there is an alien walking around under the shelter" is something you can
+       SEE coming rather than something that happens to you. Without this the
+       body inherits whatever opacity it was left with as a hider last round. */
+    if(pFoot){
+      if(p.mixer){
+        const ax = p.group.position.x, az = p.group.position.z;
+        const spd = Math.hypot(ax-(p.animX ?? ax), az-(p.animZ ?? az)) / Math.max(1e-4, dt);
+        p.animX = ax; p.animZ = az;
+        setCharAction(p, spd > 1.5 ? CLIP_MOVE : 'Idle');
+        p.mixer.update(dt);
+      }
+      for(const m of p.skin){ m.opacity = 1; }
+      for(const m of p.accent){ m.opacity = 1; }
+      p.opShown = 1;
+    }
+
     // beam visual + ground targeting ring (seekers)
-    const beaming = r==='seeker' && !!p.state.getState('beam') && !gone;
-    p.beamMesh.visible = beaming;
-    if(beaming){
+    const firing = r==='seeker' && !!p.state.getState('beam') && !gone;
+    p.beamMesh.visible = firing && !pFoot;
+    p.freezeMesh.visible = firing && pFoot;
+    if(pFoot){
+      /* the marker under a landed hunter: their reach while the ray is on, a
+         small footprint while it is off. Reuses the saucer's ring geometry
+         (radius BEAM_RADIUS) scaled to whichever it is showing. */
+      p.groundRing.visible = !gone;
+      p.groundRing.position.set(p.group.position.x, 0.06, p.group.position.z);
+      p.groundRing.scale.setScalar(firing ? FREEZE_R/BEAM_RADIUS : 0.42);
+      p.groundRing.material.opacity = firing ? (0.34 + 0.2*Math.sin(now*0.012)) : 0.22;
+    } else if(firing){
       p.groundRing.visible = true;
+      p.groundRing.scale.setScalar(1);
       p.groundRing.position.set(p.group.position.x, 0.06, p.group.position.z);
       p.groundRing.material.opacity = 0.3 + 0.22*Math.sin(now*0.008);
     } else p.groundRing.visible = false;
@@ -6565,16 +7253,25 @@ function moveLocal(dt, role){
   if(touch.on){ mv.addScaledVector(fwd, -touch.mvy); mv.addScaledVector(right, touch.mvx); }
   const moving = mv.lengthSq() > 0.0004; if(moving) mv.normalize();
 
-  if(role==='seeker'){
+  if(role==='seeker' && !onFoot()){
     localPos.addScaledVector(mv, UFO_SPEED*dt);
     if(keys['Space'] || gp.altUp || touch.altUp) localPos.y += UFO_SPEED*0.6*dt;
     if(keys['ShiftLeft'] || keys['ShiftRight'] || gp.altDown || touch.altDown) localPos.y -= UFO_SPEED*0.6*dt;
-    localPos.y = clamp(localPos.y, UFO_MIN_ALT, UFO_MAX_ALT);
+    localPos.y = clamp(localPos.y, _flightFloor(localPos.x, localPos.z), UFO_MAX_ALT);
   }else{
+    const foot = role==='seeker';                // a landed hunter walks the same ground you do
     const surf = terrainKeyAt(localPos.x, localPos.z);
     const fx = terrainFx(surf);
     curSurf = surf;                              // HUD reads this so the ground can be learned
-    localPos.x += mv.x*HIDER_SPEED*fx.s*dt; localPos.z += mv.z*HIDER_SPEED*fx.s*dt;
+    /* ⭐ THE FREEZE RAY SLOWS, IT DOES NOT STOP. Taking a player's controls away
+       is the cheapest way to make a chase feel unfair, and this game is being
+       played by an eight year old. At 0.28 you are caught unless you were already
+       moving toward cover - which is exactly the read the hider should be making
+       - and you can still steer, still turn a corner, still be saved by someone
+       taunting the alien away. */
+    const frz = !foot && (me.getState('froz')||0) > Date.now();
+    const base = foot ? FOOT_SPEED : HIDER_SPEED * (frz ? FREEZE_SLOW : 1);
+    localPos.x += mv.x*base*fx.s*dt; localPos.z += mv.z*base*fx.s*dt;
     resolveWalls();
     /* VERTICAL. Landing only counts while DESCENDING from above the top,
        otherwise walking into the side of a crate would teleport you on top of
@@ -6652,7 +7349,13 @@ function updateCamera(role, abd){
     camera.position.copy(localPos); camera.lookAt(localPos.x+_a.x, localPos.y+_a.y, localPos.z+_a.z); return;
   }
   if(role==='seeker'){
-    if(seekerView==='topdown'){
+    /* ⭐ ON THE GROUND YOU GET A PERSON'S CAMERA, and that IS the cost of
+       landing: no overhead, no 17m stand-off, you see exactly what somebody
+       standing in a car park sees. The whole reason a hider was safe under that
+       roof was the saucer's viewpoint, so taking the viewpoint away is what
+       makes the trade honest in both directions. */
+    if(onFoot()) orbit(localPos, seekerYaw, seekerPitch, 6.5, 1.4);
+    else if(seekerView==='topdown'){
       camera.position.set(localPos.x, localPos.y, localPos.z);
       camera.up.set(Math.sin(seekerYaw),0,Math.cos(seekerYaw));
       camera.lookAt(localPos.x, localPos.y-10, localPos.z);
@@ -6665,12 +7368,15 @@ function updateCamera(role, abd){
     stagePan();
   }else if(hiderView==='topdown' || paintOpen){
     // P30: snap to the abductors' sky over your own head — what you see is what they see
-    /* ⛔ the 👁 sky snap sits at UFO_MIN_ALT+10 = 19m, where a body is ~7% of the
+    /* ⛔ the 👁 sky snap sits at UFO_SKY_ALT+10 = 19m, where a body is ~7% of the
        screen: fine as a "am I a dot" check, useless as a PAINTING view, which is
-       what the studio's SKY tab is for. The studio drops to UFO_MIN_ALT — still
-       honest, because 9m is the lowest altitude a real seeker can fly at, so
-       this is a hunter's-eye view, just the closest legal one. */
-    camera.position.set(localPos.x, paintOpen ? UFO_MIN_ALT : UFO_MIN_ALT + 10, localPos.z);
+       what the studio's SKY tab is for. The studio drops to UFO_SKY_ALT — a
+       hunter's working altitude, so the view stays honest.
+       ⛔ THIS IS DELIBERATELY *NOT* UFO_MIN_ALT ANY MORE. That constant dropped to
+       4.5 on 8/02 so a saucer can duck under a canopy; pinning the studio to it
+       would have silently re-framed the whole paint studio - the one screen this
+       file has already lost two days to - as a side effect of an altitude tweak. */
+    camera.position.set(localPos.x, paintOpen ? UFO_SKY_ALT : UFO_SKY_ALT + 10, localPos.z);
     camera.up.set(Math.sin(yaw),0,Math.cos(yaw));
     camera.lookAt(localPos.x, 0, localPos.z);
     if(paintOpen) stagePan();          // SKY is a studio view too — keep it clear of the dock
@@ -6703,7 +7409,9 @@ function orbit(c, y, p, dist, eyeH){
 const $ = id => document.getElementById(id);
 function fmt(sec){ sec=Math.max(0,Math.ceil(sec)); return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0'); }
 
+let _hudRuns = 0;
 function updateHUD(role, abd){
+  _hudRuns++;
   // you can walk with the studio open, so the target has to track your feet
   if(paintOpen) updateTargetChip();
   /* seeker blindfold + the hider's own countdown */
@@ -6742,12 +7450,19 @@ function updateHUD(role, abd){
         /* ⭐ SAY HOW MANY ARE HERE. Two people in two different rooms each see a
            game that looks completely normal and never starts. The count is the
            one fact that makes that visible instantly. */
+        /* ⛔ THE LOBBY WAS OVER ITS OWN TEXT BUDGET BEFORE TODAY. test/hud3d.mjs
+           fails on HEAD at 667x375 - 11.7% of the sight line against a budget of
+           8% - and #lobWho is the worst element on the screen at nearly 5,000px.
+           That gate exists because of Stephen's "theres a ton of writing on the
+           screen completely blinding us from the game", so a red one is not a
+           technicality, it is the same complaint still standing.
+           The facts here are worth keeping - "only you are in this room" is the
+           single most useful line in the game when two phones are in two rooms -
+           but they are worth a phrase, not a paragraph. The explanation moved
+           into the QR panel and HOW TO PLAY, where reading is what you are doing. */
         $('lobWho').textContent = players.length < 2
-          ? 'Only you in this room. Send the link to play together. (build ' + BUILD + ')'
-          : (players.length + ' players · ' + (seek === 0
-              ? 'nobody picked SEEK, one will be chosen'
-              : seek + ' hunting, ' + hide + ' hiding')
-             + (host ? '' : ' · the host sets the time'));
+          ? 'Only you in this room · tap 📷 QR'
+          : (players.length + ' players · ' + (seek === 0 ? 'one will be chosen' : seek + ' hunting'));
       }
     }
     /* ⛔ AND HIDE THE SOLO PRACTICE TOGGLE. It is also labelled HUNT, so with the
@@ -6766,7 +7481,14 @@ function updateHUD(role, abd){
        handed the second you are blindfolded is a menu; a page you win by
        spotting somebody is the reward the plan asked for. The reader is one
        tap away and always was. */
-    if(on && !was){ calReset(); hw.classList.add('cal'); calDeal(); filesEnsure(); }
+    /* ⛔ AND LET THE PANEL PAINT FIRST. calDeal() was called from inside the
+       render frame that raises the blindfold, so the last thing on screen before
+       the long task was the GAME - the overlay and the task landed together and
+       the phone appeared to hang mid-round. Two frames of daylight means the
+       player sees "SCANNERS OFFLINE" and their countdown immediately, and the
+       board arrives into a panel that is already there. */
+    if(on && !was){ calReset(); hw.classList.add('cal');
+      setTimeout(()=>{ if(hw.classList.contains('on')){ calDeal(); filesEnsure(); } }, 32); }
     /* ⚠ updateHUD runs every frame. Assigning textContent invalidates layout for
        that node, so only write when the words actually change. */
     if(on){
@@ -6789,6 +7511,8 @@ function updateHUD(role, abd){
   /* claim the round's page exactly once, on the edge into intermission */
   if(phase === 'intermission' && _lastPhase !== 'intermission') filesRoundReward(getState('winner'));
   _lastPhase = phase;
+  // the ask is answered the moment the room moves, whatever it moved to
+  if(phase !== 'waiting') _askedAt = 0;
   const hiders = players.filter(p=> p.state.getState('role')==='hider');
   const alive  = hiders.filter(p=> !p.state.getState('abducted')).length;
   const seekers = players.filter(p=> p.state.getState('role')==='seeker').length;
@@ -6796,12 +7520,14 @@ function updateHUD(role, abd){
   // role chip
   const rEl = $('role');
   if(abd){ rEl.className='spec'; $('roleText').textContent='Spectating'; }
-  else if(role==='seeker'){ rEl.className='seeker'; $('roleText').textContent='Seeker · UFO'; }
+  else if(role==='seeker'){ rEl.className='seeker'; $('roleText').textContent= onFoot() ? 'Seeker · on foot' : 'Seeker · UFO'; }
   else { rEl.className='hider'; $('roleText').textContent='Hider'; }
   $('pcount').textContent = players.length;
   $('scount').textContent = seekers;
   $('hcount').textContent = alive;
-  $('viewmode').textContent = abd ? 'spectator' : (role==='seeker' ? (seekerView==='topdown'?'overhead':'3rd-person') : (hiderView==='topdown'||paintOpen?'sky check':'3rd-person'));
+  $('viewmode').textContent = abd ? 'spectator'
+    : (role==='seeker' ? (onFoot() ? 'on foot' : (seekerView==='topdown'?'overhead':'3rd-person'))
+                       : (hiderView==='topdown'||paintOpen?'sky check':'3rd-person'));
 
   $('ctrlHider').classList.toggle('hidden', abd || role==='seeker');
   $('ctrlSeeker').classList.toggle('hidden', abd || role!=='seeker');
@@ -6811,29 +7537,94 @@ function updateHUD(role, abd){
   $('mapsToggle').classList.toggle('hidden', !canPick);
   $('levelBar').classList.toggle('hidden', !(canPick && mapsOpen));
   $('reticle').style.display = (!abd && role==='seeker' && seekerView==='topdown') ? 'block' : 'none';
+  /* ⛔⛔⛔ #tStart AND #tPractice WERE LOCKED INSIDE `if(touch.on)`.
+     touch.on is set only when the pointer is coarse, so on ANY laptop, desktop
+     or tablet with a mouse these two buttons never lost their .hidden class -
+     START ROUND was literally unreachable off a phone and the room could not be
+     started at all. They are not touch controls; they are lobby controls that
+     happened to be written next to some. Only the thumb-stick furniture belongs
+     in that block. */
+  $('tPractice').classList.toggle('hidden', players.length > 1 || !started);
+  /* a real round needs a real second player, and someone to ask for it. Only
+     while WAITING - during the countdown, the round and the intermission there
+     is nothing to start, and a live button there is what let a second press land
+     on top of a round that had already begun. */
+  $('tStart').classList.toggle('hidden', !(started && players.length > 1 && phase === 'waiting'));
+  (function(){
+    const b = $('tStart'); if(!b || b.classList.contains('hidden')) return;
+    const asked = _askedAt && (performance.now() - _askedAt);
+    let txt = 'START ROUND';
+    if(asked && asked < 4000) txt = 'STARTING…';
+    // short on purpose: #lobby #tStart is width:100%, so a long label widens the
+    // whole lobby column and pushes it into the sight line hud3d measures
+    else if(asked && asked < 9000) txt = 'TAP AGAIN';
+    else if(asked) _askedAt = 0;
+    if(b.textContent !== txt) b.textContent = txt;
+    b.classList.toggle('waiting', !!(asked && asked < 4000));
+  })();
   if(touch.on){
     $('tPaint').classList.toggle('hidden', abd || role==='seeker');
     $('tPose').classList.toggle('hidden', abd || role==='seeker');
     $('tTaunt').classList.toggle('hidden', abd || role==='seeker');
     $('tDecoy').classList.toggle('hidden', abd || role==='seeker');
-    $('tJump').classList.toggle('hidden', abd || role==='seeker' || !touch.on || practiceOn);
-    $('tPractice').classList.toggle('hidden', players.length > 1 || !started);
-    /* a real round needs a real second player, and now it needs someone to say so */
-    $('tStart').classList.toggle('hidden', !(started && players.length > 1 && phase !== 'playing'));
+    /* ⭐ ON FOOT the hunter is a body: it jumps like one, it has no altitude, and
+       BEAM becomes the FREEZE RAY. ONE button, relabelled - a second button that
+       does the same job in a different stance is how you end up with two controls
+       called HUNT again. */
+    const foot = role==='seeker' && onFoot();
+    $('tJump').classList.toggle('hidden', abd || (role==='seeker' && !foot) || practiceOn);
     $('tBeam').classList.toggle('hidden', abd || role!=='seeker');
     $('tScan').classList.toggle('hidden', abd || role!=='seeker');
-    $('altUI').classList.toggle('hidden', abd || role!=='seeker');
+    $('altUI').classList.toggle('hidden', abd || role!=='seeker' || foot);
+    $('tLand').classList.toggle('hidden', abd || role!=='seeker');
+    /* ⛔ "im not sure how the scan button works." Nothing on screen ever said.
+       It was a button labelled SCAN that made a noise, cost a third of your
+       battery, and then eight seconds later something might light up somewhere.
+       The button now counts its own fuse down, and dims when you cannot afford
+       one - so the delay reads as a mechanic instead of a bug. */
+    const sb = $('tScan');
+    const sTxt = myScan ? String(Math.max(0, Math.ceil((myScan.fireAt - performance.now())/1000))) : 'SCAN';
+    if(sb.textContent !== sTxt) sb.textContent = sTxt;
+    sb.style.opacity = (myScan || beamEnergy < SCAN_COST + 0.05) ? '.5' : '1';
+    const bb = $('tBeam'), bTxt = foot ? 'FREEZE' : 'BEAM';
+    if(bb.textContent !== bTxt) bb.textContent = bTxt;
+    const lb = $('tLand');
+    const lTxt = foot ? 'TAKE OFF' : (localPos.y > LAND_ALT ? 'TOO HIGH' : 'LAND');
+    if(lb.textContent !== lTxt) lb.textContent = lTxt;
+    lb.style.opacity = (!foot && localPos.y > LAND_ALT) ? '.45' : '1';
   }
 
   // timer
-  const tEl = $('timer');
-  const hl=hideLeft();
-  if(phase==='playing' && hl>0){
+  /* ⛔⛔ 2026-08-02 — "i noticed that the clock hadnt started on her for seeking."
+     It never had. The `phase==='playing' && hl>0` branch showed a BANNER and
+     never touched #timer, and #timer was left hidden by the previous phase - so
+     for the whole two minute head start, which is the longest stretch of the
+     round, NOBODY had a clock. A hider at least got a number inside the banner
+     text; a seeker got an opaque blindfold and had to trust it.
+     The clock is now up in every phase that has one, it says WHICH clock it is,
+     and it is the same element for everybody. A shared timer is what makes two
+     people believe they are in the same game. */
+  const tEl = $('timer'), tTx = $('timerText'), tLb = tEl.querySelector('small');
+  const hl = hideLeft();
+  const setClock = (txt, lab, low)=>{
+    tEl.classList.remove('hidden');
+    if(tTx.textContent !== txt) tTx.textContent = txt;
+    if(tLb && tLb.textContent !== lab) tLb.textContent = lab;
+    tEl.classList.toggle('low', !!low);
+  };
+  if(phase==='starting'){
+    const g = Math.max(0, ((getState('goEnds')||0)-Date.now())/1000);
+    setClock(String(Math.ceil(g)), 'get ready', true);
+  }
+  else if(phase==='playing' && hl>0){
+    setClock(fmt(hl), role==='seeker' ? 'blind for' : 'hide', hl<=10);
     if(role==='hider') showBanner('','Hide! '+Math.ceil(hl),'The seekers are blind until this hits zero. Match the ground and hold still.');
     else showBanner('','Scanners offline','The chameleons are choosing their spots.');
   }
   else if(phase==='playing'){ const left=((getState('roundEnds')||0)-Date.now())/1000;
-    tEl.classList.remove('hidden'); $('timerText').textContent=fmt(left); tEl.classList.toggle('low', left<=20); }
+    setClock(fmt(left), 'round', left<=20); }
+  else if(phase==='intermission'){
+    setClock(fmt(((getState('interEnds')||0)-Date.now())/1000), 'next round', false); }
   else tEl.classList.add('hidden');
 
   // meter (hider camo / seeker lock)
@@ -6842,7 +7633,14 @@ function updateHUD(role, abd){
     mEl.classList.remove('hidden');
     const myLock = me.getState('lock')||0;
     const liveLock = Math.max(myLock, bot ? botLock/LOCK_TIME : 0);
-    if(liveLock>0.02){ $('meterLabel').textContent='⚠ BEING ABDUCTED — RUN'; fill.style.width=(liveLock*100)+'%'; fill.style.background='var(--danger)';
+    /* ⭐ SAY WHY YOU ARE SLOW. Nothing is worse than controls that stop working
+       with no explanation - the freeze ray has to announce itself or it reads as
+       the game breaking, which is precisely what this family already sat
+       through once tonight. */
+    const iced = (me.getState('froz')||0) > Date.now();
+    if(liveLock>0.02){ $('meterLabel').textContent = iced ? '❄ IN THE RAY — KEEP MOVING, BREAK THEIR LINE'
+                                                          : '⚠ BEING ABDUCTED — RUN';
+      fill.style.width=(liveLock*100)+'%'; fill.style.background='var(--danger)';
       /* ⛔ this read myLock, which is the MULTIPLAYER lock published by a human
          seeker. In a solo room nobody writes it, so the one safety valve that
          was supposed to spit you out of the studio when a beam started could
@@ -6850,7 +7648,19 @@ function updateHUD(role, abd){
          for. liveLock is the max of both, and is what the bar above already
          renders. */
       if(paintOpen && liveLock>0.15) setPaintOpen(false); }
-    else{ const mp=Math.round(myMatch*100), hp=Math.round(camoLevel*100);
+    /* ⭐ THE SWEEP, ON YOUR SCREEN, WITH ITS OWN CLOCK. Second only to being
+       beamed, because it is the one thing that can find you while you are doing
+       everything right - and the answer to it is a decision, not a reflex. */
+    else if(scanWarnLeft() > 0){
+      const sl = scanWarnLeft();
+      $('meterLabel').textContent = '📡 SCANNER SWEEP — HOLD STILL  ' + Math.ceil(sl);
+      fill.style.width = (100 * sl/SCAN_DELAY) + '%';
+      fill.style.background = 'var(--amber)';
+      if(!_scanWarned){ _scanWarned = true; tone(880, 0.14, 'square', 0.2);
+        try{ navigator.vibrate && navigator.vibrate(35); }catch(_){} }
+    }
+    else{ if(_scanWarned) _scanWarned = false;
+      const mp=Math.round(myMatch*100), hp=Math.round(camoLevel*100);
       const wet = performance.now()<wetUntil ? '  ·  💧 wet paint' : '';
       const earning = (earnRate>0 ? ('  ·  ⭐ EARNING'+(performance.now()<tauntUntil?' ×3':'')) : '') + wet;
       /* a bar with a number on it, not a sentence across the play area */
@@ -6886,7 +7696,9 @@ function updateHUD(role, abd){
     const maxLock = hiders.reduce((m,h)=> Math.max(m, h.state.getState('lock')||0), 0);
     if(overheat>0){ $('meterLabel').textContent='⚠ OVERHEATED — beam wasted'; fill.style.width=((overheat/3)*100)+'%'; fill.style.background='var(--danger)'; }
     else if(beamOn && maxLock>0.02){ $('meterLabel').textContent='locking…'; fill.style.width=(maxLock*100)+'%'; fill.style.background='var(--cyan)'; }
-    else { $('meterLabel').textContent = (beamOn?'beaming · ':'')+'beam energy '+Math.round(beamEnergy*100)+'%';
+    else { const foot = onFoot();
+      $('meterLabel').textContent = (beamOn ? (foot?'freezing · ':'beaming · ') : '')
+        + (foot ? 'freeze cell ' : 'beam energy ') + Math.round(beamEnergy*100)+'%';
       fill.style.width=(beamEnergy*100)+'%'; fill.style.background = beamEnergy<0.3 ? 'var(--danger)' : 'var(--cyan)'; }
   }else mEl.classList.add('hidden');
 
@@ -6900,7 +7712,21 @@ function updateHUD(role, abd){
 
   // banner
   const bEl=$('banner');
-  if(phase==='waiting'){
+  /* ⭐ THE COUNTDOWN IS THE WHOLE POINT OF THE 'starting' PHASE. Everyone sees
+     the same three numbers at the same time, so a round beginning is an event
+     that happened TO THE ROOM rather than something that mysteriously happened
+     to you. It also names who asked, because "why am I suddenly in a UFO" was a
+     real question in this house. */
+  if(phase==='starting'){
+    const g = Math.max(0, ((getState('goEnds')||0)-Date.now())/1000);
+    const asker = (function(){ const r=getState('lastAsk');
+      if(!r) return ''; const p=players.find(x=>x.state.id===r);
+      const n=p && p.state.getProfile && p.state.getProfile().name;
+      return n ? (p.state===me ? 'You started it.' : n+' started it.') : ''; })();
+    showBanner('','Round starts in '+Math.ceil(g),
+      (asker?asker+' ':'') + 'Sides are being dealt. Hiders get the head start; the saucer stays blind.');
+  }
+  else if(phase==='waiting'){
     if(practiceOn){
       const left = practiceBodies.length - practiceFound;
       showBanner('', 'Practice · HUNT',
