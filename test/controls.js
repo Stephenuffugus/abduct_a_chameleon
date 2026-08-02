@@ -18,7 +18,7 @@ function stubCtx(){ const noop=()=>{};
     if(p==='setTransform'||p==='getTransform') return ()=>({a:1,b:0,c:0,d:1,e:0,f:0});
     return typeof p==='string'?noop:undefined; }, set(){return true;} }); }
 function beforeParse(window){
-  const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true, perf:PERF})};
+  const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true, helpAutoShown:true, perf:PERF})};
   Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:k=>k in _ls?_ls[k]:null,setItem:(k,v)=>{_ls[k]=String(v);},removeItem:k=>{delete _ls[k];},clear:()=>{for(const k in _ls)delete _ls[k];},key:i=>Object.keys(_ls)[i]||null,get length(){return Object.keys(_ls).length;}}});
   window.HTMLCanvasElement.prototype.getContext=function(){return stubCtx();};
   window.HTMLCanvasElement.prototype.toDataURL=function(){return 'data:image/png;base64,';};

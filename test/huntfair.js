@@ -10,7 +10,7 @@
 const fs=require('fs'),path=require('path'),{JSDOM}=require('jsdom');
 const htmlPath='/workspaces/abduct_a_chameleon/index.html';const html=fs.readFileSync(htmlPath,'utf8');
 const errors=[];const rafQueue=[];let VT=1000;
-function bp(window){ try{const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true})}; Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:k=>k in _ls?_ls[k]:null,setItem:(k,v)=>{_ls[k]=String(v);},removeItem:k=>{delete _ls[k];},clear:()=>{},key:()=>null,length:1}});}catch(_){}
+function bp(window){ try{const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true,helpAutoShown:true})}; Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:k=>k in _ls?_ls[k]:null,setItem:(k,v)=>{_ls[k]=String(v);},removeItem:k=>{delete _ls[k];},clear:()=>{},key:()=>null,length:1}});}catch(_){}
  window.HTMLCanvasElement.prototype.getContext=()=>new Proxy({},{get(t,p){if(p==='canvas')return{width:960,height:600};if(p==='measureText')return()=>({width:10});if(p==='getImageData')return(x,y,w,h)=>({data:new Uint8ClampedArray(Math.max(1,(w|0)*(h|0)*4))});if(p==='createLinearGradient'||p==='createRadialGradient')return()=>({addColorStop(){}});return typeof p==='string'?()=>{}:undefined;},set(){return true;}});
  window.OffscreenCanvas=class{constructor(w,h){this.width=w;this.height=h;}getContext(){return window.HTMLCanvasElement.prototype.getContext();}};
  window.requestAnimationFrame=cb=>{rafQueue.push(cb);return 1;};window.cancelAnimationFrame=()=>{};

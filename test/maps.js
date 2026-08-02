@@ -7,7 +7,7 @@ const html=fs.readFileSync(htmlPath,'utf8');
 const errors=[]; const rafQueue=[]; let rafId=1; let VT=1000;
 function stubCtx(){const noop=()=>{};return new Proxy({},{get(_t,p){if(p==='canvas')return{width:1280,height:720};if(p==='measureText')return()=>({width:10});if(p==='getImageData')return(x,y,w,h)=>({data:new Uint8ClampedArray(Math.max(1,(w|0)*(h|0)*4))});if(p==='createLinearGradient'||p==='createRadialGradient'||p==='createPattern')return()=>({addColorStop:noop});if(p==='createImageData')return(w,h)=>({data:new Uint8ClampedArray(Math.max(1,(w|0)*(h|0)*4)),width:w|0,height:h|0});return typeof p==='string'?noop:undefined;},set(){return true;}});}
 function bp(window){
-  const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true, perf:'smooth'}),
+  const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true, helpAutoShown:true, perf:'smooth'}),
              'aac.progress.v1':JSON.stringify({unlocks:['default','stand','wave','crouch'],equipped:{skin:'default'},stats:{plays:0,catches:0,bestSurvive:0,hardWin:0,heatBest:0},blendbook:{},biomeMedals:{},xp:1000000,challenges:{}})};   // xp maxed → every map unlocked
   try{ Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:k=>k in _ls?_ls[k]:null,setItem:(k,v)=>{_ls[k]=String(v);},removeItem:k=>{delete _ls[k];},clear:()=>{for(const k in _ls)delete _ls[k];},key:i=>Object.keys(_ls)[i]||null,get length(){return Object.keys(_ls).length;}}}); }catch(_){}
   window.HTMLCanvasElement.prototype.getContext=()=>stubCtx();window.OffscreenCanvas=class{constructor(w,h){this.width=w;this.height=h;}getContext(){return stubCtx();}};window.requestAnimationFrame=cb=>{rafQueue.push(cb);return rafId++;};window.cancelAnimationFrame=()=>{};

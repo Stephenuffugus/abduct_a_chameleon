@@ -6,7 +6,7 @@ const html=fs.readFileSync(htmlPath,'utf8');
 const errors=[]; const rafQueue=[]; let rafId=1; let VT=1000;
 function stubCtx(){const noop=()=>{};return new Proxy({},{get(_t,p){if(p==='canvas')return{width:1280,height:720};if(p==='measureText')return()=>({width:10});if(p==='getImageData')return(x,y,w,h)=>({data:new Uint8ClampedArray(Math.max(1,(w|0)*(h|0)*4))});if(p==='createLinearGradient'||p==='createRadialGradient')return()=>({addColorStop:noop});return typeof p==='string'?noop:undefined;},set(){return true;}});}
 // trail pre-equipped so the P16 emission path runs during the round (any crash fails the suite)
-const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true, tourDone:true}),
+const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true, helpAutoShown:true, tourDone:true}),
            'aac.progress.v1':JSON.stringify({unlocks:['default','stand','wave','crouch','trail_bubbles'],
              equipped:{skin:'default',trail:'trail_bubbles'},stats:{plays:0,catches:0,bestSurvive:0,hardWin:0,heatBest:0},
              blendbook:{},biomeMedals:{},xp:0,challenges:{}})};

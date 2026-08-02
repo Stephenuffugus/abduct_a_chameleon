@@ -16,7 +16,7 @@ const html = fs.readFileSync(htmlPath, 'utf8');
 const errors = []; const rafQueue = []; let rafId = 1; let VT = 1000;
 
 function beforeParse(window) {
-  try{ const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true})}; Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:k=>k in _ls?_ls[k]:null,setItem:(k,v)=>{_ls[k]=String(v);},removeItem:k=>{delete _ls[k];},clear:()=>{for(const k in _ls)delete _ls[k];},key:i=>Object.keys(_ls)[i]||null,get length(){return Object.keys(_ls).length;}}}); }catch(_){}
+  try{ const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true,helpAutoShown:true})}; Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:k=>k in _ls?_ls[k]:null,setItem:(k,v)=>{_ls[k]=String(v);},removeItem:k=>{delete _ls[k];},clear:()=>{for(const k in _ls)delete _ls[k];},key:i=>Object.keys(_ls)[i]||null,get length(){return Object.keys(_ls).length;}}}); }catch(_){}
 
   window.__napi = napi;
   // main canvas: prototype getContext backed by one full-size napi canvas

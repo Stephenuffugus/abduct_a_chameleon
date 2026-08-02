@@ -20,7 +20,7 @@ function stubCtx(){ const noop=()=>{};
     return typeof p==='string'?noop:undefined; }, set(){return true;} }); }
 
 function beforeParse(window){
-  const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true})}; savedLS=_ls;
+  const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true,helpAutoShown:true})}; savedLS=_ls;
   Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:k=>k in _ls?_ls[k]:null,setItem:(k,v)=>{_ls[k]=String(v);},removeItem:k=>{delete _ls[k];},clear:()=>{for(const k in _ls)delete _ls[k];},key:i=>Object.keys(_ls)[i]||null,get length(){return Object.keys(_ls).length;}}});
   const doc=window.document;
   window.HTMLCanvasElement.prototype.getContext=function(){return stubCtx();};
