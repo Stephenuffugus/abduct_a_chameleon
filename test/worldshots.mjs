@@ -35,7 +35,14 @@ await p.goto(base,{waitUntil:'domcontentloaded',timeout:90000});
    insertCoin() resolves, so MAP stays null forever and you shoot a black screen
    and call it the world. Every other gate in this directory walks the frames for
    it; skipping that cost me two runs. Documented in reference_headless_webgl_3d. */
+/* ⛔ THE VENDOR LOBBY IS SKIPPED NOW (insertCoin({skipLobby:true})), so there is no
+   "Launch" button to find and this hunt used to burn its full 40 x 500ms fallback in
+   EVERY 3D gate - about twenty seconds each, several minutes across the suite, looking
+   for a button that no longer exists. Bail the moment our own rules card is up. */
+const _pastVendor = async () => { try { return await p.evaluate(()=>{ const h=document.getElementById('howto');
+  return !!(h && getComputedStyle(h).display!=='none') || !!window.__aac3dRound; }); } catch { return false; } };
 for(let i=0,done=false;i<40&&!done;i++){
+  if(await _pastVendor()) break;
   for(const f of p.frames()){
     try{ if(await f.evaluate(()=>{ const x=[...document.querySelectorAll('button,div')]
           .find(e=>/^\s*launch\s*$/i.test(e.textContent||'')); if(x){ x.click(); return true; } return false; })){ done=true; break; } }catch{}

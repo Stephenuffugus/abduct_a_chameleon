@@ -24,7 +24,14 @@ const browser = await puppeteer.launch({ headless:'new', args:['--no-sandbox','-
 const page = await browser.newPage();
 await page.setViewport({ width:932, height:430, isMobile:true, hasTouch:true, deviceScaleFactor:1 });
 await page.goto(url, { waitUntil:'domcontentloaded', timeout:60000 });
-for (let i=0, done=false; i<40 && !done; i++) { for (const f of page.frames()) {
+/* ⛔ THE VENDOR LOBBY IS SKIPPED NOW (insertCoin({skipLobby:true})), so there is no
+   "Launch" button to find and this hunt used to burn its full 40 x 500ms fallback in
+   EVERY 3D gate - about twenty seconds each, several minutes across the suite, looking
+   for a button that no longer exists. Bail the moment our own rules card is up. */
+const _pastVendor = async () => { try { return await page.evaluate(()=>{ const h=document.getElementById('howto');
+  return !!(h && getComputedStyle(h).display!=='none') || !!window.__aac3dRound; }); } catch { return false; } };
+for (let i=0, done=false; i<40 && !done; i++) {
+  if(await _pastVendor()) break; for (const f of page.frames()) {
   try { if (await f.evaluate(() => { const b=[...document.querySelectorAll('button,div')]
     .find(x=>/^\s*launch\s*$/i.test(x.textContent||'')); if(b){b.click();return true;} return false; })) { done=true; break; } } catch {} }
   if (!done) await new Promise(r=>setTimeout(r,500)); }

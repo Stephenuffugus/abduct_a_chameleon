@@ -130,7 +130,14 @@ for (const [w, h] of VIEWPORTS) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
   /* Playroom's dev lobby renders late and in its own frame */
-  for (let i = 0, done = false; i < 40 && !done; i++) {
+  /* ⛔ THE VENDOR LOBBY IS SKIPPED NOW (insertCoin({skipLobby:true})), so there is no
+   "Launch" button to find and this hunt used to burn its full 40 x 500ms fallback in
+   EVERY 3D gate - about twenty seconds each, several minutes across the suite, looking
+   for a button that no longer exists. Bail the moment our own rules card is up. */
+const _pastVendor = async () => { try { return await page.evaluate(()=>{ const h=document.getElementById('howto');
+  return !!(h && getComputedStyle(h).display!=='none') || !!window.__aac3dRound; }); } catch { return false; } };
+for (let i = 0, done = false; i < 40 && !done; i++) {
+  if(await _pastVendor()) break;
     for (const f of page.frames()) {
       try { if (await f.evaluate(() => { const b = [...document.querySelectorAll('button,div')]
         .find(x => /^\s*launch\s*$/i.test(x.textContent || '')); if (b) { b.click(); return true; } return false; })) { done = true; break; } }

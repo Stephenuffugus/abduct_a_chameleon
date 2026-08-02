@@ -46,7 +46,14 @@ async function boot(url){
   await p.setViewport({width:812,height:375,isMobile:true,hasTouch:true,deviceScaleFactor:1});
   const errs=[]; p.on('pageerror',e=>errs.push(e.message));
   await p.goto(url,{waitUntil:'domcontentloaded',timeout:90000});
-  for(let i=0,d=false;i<40&&!d;i++){for(const f of p.frames()){try{if(await f.evaluate(()=>{const x=[...document.querySelectorAll('button,div')].find(e=>/^\s*launch\s*$/i.test(e.textContent||''));if(x){x.click();return true;}return false;})){d=true;break;}}catch{}} if(!d)await new Promise(r=>setTimeout(r,500));}
+  /* ⛔ THE VENDOR LOBBY IS SKIPPED NOW (insertCoin({skipLobby:true})), so there is no
+   "Launch" button to find and this hunt used to burn its full 40 x 500ms fallback in
+   EVERY 3D gate - about twenty seconds each, several minutes across the suite, looking
+   for a button that no longer exists. Bail the moment our own rules card is up. */
+const _pastVendor = async () => { try { return await p.evaluate(()=>{ const h=document.getElementById('howto');
+  return !!(h && getComputedStyle(h).display!=='none') || !!window.__aac3dRound; }); } catch { return false; } };
+for(let i=0,d=false;i<40&&!d;i++){
+  if(await _pastVendor()) break;for(const f of p.frames()){try{if(await f.evaluate(()=>{const x=[...document.querySelectorAll('button,div')].find(e=>/^\s*launch\s*$/i.test(e.textContent||''));if(x){x.click();return true;}return false;})){d=true;break;}}catch{}} if(!d)await new Promise(r=>setTimeout(r,500));}
   await new Promise(r=>setTimeout(r,3000));
   for(const id of ['howtoGo','tapStart']){try{await p.evaluate(i=>{const e=document.getElementById(i);if(e&&getComputedStyle(e).display!=='none')e.click();},id);}catch{}}
   await new Promise(r=>setTimeout(r,5000));
