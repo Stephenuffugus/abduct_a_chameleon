@@ -3407,6 +3407,27 @@ function buildWorld(map){
    works out the whole delete list in memory first and rebuilds once, because a wall you
    can walk through is a worse bug than the one being fixed. Removing a prop can only
    ever open a map, so it terminates. */
+/* ⛔ A NEGATIVE RESULT, KEPT SO NOBODY SPENDS THE AFTERNOON AGAIN.
+   The obvious next optimisation is to instance the repeated props - cactus_short x129,
+   bottle_A_green x65, Mesh_rock_tallB split across three sub-meshes at x44 each. I built
+   it and measured three versions on the same five maps at 844x390:
+
+       no prop instancing (deco only)   741 draw calls    82.4k triangles
+       one batch per geometry+material  710 draw calls    99.8k triangles
+       batched per 18m region as well   752 draw calls    83.3k triangles
+
+   It does not pay, and the reason is worth writing down: those 1841 meshes were already
+   being frustum-culled down to ~741 VISIBLE ones. A global InstancedMesh has a single
+   bounding sphere covering the whole map, so it can never be culled - 31 fewer calls for
+   17,000 more triangles per frame, which is a bad trade on a phone where fill rate costs
+   more than a draw call. Bucketing by region restores the culling and then the batches
+   are too small to save any calls at all, coming out WORSE than not doing it.
+
+   So the count is dominated by what is VISIBLE, not by what exists, and "hundreds of
+   props are placed one at a time" - true, and what the audit flagged - is not where the
+   win is. Getting under 300 means drawing less: fewer distinct props in frame, LOD on the
+   far ones, or merging static geometry per region so one call covers a whole block AND
+   still culls. test/draws3d.mjs holds the line at 300 meanwhile. */
 let _repairing = false;
 function repairReachability(map){
   if(_repairing) return;                       // the rebuild below re-enters buildWorld
