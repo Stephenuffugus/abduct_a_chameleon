@@ -1367,6 +1367,7 @@ const PLAYER_RADIUS = 0.6;
 const GRAVITY = 22;
 const JUMP_V = 11.0;
 const STAND_MAX_TOP = 2.0;
+const STEP_UP = 0.62;      // a ledge this low is walked onto, not jumped onto
 const BODY_TOP = 1.4;      // anything whose underside is above this, you walk beneath
 const ABDUCT_POINTS = 100, SURVIVE_POINTS = 60, RESCUE_POINTS = 80;
 /* ⭐⭐ 2026-08-02 — BEING CAUGHT IS NOT THE END ANY MORE.
@@ -2472,6 +2473,43 @@ function makeRandomMap(seed){
     let cutN = 0;
     for(const s of sides){ if(cutN >= wantDoors) break; if(carve(s)) cutN++; }
 
+    /* ⭐ ONE STAIRCASE PER BLOCK, AGAINST AN OUTER WALL, FACING THE ALLEY.
+       Without it every roof in the game is scenery again - three metres up with
+       a 2.75m jump apex is unreachable, so "roofs you can stand on" would have
+       been a lie told by the collision system. Placed OUTSIDE the block in the
+       alley the 3-cell gap already guarantees, and reserved so the cover pass
+       cannot drop a boulder on the bottom step. */
+    (function(){
+      /* ⛔ `dir` is WHICH WAY THE STEPS CLIMB, which is always TOWARD the block -
+         so a staircase standing north of a block ascends SOUTH. Labelling them by
+         the side they stand on instead put the landing on the wrong side of the
+         stair and the wall check one cell into open ground, and no map got a
+         staircase at all. */
+      const sides = [
+        { dir:'s', cx:x0 + 1 + Math.floor(rnd()*Math.max(1,bw-2)), cy:y0-1 },
+        { dir:'n', cx:x0 + 1 + Math.floor(rnd()*Math.max(1,bw-2)), cy:y0+bh+1 },
+        { dir:'e', cx:x0-1, cy:y0 + 1 + Math.floor(rnd()*Math.max(1,bh-2)) },
+        { dir:'w', cx:x0+bw+1, cy:y0 + 1 + Math.floor(rnd()*Math.max(1,bh-2)) },
+      ];
+      for(let k=sides.length-1;k>0;k--){ const m=Math.floor(rnd()*(k+1)); const t=sides[k]; sides[k]=sides[m]; sides[m]=t; }
+      for(const sd of sides){
+        if(!inb(sd.cx, sd.cy)) continue;
+        const kk = ckey(sd.cx, sd.cy);
+        if(seen.has(kk) || wallSet.has(kk) || doorSet.has(kk)) continue;
+        const t2 = t[sd.cy] && t[sd.cy][sd.cx];
+        if(!t2 || t2 === 'void' || t2 === th.water) continue;
+        /* the landing lands on the WALL HEAD, so there has to be a wall to land
+           on - not a doorway, and not a gap the generator happened to leave */
+        const inx = sd.cx + (sd.dir==='e' ? 1 : sd.dir==='w' ? -1 : 0);
+        const iny = sd.cy + (sd.dir==='s' ? 1 : sd.dir==='n' ? -1 : 0);
+        const ink = ckey(inx, iny);
+        if(!wallSet.has(ink) || doorSet.has(ink)) continue;
+        objs.push({ x:sd.cx, y:sd.cy, type:'stair_' + sd.dir });
+        seen.add(kk);
+        break;
+      }
+    })();
+
     /* furnish room by room. Clutter FIRST - put() refuses an occupied cell, so
        roofing before furnishing leaves a bare interior, and things to stand among
        are exactly what makes a room worth hiding in. */
@@ -2520,10 +2558,23 @@ function makeRandomMap(seed){
     const vertRun = wallSet.has(ckey(dx,dy-1)) || wallSet.has(ckey(dx,dy+1));
     objs.push({ x:dx, y:dy, type: vertRun ? 'doorway_ns' : 'doorway_ew',
                 u: wallOwner.get(k2) });
+    /* ⛔⛔ RESERVE THE APPROACH, NOT JUST THE THRESHOLD. One cell each side was not
+       enough: ground3d found a 244-cell room sealed because the doorway itself was
+       clear and a stand of ice spikes stood TWO cells beyond it, plugging the only
+       corridor out. A door you can stand in and not walk through is not a door.
+       Two cells along the passage axis, on both sides. Walls are skipped - they
+       belong there - so this only ever clears the run a body has to travel. */
     seen.add(ckey(dx,dy));
-    for(const off of [[1,0],[-1,0],[0,1],[0,-1]]){
-      const nx2 = dx+off[0], ny2 = dy+off[1], nk = ckey(nx2,ny2);
-      if(wallSet.has(nk) && !doorSet.has(nk)) continue;   // a wall belongs there
+    const ax = vertRun ? [[1,0],[-1,0]] : [[0,1],[0,-1]];
+    for(const off of ax) for(let step=1; step<=2; step++){
+      const nk = ckey(dx+off[0]*step, dy+off[1]*step);
+      if(wallSet.has(nk) && !doorSet.has(nk)) break;      // the run ends at a wall
+      seen.add(nk);
+    }
+    // and the two cells flanking the threshold, so nothing crowds the frame
+    for(const off of (vertRun ? [[0,1],[0,-1]] : [[1,0],[-1,0]])){
+      const nk = ckey(dx+off[0], dy+off[1]);
+      if(wallSet.has(nk) && !doorSet.has(nk)) continue;
       seen.add(nk);
     }
   }
@@ -2617,6 +2668,74 @@ function makeRandomMap(seed){
      "they are in these six rooms somewhere, go and walk them." */
   const zones = placedRects.map((r,i)=> ({ id:i, x0:r.x0, y0:r.y0, x1:r.x1, y1:r.y1,
                                            name:'BLOCK ' + (i+1) }));
+  /* ⛔⛔⛔ AND THEN PROVE IT IS ONE PLACE, RATHER THAN HOPING.
+     Every fix before this was whack-a-mole: reserve the doorway, then reserve the
+     approach, then reserve two cells of the approach - and ground3d kept finding
+     one more room sealed by one more prop on one more seed. The generator has too
+     many passes placing too many things for any of them to reason about
+     connectivity on their own.
+     So the last word is a flood fill. Anything that cannot be walked through is a
+     blocker; flood from the biggest free region; and for every orphan, DELETE the
+     one blocker standing between it and somewhere reachable. Removing a prop can
+     only ever open a map, never seal one, so this terminates and cannot make
+     things worse. A wall removed this way is simply a doorway the generator owed
+     us.
+     This is correct by construction instead of by luck, which is the standard the
+     door rule was already held to. */
+  (function repairConnectivity(){
+    const BLOCK = { wall:1, tree:1, ice_spike:1, dead_tree:1, cactus:1, pillar:1,
+                    statue_head:1, statue_obelisk:1, alien_pod:1 };
+    const at = new Map();
+    for(let i=0;i<objs.length;i++) at.set(objs[i].x+','+objs[i].y, i);
+    const solid = (x,y)=>{
+      if(!inb(x,y)) return true;
+      const k = t[y] && t[y][x];
+      if(!k || k === 'void') return true;
+      const i = at.get(x+','+y);
+      return i !== undefined && !!BLOCK[objs[i].type];
+    };
+    for(let pass=0; pass<40; pass++){
+      // label regions
+      const reg = new Int32Array(cols*rows).fill(-1);
+      const sizes = [];
+      for(let y0=0;y0<rows;y0++) for(let x0=0;x0<cols;x0++){
+        if(solid(x0,y0) || reg[y0*cols+x0] >= 0) continue;
+        const id = sizes.length; let n = 0; const q = [[x0,y0]]; reg[y0*cols+x0] = id;
+        while(q.length){
+          const [x,y] = q.pop(); n++;
+          for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+            const a=x+dx, b2=y+dy;
+            if(!inb(a,b2) || solid(a,b2) || reg[b2*cols+a] >= 0) continue;
+            reg[b2*cols+a] = id; q.push([a,b2]);
+          }
+        }
+        sizes.push(n);
+      }
+      if(sizes.length <= 1) return;
+      let main = 0; for(let i=1;i<sizes.length;i++) if(sizes[i] > sizes[main]) main = i;
+      /* find a blocker with the main region on one side and an orphan on the
+         other, and take it out. Nearest-to-largest-orphan first so the biggest
+         problem is always the one being solved. */
+      let bestIdx = -1, bestScore = -1;
+      for(let y=1;y<rows-1;y++) for(let x=1;x<cols-1;x++){
+        if(!solid(x,y)) continue;
+        const i = at.get(x+','+y);
+        if(i === undefined || !BLOCK[objs[i].type]) continue;   // terrain void: cannot remove
+        let touchesMain = false, orphan = -1;
+        for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const a=x+dx, b2=y+dy; if(!inb(a,b2)) continue;
+          const r = reg[b2*cols+a]; if(r < 0) continue;
+          if(r === main) touchesMain = true; else if(orphan < 0 || sizes[r] > sizes[orphan]) orphan = r;
+        }
+        if(touchesMain && orphan >= 0 && sizes[orphan] > bestScore){ bestScore = sizes[orphan]; bestIdx = i; }
+      }
+      if(bestIdx < 0) return;                 // nothing left that removing would help
+      const dead = objs[bestIdx];
+      at.delete(dead.x+','+dead.y);
+      objs.splice(bestIdx, 1);
+      at.clear(); for(let i=0;i<objs.length;i++) at.set(objs[i].x+','+objs[i].y, i);
+    }
+  })();
   return { format:'scanner-map', version:1, name:'random_'+(seed%10000), grid:{cols,rows}, terrain:t, objects:objs, spawns, zones };
 }
 
@@ -3229,6 +3348,7 @@ const ROOF_HUES = [0x6a5344, 0x4a4f57, 0x7a4b3a, 0x565b4a, 0x3f4650, 0x6b6355];
    as another moon and the night already has one. */
 const WINDOW_HUES = [0xFFD79A, 0xFFC073, 0xF7E7C2, 0xE8B86A];
 const DOOR_MAT = new THREE.MeshStandardMaterial({ color:0x6b5238, roughness:.92 });
+const STAIR_MAT = new THREE.MeshStandardMaterial({ color:0x6b5238, roughness:.95 });
 const ROOF_PROP_MAT = new THREE.MeshStandardMaterial({ color:0x8a8f98, roughness:.75, metalness:.25 });
 const WASH_HUES = [0xC9D4E8, 0xE0B7A0, 0x9FC0A8, 0xD8C68A, 0xB9A9D6];
 const WINDOW_MATS = WINDOW_HUES.map(c => new THREE.MeshBasicMaterial({
@@ -4866,6 +4986,7 @@ window.__aac3dCombat = function(){
            myImmune:+Math.max(0,(((me&&me.getState('stunImmune'))||0)-Date.now())/1000).toFixed(1),
            jam: (me && me.getState('jam')) || null };
 };
+window.__aac3dRawMap = function(){ return MAP; };
 window.__aac3dLobbyDbg = function(){
   return { host:isHost(), hsl:hideSecsLocal, raw:getState('hideSecs'),
            ph:getState('phase')||'waiting',
@@ -5095,6 +5216,47 @@ function addCoverInner(type, gx, gy, unit){
     losMeshes.push(hull, fin);
     wrecks.push({ x:w.x, z:w.z, lamp, taken:false });
     addTarget(w.x, w.z, 0x6E7C93, 2.2);
+  }else if(type && type.indexOf('stair_') === 0){
+    /* ⭐⭐ THE EXTERIOR STAIRCASE. Stephen wanted staircases in and out, and roofs
+       you can stand on; this one object delivers both without the world needing a
+       Y axis. Five treads climbing one map cell - 3m of run for 3m of rise -
+       against an outer wall, so it lands you on the roof of the block it leans on.
+       Each tread is a PERCH, and each rise is under STEP_UP, so you walk up it
+       rather than jumping five times. Not a solid: nothing about it blocks the
+       alley it stands in, and a hider can shelter underneath. */
+    const dir = type.slice(6);                       // n | s | e | w — which way is UP
+    const N = 5, rise = STEP_UP - 0.02, run = TILE/N;
+    for(let i=0;i<N;i++){
+      const hgt = rise*(i+1);
+      const off = -TILE/2 + run*(i+0.5);
+      const along = (dir==='n'||dir==='s') ? 0 : off*(dir==='e'?1:-1);
+      const cross = (dir==='n'||dir==='s') ? off*(dir==='s'?1:-1) : 0;
+      const bw = (dir==='n'||dir==='s') ? TILE*0.82 : run;
+      const bd = (dir==='n'||dir==='s') ? run : TILE*0.82;
+      const st = new THREE.Mesh(new THREE.BoxGeometry(bw, hgt, bd), STAIR_MAT);
+      st.position.set(along, hgt/2, cross);
+      g.add(st); losMeshes.push(st);
+      platforms.push({ minX:w.x+along-bw/2, maxX:w.x+along+bw/2,
+                       minZ:w.z+cross-bd/2, maxZ:w.z+cross+bd/2,
+                       top:hgt, colorHex:0x6b5238, cx:w.x+along, cz:w.z+cross, name:'STEPS' });
+    }
+    /* ⛔ AND A LANDING ON THE PARAPET, OR THE STAIRS GO NOWHERE. jump3d found 12
+       stranded roofs the first time: the steps top out at 3.0 one cell OUTSIDE
+       the block, with a 4.2m wall between them and the nearest roof tile, so the
+       chain broke exactly where it mattered. You climb the steps, step up onto
+       the wall head, and drop onto the roof - which is how you would actually do
+       it, and it makes the wall top mean something. */
+    const lw = 1.05;
+    const lx = (dir==='e') ? TILE/2 + lw/2 : (dir==='w') ? -TILE/2 - lw/2 : 0;
+    const lz = (dir==='s') ? TILE/2 + lw/2 : (dir==='n') ? -TILE/2 - lw/2 : 0;
+    const land = new THREE.Mesh(new THREE.BoxGeometry(
+      (dir==='n'||dir==='s') ? TILE*0.82 : lw, 0.22,
+      (dir==='n'||dir==='s') ? lw : TILE*0.82), STAIR_MAT);
+    land.position.set(lx, 4.2 - 0.11, lz);
+    g.add(land); losMeshes.push(land);
+    platforms.push({ minX:w.x+lx-lw/2, maxX:w.x+lx+lw/2, minZ:w.z+lz-lw/2, maxZ:w.z+lz+lw/2,
+                     top:4.2, colorHex:0x6b5238, cx:w.x+lx, cz:w.z+lz, name:'STEPS' });
+    addTarget(w.x, w.z, 0x6b5238, 2.0);
   }else if(type==='doorway_ns' || type==='doorway_ew'){
     /* ⚖ DECORATION ONLY. Not in solids, not in losMeshes, nothing added to
        paintTargets - the jambs sit flush against the flanking wall cells, so the
@@ -5126,6 +5288,20 @@ function addCoverInner(type, gx, gy, unit){
     const rY = 2.9 + ((unit == null ? hash2(gx,gy) : hash2(unit*17+3, 5)) % 3) * 0.52;
     const slab = new THREE.Mesh(new THREE.BoxGeometry(3.05, 0.26, 3.05), rm);
     slab.position.y = rY; g.add(slab); losMeshes.push(slab);
+    /* ⭐⭐ "The roofs of the building all can't be stood upon. that's dumb." He is
+       right, and it was a deliberate old decision worth reversing: roofs sat above
+       STAND_MAX_TOP precisely so they could never be perches. But a favela you can
+       get on top of is a completely different game - a hider on a roof is exposed
+       to the sky and invisible from the alley, which is the opposite trade to
+       everywhere else in the level, and a hunter can now land ON a block instead
+       of only beside it.
+       They are reachable because every block gets an exterior staircase (see the
+       generator), not because they are low. And a roof is a paint target like any
+       other surface, so hiding up there still means matching what you are on. */
+    const rTop = rY + 0.13;
+    platforms.push({ minX:w.x-1.5, maxX:w.x+1.5, minZ:w.z-1.5, maxZ:w.z+1.5,
+      top:rTop, colorHex:rm.color.getHex(), cx:w.x, cz:w.z, name:'ROOF' });
+    addTarget(w.x, w.z, rm.color.getHex(), 1.7);
     /* ⭐⭐ THE ROOFS ARE THE HUNTER'S ENTIRE VIEW, and they were bare slabs.
        A saucer looks straight down, so a favela from the air was a set of flat
        rectangles - which is both dull and, worse, TOO EASY TO READ: anything on
@@ -8374,7 +8550,19 @@ function moveLocal(dt, role){
     velY -= GRAVITY*dt;
     localPos.y += velY*dt;
     const sup = supportAt(localPos.x, localPos.z);
-    if(velY <= 0 && prevY >= sup.top - 0.02 && localPos.y <= sup.top && sup.top > 0){
+    /* ⭐ 2026-08-02 — STEP UP. Stephen asked for staircases and for roofs you can
+       stand on, and both were impossible while the ONLY way to gain height was a
+       jump: landing is tested on the way DOWN, so walking into a step just
+       stopped you dead against it. A tread shorter than STEP_UP is now walked
+       onto. Which is also why a staircase can be five treads inside one map cell
+       instead of a six-cell ramp that would swallow an alley.
+       ⚖ 0.62 is under a crate (1.0) and a barrel, so nothing that used to need a
+       jump has quietly become a walk - only purpose-built steps are shallow
+       enough, and they are the only thing meant to be. */
+    if(grounded && sup.top > localPos.y && sup.top - localPos.y <= STEP_UP){
+      localPos.y = sup.top; velY = 0; standingOn = sup.plat;
+    }
+    else if(velY <= 0 && prevY >= sup.top - 0.02 && localPos.y <= sup.top && sup.top > 0){
       localPos.y = sup.top; velY = 0; grounded = true; standingOn = sup.plat;
     }else if(localPos.y <= 0){
       localPos.y = 0; velY = 0; grounded = true; standingOn = null;

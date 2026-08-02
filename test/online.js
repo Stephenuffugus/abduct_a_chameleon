@@ -12,7 +12,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 function stubCtx(){const noop=()=>{};return new Proxy({},{get(_t,p){if(p==='canvas')return{width:1280,height:720};if(p==='measureText')return()=>({width:10});if(p==='getImageData')return(x,y,w,h)=>({data:new Uint8ClampedArray(Math.max(1,(w|0)*(h|0)*4))});if(p==='createLinearGradient'||p==='createRadialGradient'||p==='createPattern')return()=>({addColorStop:noop});return typeof p==='string'?noop:undefined;},set(){return true;}});}
 function makeWin(tag){
   const errors=[], rafQueue=[]; let rafId=1, VT=1000;
-  const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true, tourDone:true, perf:'smooth'})};
+  const _ls={'aac.settings.v1':JSON.stringify({tutorialSeen:true, helpAutoShown:true, tourDone:true, perf:'smooth'})};
   const dom=new JSDOM(html,{runScripts:'dangerously',resources:'usable',pretendToBeVisual:true,
     url:`http://localhost:8000/index.html?mp=ws://localhost:${PORT}/ws&hide2p=5`,
     beforeParse(window){
@@ -65,14 +65,14 @@ function makeWin(tag){
   // 2. host a room
   A.key('ArrowDown'); A.pump(2); A.key('Enter'); A.pump(4);            // TITLE → Play Online
   ok('host reaches ONLINE screen', A.S().appState==='ONLINE', 'app='+A.S().appState);
-  A.key('Enter'); await both(4,60);                                    // Host a game → ws connect
+  A.key('ArrowDown'); A.pump(2); A.key('Enter'); await both(4,60);     // "Host a hunt" is the SECOND button now (co-op took the first)
   for(let i=0;i<50 && !A.S().net.code;i++) await both(2,40);
   const code=A.S().net.code;
   ok('room hosted with a code', !!code, 'code='+code);
 
   // 3. guest joins by typing the code
   B.key('ArrowDown'); B.pump(2); B.key('Enter'); B.pump(4);            // TITLE → Play Online
-  B.key('ArrowDown'); B.pump(2); B.key('Enter'); B.pump(4);            // Join with a code
+  B.key('ArrowDown'); B.pump(2); B.key('ArrowDown'); B.pump(2); B.key('Enter'); B.pump(4);   // Join is the THIRD button now
   ok('guest reaches code entry', B.S().appState==='ONLINE_JOIN', 'app='+B.S().appState);
   for(const ch of code) B.key('Key'+ch);
   await both(4,80);

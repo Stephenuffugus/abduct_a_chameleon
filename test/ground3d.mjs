@@ -80,9 +80,22 @@ const bad = [];
 const rows = [];
 for (let i = 0; i < SEEDS; i++) {
   const seed = 1000 + i * 7919;
-  await page.evaluate(s => window.__aac3dSetMap(window.__aac3dMakeMap(s)), seed);
-  await new Promise(r => setTimeout(r, 1500));
-  const L = await page.evaluate(() => window.__aac3dLevel(0.5));
+  /* ⛔⛔ WAIT FOR THE WORLD, DO NOT SLEEP AT IT. __aac3dSetMap publishes a map;
+     buildWorld runs on a later frame. A flat 1500ms was enough while a map held
+     ~500 objects, and the favela pushed that past what the sleep covered - so
+     this measured the PREVIOUS map and reported two different seeds with the
+     same name and the same "sealed room". A gate that silently grades the wrong
+     world is worse than no gate: it invents failures and hides real ones.
+     Poll until the built map is the one we asked for. */
+  const want = await page.evaluate(s => { const m = window.__aac3dMakeMap(s);
+    window.__aac3dSetMap(m); return m.name; }, seed);
+  let L = null;
+  for (let t = 0; t < 60; t++) {
+    await new Promise(r => setTimeout(r, 250));
+    L = await page.evaluate(() => window.__aac3dLevel(0.5));
+    if (L && L.map === want) break;
+  }
+  if (!L || L.map !== want) { bad.push(`seed ${seed}: the world never rebuilt (wanted ${want}, got ${L && L.map})`); continue; }
   rows.push(L);
   const tag = `seed ${seed} (${L.map})`;
   if (L.strandedSpawns > 0)

@@ -276,6 +276,10 @@ const SALV_TAKE_COST=20;                      // seconds burned by an abduction
    can find you, and firing tells your target exactly where you are. It is a duel you commit
    to, not a snipe. */
 const CUT_RANGE_MUL=0.75, CUT_TIME=2.2, CUT_CONCEAL_CAP=0.20;
+/* Co-op: the pile is SHARED and it SCALES, so two people always have work without ever having
+   two private piles (which would just be two solo games on one map). The head start is short
+   because in co-op nobody is frozen waiting for it - both of you are already working. */
+const SALV_COOP_EXTRA=2, SALV_COOP_HIDE=8;
 // P6 Hunter mode
 const HUNTER_SPD=175, HUNTER_TAU=0.16, PULSE_CD=3.0, PULSE_REVEAL=0.15, PING_HOLD=2.6;
 const HUNT_TIME=120, HIDER_COUNT={EASY:3,NORMAL:4,HARD:5}, BOT_HIDE_SPD=92, HUNT_SCAN_R=175;
@@ -1099,6 +1103,7 @@ function gatherInput(){
   if(freezeHeld && joystick && (Math.abs(joystick.dx)>0.2||Math.abs(joystick.dy)>0.2)) freezeHeld=false;
   // FREEZE: hold Space (or touch toggle) roots you and settles fast — hider modes only
   player.freeze = (!round||round.mode!=='HUNT') && (keys.has('Space') || freezeHeld) && player.dashT<=0;
+  if(round && round.coop && round.online!=='guest' && round.mate) round.mate.freeze=!!NET.mate.freeze;
   let speed=speedFromMag(moveMag); if(creep) speed=Math.min(speed,PLAYER_CREEP);   // Shift/L2 still forces sneak
   let tag = speed<=0?'idle':(speed<=PLAYER_CREEP+1?'sneak':'walk');
   if(player.freeze){ mx=0; my=0; moveMag=0; speed=0; tag='idle'; }
@@ -1110,6 +1115,11 @@ function gatherInput(){
 }
 let freezeHeld=false;
 function useAbility(k){ if(!round||roundState!=='PLAYING'||!player.alive) return;
+  /* On the guest side an ability is a REQUEST. Running it locally would let the two clients
+     disagree about the world (a clicker on one screen and not the other), and the host is the
+     only place that owns round.lures. Freeze is exempt: it is a local posture, it is sent with
+     every intent packet, and gating it on a round trip would make it feel broken. */
+  if(round.online==='guest' && round.coop){ if(k==='freeze') return; coopAsk(k); return; }
   if(k==='dash'){ if(player.cd.dash>0) return; const d=Math.hypot(input.mx,input.my)>0.1?{x:input.mx,y:input.my}:{x:Math.cos(player.facing),y:Math.sin(player.facing)};
     const n=Math.hypot(d.x,d.y)||1; player.dashDx=d.x/n; player.dashDy=d.y/n; player.dashT=DASH_TIME; player.cd.dash=DASH_CD; player.dashFlare=DASH_FLARE_TIME; player.dashRecT=DASH_TIME+DASH_RECOVER_T;
     SFX.ui(); addTrauma(0.12); punchZoom(0.02,80,220); vibe(20); }
@@ -1774,18 +1784,47 @@ function updateBots(dt){
         a.x+=dx/d*f; a.y+=dy/d*f; b.x-=dx/d*f; b.y-=dy/d*f; } } }
 }
 
+/* The live hider actors a fleet can hunt. Solo (and the 1v1 hunt) is [player] and nothing
+   downstream can tell the difference; co-op adds the partner the host is simulating. */
+function hunterTargets(){
+  if(!round.coop || !round.mate || !round.mate.alive) return [player];
+  return player.alive ? [player, round.mate] : [round.mate];
+}
+/* Which of them this ship is on. A ship that has already committed keeps its target (losing a
+   lock because your partner walked past would be maddening and would make co-op play worse
+   than solo); otherwise it takes whoever is putting out the strongest signal right now, using
+   the same conspicuity x proximity x line-of-sight the sensing code uses. */
+function pickTarget(u,D){
+  const T=hunterTargets();
+  if(T.length===1) return T[0];
+  if((u.state==='CHASE'||u.state==='BEAM') && u.target && u.target.alive) return u.target;
+  let best=T[0], bs=-1;
+  for(const a of T){
+    const d=Math.hypot(a.x-u.x,a.y-u.y);
+    let sc=0;
+    if(d<=D.SCAN_R*1.75 && losClear(u.x,u.y,a.x,a.y)) sc=a.C*smoothstep(0,1,clamp01(1-d/(D.SCAN_R*1.75)));
+    else sc=-d/100000;                              // nothing visible: fall back to the nearer one
+    if(sc>bs){ bs=sc; best=a; }
+  }
+  u.target=best; return best;
+}
 function updateUfo(u,dt,D){
   u.scanPhase += 2.2*dt;
-  const dx=player.x-u.x, dy=player.y-u.y, d=Math.hypot(dx,dy);
+  /* WHO IS THIS SHIP HUNTING? In a solo round there is exactly one answer and hunterTargets()
+     returns [player], so every line below is byte-for-byte the behaviour it always had. In a
+     co-op round there are two chameleons and a ship has to be able to pick, or the second
+     player is invisible to the fleet and the mode is two solo games sharing a map. */
+  const P = pickTarget(u, D);
+  const dx=P.x-u.x, dy=P.y-u.y, d=Math.hypot(dx,dy);
   // ---- sensing (unless COOLDOWN) ----
   // a hunter that is actively chasing tracks on a longer leash — before this, a runner crossing
   // the SCAN_R line mid-chase zeroed the signal and the whole pursuit collapsed, which made
   // "just keep walking" a guaranteed escape at ANY difficulty (the July capture complaint)
   const senseR = (u.state==='CHASE'||u.state==='BEAM') ? D.SCAN_R*1.75 : D.SCAN_R;
-  let signal=0, sx=player.x, sy=player.y;
+  let signal=0, sx=P.x, sy=P.y;
   if(u.state!=='COOLDOWN'){
-    if(d<=senseR){ const clear=losClear(u.x,u.y,player.x,player.y);
-      if(clear){ const prox=smoothstep(0,1, clamp01(1-d/senseR)); signal=player.C*prox; } }
+    if(d<=senseR){ const clear=losClear(u.x,u.y,P.x,P.y);
+      if(clear){ const prox=smoothstep(0,1, clamp01(1-d/senseR)); signal=P.C*prox; } }
     // DECOYS: a painted twin can out-signal you and steal belief (max signal wins)
     if(round.decoys.length){ for(const dc of round.decoys){ const dd=Math.hypot(dc.x-u.x,dc.y-u.y);
       if(dd<=D.SCAN_R && losClear(u.x,u.y,dc.x,dc.y)){ const ds=dc.C*smoothstep(0,1,clamp01(1-dd/D.SCAN_R));
@@ -1805,7 +1844,7 @@ function updateUfo(u,dt,D){
       u.suspicion -= D.SUSPECT_DECAY*(u.state==='CHASE'?0.35:1)*dt; u.lastSuspectConf -= 0.5*dt; }
   } else { u.suspicion -= D.SUSPECT_DECAY*2*dt; }
   // lock-inertia in CHASE/BEAM (the leash range, so a fleeing runner stays locked while visible)
-  if((u.state==='CHASE'||u.state==='BEAM') && d<senseR && signal>0.001 && losClear(u.x,u.y,player.x,player.y))
+  if((u.state==='CHASE'||u.state==='BEAM') && d<senseR && signal>0.001 && losClear(u.x,u.y,P.x,P.y))
     u.suspicion=Math.max(u.suspicion,0.9);
   u.suspicion=clamp01(u.suspicion); u.signal=signal;
   /* THE CLICKER. Note where this sits: OUTSIDE the signal maths above, on purpose. A decoy
@@ -1841,7 +1880,7 @@ function updateUfo(u,dt,D){
       const ang=u.scanPhase*0.8; const ox=u.lastSuspect.x+Math.cos(ang)*40, oy=u.lastSuspect.y+Math.sin(ang)*40;
       steer(u,ox,oy,D.SCAN_SPD,dt); break; }
     case 'INVESTIGATE': {
-      if(u.suspicion>=ENTER_CHASE && losClear(u.x,u.y,player.x,player.y)){ u.state='CHASE'; break; }
+      if(u.suspicion>=ENTER_CHASE && losClear(u.x,u.y,P.x,P.y)){ u.state='CHASE'; break; }
       steer(u,u.lastSuspect.x,u.lastSuspect.y,D.INVEST_SPD,dt);
       const arrived=Math.hypot(u.lastSuspect.x-u.x,u.lastSuspect.y-u.y)<D.SCAN_R*0.5;
       if(arrived){ u.investHover+=dt; }
@@ -1850,9 +1889,9 @@ function updateUfo(u,dt,D){
       break; }
     case 'CHASE': {
       if(u.suspicion<DROP_CHASE){ u.state='INVESTIGATE'; u.giveupTimer=0; break; }
-      const seen = d<senseR && losClear(u.x,u.y,player.x,player.y);
-      let tx = seen?player.x:u.lastSuspect.x;
-      let ty = seen?player.y:u.lastSuspect.y;
+      const seen = d<senseR && losClear(u.x,u.y,P.x,P.y);
+      let tx = seen?P.x:u.lastSuspect.x;
+      let ty = seen?P.y:u.lastSuspect.y;
       // cut the corner on a target we can actually see moving. This is what makes a
       // predictable straight line lose: the ship stops following your tail and goes to
       // where you are GOING. Juke and the aim error is bounded by V*LEAD_MAX and washes
@@ -1860,9 +1899,9 @@ function updateUfo(u,dt,D){
       // the lead fades to nothing as the ring gets close, or the ship leads itself PAST the
       // player, ends up in front, and has to turn around: an own goal worth ~85px a time
       const leadT = LEAD_MAX*clamp01((d-BEAM_R*2)/(D.SCAN_R*0.8));
-      if(seen && leadT>0.02){ const ip=interceptPoint(u,player.x,player.y,player.vx,player.vy,D.CHASE_SPD,leadT);
+      if(seen && leadT>0.02){ const ip=interceptPoint(u,P.x,P.y,P.vx,P.vy,D.CHASE_SPD,leadT);
         if(ip){ tx=ip.x; ty=ip.y; } }
-      steer(u,tx,ty,D.CHASE_SPD,dt,true, seen?player.vx:undefined, seen?player.vy:undefined);
+      steer(u,tx,ty,D.CHASE_SPD,dt,true, seen?P.vx:undefined, seen?P.vy:undefined);
       if(d<BEAM_R){ u.state='BEAM'; u.reacquireTimer=0; u.beamHold=0; addTrauma(TRAUMA.beamLock); hitstopMs(40); punchZoom(0.05,120,300); vibe(40); }
       break; }
     case 'BEAM': {
@@ -1871,22 +1910,22 @@ function updateUfo(u,dt,D){
       // Late escapes need real tools: ink (outlasts any grace), tongue (out-ranges any ring),
       // a bridge deck, or the C<BEAM_HOLD_C re-hide.
       if(d>BEAM_BREAK_R*(1+u.beamCharge)){ u.state='CHASE'; break; }
-      const clear=losClear(u.x,u.y,player.x,player.y);
+      const clear=losClear(u.x,u.y,P.x,P.y);
       if(!clear){ u.reacquireTimer+=dt; if(u.reacquireTimer>REACQUIRE_TIME*(1+u.beamCharge)){ u.state='CHASE'; break; } }
       else u.reacquireTimer=0;
       // station-keep over the player: match their velocity, never joust through them
-      steer(u,player.x,player.y,D.BEAM_TRACK_SPD,dt,true,player.vx,player.vy);
+      steer(u,P.x,P.y,D.BEAM_TRACK_SPD,dt,true,P.vx,P.vy);
       if(round.diff.practice){ // never completes; flash SPOTTED then lose interest
         u.beamHold+=dt; round.spottedFlash=0.3;
         if(u.beamHold>2){ u.state='INVESTIGATE'; u.suspicion*=0.5; u.giveupTimer=0; }
         break;
       }
-      if(player.C<BEAM_HOLD_C){ u.state='CHASE'; break; }             // re-hide escape
-      else if(d<BEAM_R && clear && player.C>=BEAM_HOLD_C){
+      if(P.C<BEAM_HOLD_C){ u.state='CHASE'; break; }             // re-hide escape
+      else if(d<BEAM_R && clear && P.C>=BEAM_HOLD_C){
         // a fading target charges slower — freezing and matching UNDER the beam is a real race
         // you can win if you react; a blatant runner charges at full rate
-        u.beamCharge += (1/D.LOCK_TIME)*(0.35+0.65*clamp01(player.C/0.5))*dt;
-        if(u.beamCharge>=1){ triggerAbduction(u); }
+        u.beamCharge += (1/D.LOCK_TIME)*(0.35+0.65*clamp01(P.C/0.5))*dt;
+        if(u.beamCharge>=1){ triggerAbduction(u,P); }
       } else if(d<BEAM_BREAK_R && clear){ /* still locked: the charge HOLDS — it only drains once
         the lock is truly broken. Without this, a runner drained the ratchet every 26–64px cycle
         and the lock could never complete against anyone who kept moving. */ }
@@ -1903,10 +1942,11 @@ function updateUfo(u,dt,D){
   if(prev==='BEAM' && u.state!=='BEAM' && !round.caught && !round.diff.practice && u.beamCharge>0.05){ round.metrics.nearMisses++; nearMiss(); }
   // spotted event (suspicion crosses ENTER_CHASE upward)
   if(prev!=='CHASE'&&prev!=='BEAM' && (u.state==='CHASE'||u.state==='BEAM')){
-    round.metrics.spottedCount++; round.spottedReason=spottedReason(player.mq,player.m,player.S,player.ref.dominantKey);
-    round.reasonUntil=nowMs()+2600; SFX.spotted(); addTrauma(TRAUMA.spotted); punchZoom(-0.05,90,420); FX.spottedV=1; spawnShards(player.x,player.y,COL.danger,9); vibe([30,50,30]);
+    if(P!==player){ SFX.spotted(); return; }        // your partner was spotted, not you
+    round.metrics.spottedCount++; round.spottedReason=spottedReason(P.mq,P.m,P.S,P.ref.dominantKey);
+    round.reasonUntil=nowMs()+2600; SFX.spotted(); addTrauma(TRAUMA.spotted); punchZoom(-0.05,90,420); FX.spottedV=1; spawnShards(P.x,P.y,COL.danger,9); vibe([30,50,30]);
     // forgiving: a kid caught mid-paint/look is sent home with a warning — the camera GLIDES back (never snaps)
-    if(ctrlMode!=='MOVE' && !round.diff.practice){ if(holdBracketT>0.3) spawnShards(player.x,player.y,COL.amber,6);
+    if(ctrlMode!=='MOVE' && !round.diff.practice){ if(holdBracketT>0.3) spawnShards(P.x,P.y,COL.amber,6);
       goHome(); panBoost=HOLD_GLIDE_MUL; showToast('Spotted — move!'); }
   }
   if((prev==='CHASE'||prev==='SCAN'||prev==='INVESTIGATE') && u.suspicion<EXIT_SUSPECT && u.state==='PATROL') SFX.relief();
@@ -2153,6 +2193,21 @@ function drawRound(alpha){
         ctx.globalAlpha=1;
       }
     }
+  }
+  /* THE PARTNER. Drawn with the same body and the same concealment as you, because a co-op
+     partner who is easier to see than a real chameleon would be lying to both of you about how
+     hidden they are. The tag above them fades out as they blend, for the same reason - but it
+     never disappears completely, because losing your partner on a 96x66 map is not tension,
+     it is just walking around shouting. */
+  if(round.coop && round.mate && round.mate.alive){ const A=round.mate;
+    drawHumanoid(A.x, A.y, A.facing, rgb2hex(A.currentPaint), clamp01(A.conceal),
+      { pose:A.pose||'stand', r:PLAYER_DRAW_R, breathP:A.breathP||0 });
+    const tagA=0.30+0.55*(1-clamp01(A.conceal));
+    ctx.globalAlpha=tagA;
+    txt('PARTNER'+(A.carrying?' ('+A.carrying+')':''), A.x, A.y-26, 9, COL.cyan,'center','800');
+    ctx.globalAlpha=1;
+    if(A.pryT>0){ ctx.strokeStyle=COL.amber; ctx.lineWidth=2; ctx.globalAlpha=0.8;
+      ctx.beginPath(); ctx.arc(A.x,A.y,20,0,TAU); ctx.stroke(); ctx.globalAlpha=1; }
   }
   // 7. decoys (painted twins) + player + 8. ufos
   for(const dc of round.decoys){ const a=Math.min(1,dc.life/1.0);
@@ -3059,7 +3114,8 @@ function openStandalone(){ try{ window.open(location.origin+location.pathname, '
 // Guest = the HUNTER, literally plays HUNT mode — except the "bot" is a live human streamed in
 // snapshots, and all catch/win decisions come from the host. The relay is a dumb pipe (server/).
 const NET={ ws:null, on:false, role:null, code:null, peer:false, status:'off', err:'',
-  codeInput:'', pend:null, sendT:0, snapT:0, lastSnapAt:0, intent:{mx:0,my:0} };
+  codeInput:'', pend:null, sendT:0, snapT:0, lastSnapAt:0, intent:{mx:0,my:0},
+  coop:false, mate:{mx:0,my:0,freeze:false,paint:null} };
 function mpServerUrl(){
   try{ const q=new URLSearchParams(location.search).get('mp'); if(q) return q; }catch(_){}
   if(location.protocol==='file:') return 'ws://localhost:8080/ws';
@@ -3085,7 +3141,8 @@ function netConnect(then){
 }
 function netSend(data){ try{ if(NET.ws&&NET.ws.readyState===1) NET.ws.send(JSON.stringify({t:'msg',data})); }catch(_){} }
 function netReset(closeWs){ if(closeWs!==false){ try{ NET.ws&&NET.ws.close(); }catch(_){} }
-  NET.ws=null; NET.on=false; NET.role=null; NET.code=null; NET.peer=false; NET.status='off'; NET.pend=null; NET.codeInput=''; }
+  NET.ws=null; NET.on=false; NET.role=null; NET.code=null; NET.peer=false; NET.status='off'; NET.pend=null; NET.codeInput='';
+  NET.coop=false; NET.meSnap=null; NET.uSnap=null; NET.mate={mx:0,my:0,freeze:false,paint:null}; }
 function netLeave(){ netSend({k:'bye'}); netReset(); }
 function netOnServer(m){
   if(m.t==='hosted'){ NET.role='host'; NET.code=m.code; NET.status='lobby'; }
@@ -3103,15 +3160,19 @@ function netOnPeer(d){
   if(d.k==='init' && NET.role==='guest'){
     const e=LEVELS.find(x=>x.name===d.name);
     if(!e){ NET.err='missing map: '+d.name; netSend({k:'ready',ok:0}); return; }
-    NET.pend={ entry:e, seed:d.seed>>>0 };
+    NET.pend={ entry:e, seed:d.seed>>>0 }; NET.coop=!!d.coop;
     fetchLevelData(e).then(data=>{ e.data=data; netSend({k:'ready',ok:1}); });
   }
   else if(d.k==='ready' && NET.role==='host' && NET.pend){
     if(!d.ok){ showToast('🌐 guest is missing that map'); appState='LEVEL_SELECT'; return; }
-    netSend({k:'start'}); netStartHost(NET.pend.entry, NET.pend.seed);
+    netSend({k:'start'}); if(NET.coop) netStartCoopHost(NET.pend.entry, NET.pend.seed); else netStartHost(NET.pend.entry, NET.pend.seed);
   }
-  else if(d.k==='start' && NET.role==='guest' && NET.pend){ netStartGuest(NET.pend.entry, NET.pend.seed); }
-  else if(d.k==='in' && NET.role==='host'){ NET.intent.mx=clamp(+d.mx||0,-1,1); NET.intent.my=clamp(+d.my||0,-1,1); }
+  else if(d.k==='start' && NET.role==='guest' && NET.pend){ if(NET.coop) netStartCoopGuest(NET.pend.entry, NET.pend.seed); else netStartGuest(NET.pend.entry, NET.pend.seed); }
+  else if(d.k==='in' && NET.role==='host'){ NET.intent.mx=clamp(+d.mx||0,-1,1); NET.intent.my=clamp(+d.my||0,-1,1);
+    if(NET.coop){ NET.mate.mx=NET.intent.mx; NET.mate.my=NET.intent.my; NET.mate.freeze=!!d.fz;
+      if(d.p1 && round && round.mate){ const c=hex2rgb(d.p1); if(c) round.mate.targetPaint=c; } } }
+  else if(d.k==='act' && NET.role==='host' && NET.coop && round && round.mate){
+    mateAbility(String(d.a||''), +d.ax||0, +d.ay||0); }
   else if(d.k==='ping' && NET.role==='host' && round && round.online==='host'){
     // the hunter spent a scan charge: if the ship is close enough with a clear
     // line, the hider is EXPOSED - visible on sensors and beamable - for a while
@@ -3123,11 +3184,13 @@ function netOnPeer(d){
     }
   }
   else if(d.k==='st' && NET.role==='guest'){ netApplySnap(d); }
+  else if(d.k==='cs' && NET.role==='guest'){ netApplyCoop(d); }
   else if(d.k==='end' && NET.role==='guest'){ netGuestEnd(d); }
+  else if(d.k==='cend' && NET.role==='guest'){ netCoopEnd(d); }
   else if(d.k==='bye'){ if(appState==='ROUND'||appState==='SUMMARY'){ showToast('🌐 the other player left'); netReset(); gotoTitle(); } }
 }
 function netHostPickedLevel(entry){ NET.pend={ entry, seed:(((Math.random()*0x7fffffff)|0))>>>0 };
-  netSend({k:'init', name:entry.name, seed:NET.pend.seed}); appState='ONLINE'; NET.status='loading'; }
+  netSend({k:'init', name:entry.name, seed:NET.pend.seed, coop:NET.coop?1:0}); appState='ONLINE'; NET.status='loading'; }
 function netStartHost(entry, seed){
   startRound(entry,'SURVIVE',DIFF.NORMAL,seed);
   const sk=MAP.spawns.filter(s=>s.role==='seeker'); const s0=sk[0]||{x:2,y:2};
@@ -3146,6 +3209,119 @@ function netStartGuest(entry, seed){
   round.online='guest'; round.timeLeft=DIFF.NORMAL.SURVIVE_TIME; NET.status='playing'; NET.lastSnapAt=nowMs();
   round.hide2pNet = HIDE_2P_S;                    // local mirror of the hide phase, refreshed by snapshots
   NET.scans = NET_SCANS;
+}
+/* ---- CO-OP SALVAGE over the wire ----
+   Host runs the whole authoritative round including the partner; guest predicts its own
+   movement and takes everything else from the snapshot. The snapshot is an explicit
+   allow-list, same as the 1v1 one, and it carries the shared objective because in co-op both
+   players are on the same side and there is nothing to hide from each other. */
+function netStartCoopHost(entry, seed){
+  startRound(entry,'SALVAGE',DIFF.NORMAL,seed);
+  round.online='host'; round.coop=true;
+  // enough for two: the pile is shared, but nobody should be standing around with no job
+  const extra=SALV_COOP_EXTRA;
+  salvAddCores(extra);
+  const hs=MAP.spawns.filter(s=>s.role==='hider');
+  const h2=hs.length>1?hs[1]:{x:Math.floor(player.x/TILE)+2,y:Math.floor(player.y/TILE)};
+  round.mate=makeMate((h2.x+0.5)*TILE,(h2.y+0.5)*TILE);
+  round.hide2pEnds = nowMs() + SALV_COOP_HIDE*1000;   // short: it is a head start, not a hide phase
+  NET.status='playing'; NET.snapT=0;
+}
+function netStartCoopGuest(entry, seed){
+  startRound(entry,'SALVAGE',DIFF.NORMAL,seed);
+  round.online='guest'; round.coop=true;
+  const hs=MAP.spawns.filter(s=>s.role==='hider');
+  const h2=hs.length>1?hs[1]:{x:Math.floor(player.x/TILE)+2,y:Math.floor(player.y/TILE)};
+  player.x=(h2.x+0.5)*TILE; player.y=(h2.y+0.5)*TILE; player.vx=0; player.vy=0;
+  round.mate=makeMate(0,0);                      // the HOST is the partner from over here
+  round.mate.alive=true;
+  round.hide2pNet=SALV_COOP_HIDE;
+  NET.status='playing'; NET.lastSnapAt=nowMs();
+}
+function stepCoopHost(dt){
+  NET.snapT+=dt; if(NET.snapT<1/12) return; NET.snapT=0;
+  const A=round.mate||{};
+  netSend({ k:'cs', tl:Math.round(round.timeLeft*10)/10, gr:round.spawnGrace>0?1:0,
+    hl:+hide2pLeft().toFixed(1),
+    dv:round.delivered, tot:salvTotal(), cu:round.cutter?1:0, lv:round.salvLives,
+    // the guest's own authoritative state (it predicts, this corrects)
+    me:{ x:Math.round(A.x||0), y:Math.round(A.y||0), cz:+(A.conceal||0).toFixed(2),
+         ca:A.carrying|0, pt:+(A.pryT||0).toFixed(2), lu:A.lureLeft|0, al:A.alive?1:0 },
+    // the host player, drawn as the partner over there
+    pa:{ x:Math.round(player.x), y:Math.round(player.y), c1:rgb2hex(player.currentPaint),
+         cz:+player.conceal.toFixed(2), po:player.pose, fa:+player.facing.toFixed(2),
+         ca:round.carrying|0, al:player.alive?1:0 },
+    co:round.cores.map(c=>({x:Math.round(c.x),y:Math.round(c.y),t:c.taken?1:0,l:c.loose?1:0,
+        h:+(c.hold||0).toFixed(2),n:+(c.need||0).toFixed(2)})),
+    rg:round.rig?{x:Math.round(round.rig.x),y:Math.round(round.rig.y)}:null,
+    us:round.ufos.map(u=>({x:Math.round(u.x),y:Math.round(u.y),s:u.state,
+        b:+(u.beamCharge||0).toFixed(2),d:u.downed?1:0})),
+    lr:round.lures.map(l=>({x:Math.round(l.x),y:Math.round(l.y),t:+l.t.toFixed(1)})) });
+}
+function netApplyCoop(d){
+  if(!round||round.online!=='guest') return;
+  NET.lastSnapAt=nowMs();
+  round.timeLeft=d.tl; round.spawnGrace=d.gr?1:0; round.hide2pNet=d.hl||0;
+  round.delivered=d.dv; round.coreTotal=d.tot; round.cutter=!!d.cu; round.salvLives=d.lv;
+  // our own actor: predicted locally, eased toward the host's word
+  if(d.me){ NET.meSnap=d.me; round.carrying=d.me.ca; player.pryT=d.me.pt;
+    player.lureLeft=d.me.lu; player.alive=!!d.me.al; }
+  const A=round.mate;
+  if(A && d.pa){ A._tx=d.pa.x; A._ty=d.pa.y; A.currentPaint=hex2rgb(d.pa.c1)||A.currentPaint;
+    A.conceal=d.pa.cz; A.C=clamp01(1-d.pa.cz); A.pose=d.pa.po; A.facing=d.pa.fa;
+    A.carrying=d.pa.ca; A.alive=!!d.pa.al; }
+  if(d.rg) round.rig=d.rg;
+  if(d.co){ round.cores=d.co.map(c=>({x:c.x,y:c.y,taken:!!c.t,loose:!!c.l,hold:c.h,need:c.n})); }
+  if(d.us){ for(let i=0;i<d.us.length;i++){ let u=round.ufos[i];
+      if(!u){ u=makeUfo(d.us[i].x,d.us[i].y); round.ufos.push(u); }
+      u._tx=d.us[i].x; u._ty=d.us[i].y; u.state=d.us[i].s; u.beamCharge=d.us[i].b; u.downed=!!d.us[i].d; }
+    round.ufos.length=d.us.length; }
+  if(d.lr) round.lures=d.lr.map(l=>({x:l.x,y:l.y,life:LURE_LIFE,t:l.t}));
+}
+function stepCoopGuest(dt){
+  if(roundState==='COUNTDOWN'){ round.countdown-=dt;
+    const c=Math.ceil(round.countdown); if(c!==round.lastCount&&c>0){ round.lastCount=c; SFX.count(); }
+    if(round.countdown<=0){ roundState='PLAYING'; SFX.go(); } return; }
+  if(roundState!=='PLAYING') return;
+  gatherInput(); updatePaint(dt);
+  player.prevx=player.x; player.prevy=player.y;
+  // predict our own steps so the stick feels immediate, then ease onto the host's authority
+  if(!player.freeze){
+    const mv=Math.hypot(input.mx,input.my);
+    const spd = mv<=IDLE_MAG ? 0 : (mv<=SNEAK_MAG ? PLAYER_CREEP : PLAYER_WALK);
+    const ux=mv>1e-4?input.mx/mv:0, uy=mv>1e-4?input.my/mv:0;
+    let nx=player.x+ux*spd*dt; if(!circleBlocked(nx,player.y)) player.x=nx;
+    let ny=player.y+uy*spd*dt; if(!circleBlocked(player.x,ny)) player.y=ny;
+    if(spd>0) player.facing=Math.atan2(uy,ux);
+  }
+  player.x=clamp(player.x,PLAYER_RADIUS,worldW-PLAYER_RADIUS);
+  player.y=clamp(player.y,PLAYER_RADIUS,worldH-PLAYER_RADIUS);
+  if(NET.meSnap){ player.x+=(NET.meSnap.x-player.x)*Math.min(1,dt*4); player.y+=(NET.meSnap.y-player.y)*Math.min(1,dt*4); }
+  const sp=Math.hypot(player.x-player.prevx,player.y-player.prevy)/Math.max(dt,1e-6);
+  computeCamo(dt, sp);                                  // local camo for the meters; the host's is authoritative
+  if(NET.meSnap) player.conceal=NET.meSnap.cz;
+  const A=round.mate;
+  if(A && A._tx!=null){ A.x+=(A._tx-A.x)*Math.min(1,dt*12); A.y+=(A._ty-A.y)*Math.min(1,dt*12); A.breathP=(A.breathP||0)+dt*1.6; }
+  for(const u of round.ufos) if(u._tx!=null){ u.x+=(u._tx-u.x)*Math.min(1,dt*12); u.y+=(u._ty-u.y)*Math.min(1,dt*12); u.scanPhase+=2.2*dt; }
+  NET.sendT+=dt; if(NET.sendT>=1/20){ NET.sendT=0;
+    netSend({k:'in', mx:+input.mx.toFixed(2), my:+input.my.toFixed(2),
+             fz:player.freeze?1:0, p1:rgb2hex(player.currentPaint)}); }
+  for(const k in player.cd) if(player.cd[k]>0) player.cd[k]=Math.max(0,player.cd[k]-dt);
+  for(let i=round.lures.length-1;i>=0;i--){ round.lures[i].t+=dt; }
+  if(nowMs()-NET.lastSnapAt>4000){ showToast('🌐 connection lost'); netReset(); gotoTitle(); }
+}
+/* The guest's abilities are REQUESTS. It fires the feedback locally so the button feels alive,
+   and the host decides what actually happened - the same authority split the movement uses. */
+function coopAsk(a){
+  const m=Math.hypot(input.mx,input.my), pm=Math.hypot(camPan.x,camPan.y);
+  let ax,ay;
+  if(pm>20){ ax=camPan.x/pm; ay=camPan.y/pm; }
+  else if(m>0.1){ ax=input.mx/m; ay=input.my/m; }
+  else { ax=Math.cos(player.facing); ay=Math.sin(player.facing); }
+  netSend({k:'act', a:a, ax:+ax.toFixed(3), ay:+ay.toFixed(3)});
+  if(a==='dash'){ player.cd.dash=DASH_CD; SFX.ui(); vibe(20); }
+  if(a==='lure'){ if((player.lureLeft|0)>0){ player.cd.lure=LURE_CD; SFX.ui(); vibe(18); }
+    else { showToast('No clickers left'); SFX.back(); } }
 }
 // ---- host side: drive the remote hunter + stream snapshots (called from the fixed-step sim) ----
 function remoteUfoStep(u,dt,D){
@@ -3235,9 +3411,9 @@ function stepGuestNet(dt){
   if(nowMs()-NET.lastSnapAt>4000){ showToast('🌐 connection lost'); netReset(); gotoTitle(); }
 }
 function netGuestEnd(d){
-  if(!round) return;
+  if(!round || round.coop) return;                       // co-op has its own verdict path
   const win=d.win==='hunter';
-  round.finalized=true; if(round.bots[0]&&win){ round.bots[0].caught=true; }
+  round.finalized=true; if(round.bots && round.bots[0] && win){ round.bots[0].caught=true; }
   round.summary={ outcome:win?'WIN':'LOSE', hunt:true, vs:true, caught:win?1:0, total:1,
     score:win?800:120, grade:win?'A':'C', timeUsed:DIFF.NORMAL.SURVIVE_TIME-(round.timeLeft||0),
     survSec:0, avgBlendPct:0, streak:0, near:0, spotted:0, isBest:false, prevBest:0, t0:nowMs() };
@@ -3265,13 +3441,14 @@ function qrCanvasFor(code){
 }
 function drawOnline(){ const cx=vpW/2; navList=[];
   txt('PLAY ONLINE', cx, vpH*0.14, 24, COL.txt,'center','800');
-  txt('one of you hides and paints · the other flies the ship and hunts', cx, vpH*0.14+24, 11, COL.muted,'center','500');
+  txt(NET.coop?'both of you are chameleons · gather the cores together':'one of you hides and paints · the other flies the ship and hunts',
+      cx, vpH*0.14+24, 11, NET.coop?COL.cyan:COL.muted,'center','500');
   const bw=Math.min(300,vpW-60), bx=cx-bw/2; let by=vpH*0.30;
   if(NET.status==='connecting'){ txt('connecting…', cx, by+20, 14, COL.muted,'center','600'); }
   else if(NET.role==='host' && NET.code && !NET.peer){
     txt('YOUR ROOM CODE', cx, by, 11, COL.muted,'center','700');
     txt(NET.code.split('').join(' '), cx, by+40, 44, COL.amber,'center','800');
-    txt('the hunter joins with this code — you will HIDE', cx, by+74, 11, COL.muted,'center','500'); by+=90;
+    txt(NET.coop?'your partner joins with this code':'the hunter joins with this code — you will HIDE', cx, by+74, 11, COL.muted,'center','500'); by+=90;
     // the QR carries the whole join: scan on the other phone, land in the
     // room. Encodes the relay mirror URL + ?join=CODE.
     const qc=qrCanvasFor(NET.code);
@@ -3283,14 +3460,17 @@ function drawOnline(){ const cx=vpW/2; navList=[];
     navBtn('Cancel', bx,by,bw,44, ()=>{ netLeave(); }, {size:14});
   }
   else if(NET.status==='loading'){ txt('waiting for the hunter to load…', cx, by+20, 13, COL.muted,'center','600'); }
-  else if(NET.role==='guest' && NET.peer){ txt('joined '+NET.code+' — the hider is picking a map…', cx, by+20, 13, COL.cyan,'center','600'); }
+  else if(NET.role==='guest' && NET.peer){ txt('joined '+NET.code+' — the host is picking a map…', cx, by+20, 13, COL.cyan,'center','600'); }
   else {
-    navBtn('🏠  Host a game (you hide)', bx,by,bw,52, ()=>{ netConnect(()=>{ try{NET.ws.send(JSON.stringify({t:'host'}));}catch(_){} }); }, {size:15}); by+=62;
-    navBtn('🛸  Join with a code (you hunt)', bx,by,bw,52, ()=>{ NET.codeInput=''; appState='ONLINE_JOIN'; menuIndex=0; }, {size:15}); by+=70;
+    navBtn('⚙  Host SALVAGE (co-op, you both gather)', bx,by,bw,52,
+      ()=>{ NET.coop=true; netConnect(()=>{ try{NET.ws.send(JSON.stringify({t:'host'}));}catch(_){} }); }, {size:14, color:COL.cyan}); by+=62;
+    navBtn('🏠  Host a hunt (you hide, they fly)', bx,by,bw,52,
+      ()=>{ NET.coop=false; netConnect(()=>{ try{NET.ws.send(JSON.stringify({t:'host'}));}catch(_){} }); }, {size:14}); by+=62;
+    navBtn('🛸  Join with a code', bx,by,bw,52, ()=>{ NET.codeInput=''; appState='ONLINE_JOIN'; menuIndex=0; }, {size:15}); by+=70;
   }
   if(NET.err) txt('⚠ '+NET.err, cx, vpH-92, 12, COL.danger,'center','600');
   txt('relay: '+mpServerUrl()+'   (override with ?mp=wss://…)', cx, vpH-70, 9, COL.muted,'center','500');
-  const bw2=Math.min(200,vpW-48); navBtn('‹ Back', cx-bw2/2, vpH-56, bw2, 42, ()=>menuBack(), {size:14});
+  const bw2=Math.min(200,vpW-48); navBtn('‹ Back', cx-bw2/2, vpH-58, bw2, 48, ()=>menuBack(), {size:14});
 }
 function drawOnlineJoin(){ const cx=vpW/2; navList=[];
   txt('ENTER ROOM CODE', cx, vpH*0.12, 22, COL.txt,'center','800');
@@ -3311,10 +3491,15 @@ function drawOnlineJoin(){ const cx=vpW/2; navList=[];
 }
 /* ============================ §8 SESSION / ROUND ============================ */
 let pendingMode='SURVIVE', pendingLevel=null, showHelp=false;
-function triggerAbduction(u){ if(round.finalized||!player.alive) return;
+function triggerAbduction(u,who){ if(round.finalized) return;
+  const A = who || player;
+  /* A partner being taken must not close YOUR studio or end YOUR round. Everything below the
+     mode branches is local-player-only; the partner path returns before it. */
+  if(A!==player){ if(round.mode==='SALVAGE') salvTaken(u,A); return; }
+  if(!player.alive) return;
   if(studio.open){ studio.open=false; studio.state='CLOSED'; } ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;   // reset BEFORE the TA respawn so mode never leaks
   if(round.mode==='TA'){ respawnTA(); return; }   // Time Attack: respawn with a time penalty, not game over
-  if(round.mode==='SALVAGE'){ salvTaken(u); return; }   // taken, not finished: see salvTaken
+  if(round.mode==='SALVAGE'){ salvTaken(u,player); return; }   // taken, not finished: see salvTaken
   player.alive=false; round.caught=true; round.caughtBy=u; roundState='CAUGHT'; player.abductT=0;
   addTrauma(TRAUMA.abduct); hitstopMs(110); punchZoom(0.12,200,600); screenFlash(0.85); vibe([80,60,120]); SFX.lose(); tone(180,0.9,'sine',0.34,1500); noise(0.9,0.12,2400); }
 function endRound(win){ if(round.finalized||roundState==='TIMEOUT'||roundState==='CAUGHT') return;
@@ -3344,7 +3529,8 @@ function startRound(entry, mode, diff, fixedSeed){
     spottedReason:'', reasonUntil:0, spottedFlash:0, summaryT:0, seed, summary:null,
     decoys:[], inks:[], lures:[], beacons:[], taBanked:0, heat:!!diff.heat, heatT:0, heatUfoT:0,
     cores:[], rig:null, carrying:0, delivered:0, cutter:false, cutTarget:null,
-    salvLives:(SALV_LIVES[diff.label]||3), tightenT:0, tightenN:0, diffBase:null };
+    salvLives:(SALV_LIVES[diff.label]||3), tightenT:0, tightenN:0, diffBase:null,
+    coop:false, mate:null };
   player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.dashRecT=0; player.cd={dash:0,decoy:0,ink:0,tongue:0,burrow:0,lure:0};
   player.lureLeft=LURE_CHARGES; player.pryT=0; player.cutT=0; player.cutOn=false;
   player.tongueT=0; player.burrowT=0;
@@ -3598,6 +3784,21 @@ function endTimeAttack(win){ if(round.finalized) return;
    abduction silently RAISED the number of cores you had to deliver, and enough of them made
    the round unwinnable. The objective is fixed at placement; dropped cores are recoveries. */
 function salvTotal(){ return round.coreTotal||round.cores.length; }
+// drop N more cores onto the shared pile, reusing the same terrain filter as placement
+function salvAddCores(n){
+  const BAD={lava:1,water:1,ice:1,void:1};
+  const src=openCells.filter(c=>!BAD[terrainAt(c.col,c.row)]);
+  let tries=0, added=0;
+  while(added<n && tries++<500 && src.length){
+    const c=src[(rng()*src.length)|0], x=(c.col+0.5)*TILE, y=(c.row+0.5)*TILE;
+    if(Math.hypot(x-player.x,y-player.y)<TILE*6) continue;
+    if(round.rig && Math.hypot(x-round.rig.x,y-round.rig.y)<TILE*7) continue;
+    let clash=false; for(const o of round.cores) if(Math.hypot(o.x-x,o.y-y)<TILE*(tries>320?4:6)){ clash=true; break; }
+    if(clash) continue;
+    round.cores.push({ x, y, taken:false, loose:false, hold:0, need:0 }); added++;
+  }
+  round.coreTotal=round.cores.length;
+}
 function pryNeed(n){ return PRY_BASE + n*PRY_STEP; }          // core n takes longer than core n-1
 function salvDone(){ return round.delivered>=salvTotal(); }
 function cutKillsNeeded(){ return Math.max(1, Math.ceil(round.diff.UFO_COUNT/3)); }
@@ -3608,28 +3809,31 @@ function liveShips(){ const a=[]; for(const u of round.ufos) if(!u.downed) a.pus
    256px and SCAN_R is 144-208, so anything recruited from inside the screen is information the
    player already had by looking, and the risk would be binary rather than a curve. Recruiting
    from off screen is what makes "can I finish before they arrive" a real question. */
-function pryRecruit(){
+function pryRecruit(){ pryRecruitAt(player); }
+function pryRecruitAt(A){
   const ships=liveShips().filter(u=>!u.remote && u.state!=='CHASE' && u.state!=='BEAM')
-    .sort((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)-Math.hypot(b.x-player.x,b.y-player.y));
+    .sort((a,b)=>Math.hypot(a.x-A.x,a.y-A.y)-Math.hypot(b.x-A.x,b.y-A.y));
   for(let i=0;i<Math.min(PRY_RECRUIT,ships.length);i++){
     const u=ships[i];
-    u.pryAng=Math.random()*TAU; u.pryJit=0.45+0.55*Math.random(); u.onPry=true;
+    u.pryAng=Math.random()*TAU; u.pryJit=0.45+0.55*Math.random(); u.onPry=true; u.pryOn=A;
     u.lastSuspectConf=0.8; u.suspicion=Math.max(u.suspicion,ENTER_INVEST);
     u.giveupTimer=0; u.state='INVESTIGATE';
   }
-  pryTighten(0);
+  pryTightenAt(A,0);
 }
-function pryTighten(p){                                        // p = 0..1 through the pry
+function pryTighten(p){ pryTightenAt(player,p); }
+function pryTightenAt(A,p){                                    // p = 0..1 through the pry
   const r=(PRY_PING_R0+(PRY_PING_R1-PRY_PING_R0)*clamp01(p));
   for(const u of round.ufos){ if(!u.onPry||u.downed) continue;
+    if(u.pryOn && u.pryOn!==A) continue;                       // that ship was told about the OTHER pry
     if(u.state==='CHASE'||u.state==='BEAM'){ u.onPry=false; continue; }
     const rr=r*u.pryJit;
-    u.lastSuspect.x=clamp(player.x+Math.cos(u.pryAng)*rr,0,worldW);
-    u.lastSuspect.y=clamp(player.y+Math.sin(u.pryAng)*rr,0,worldH);
+    u.lastSuspect.x=clamp(A.x+Math.cos(u.pryAng)*rr,0,worldW);
+    u.lastSuspect.y=clamp(A.y+Math.sin(u.pryAng)*rr,0,worldH);
     u.giveupTimer=0; u.suspicion=Math.max(u.suspicion,ENTER_INVEST);
   }
 }
-function pryCool(){ for(const u of round.ufos) u.onPry=false; }
+function pryCool(){ for(const u of round.ufos){ u.onPry=false; u.pryOn=null; } }
 
 function salvDeliver(){
   const n=round.carrying; if(!n) return;
@@ -3650,6 +3854,111 @@ function salvDeliver(){
   } else showToast('Core '+round.delivered+' of '+salvTotal()+' bolted on');
 }
 
+/* ============================ CO-OP SALVAGE ============================
+   Stephen, Aug 2: "i think 2 players still have to gather the stuff or maybe theres enough
+   for all of them to do it."
+
+   So: both players are chameleons, both gather, the fleet is AI. This is a different game
+   from the existing 1v1 (one chameleon versus one HUMAN alien), which stays exactly as it is.
+
+   The pile is SHARED and it SCALES. Enough cores that nobody is starved of work, but one pile
+   rather than two, so you have to split the map out loud - "I'll take the north two". Two
+   private piles would just be two solo games running side by side on the same screen.
+
+   Lives are a TEAM pool. Per-player lives mean the weaker player runs out first and then sits
+   watching, which is the worst thing you can do to the second person on the sofa.
+
+   The partner is simulated HERE, on the host, from the intent the guest sends. The guest
+   predicts its own movement locally and eases toward the host's authority, which is exactly
+   what the 1v1 guest already does for its saucer. computeCamoFor has always been written
+   against an actor rather than the global player (the bot hiders in Hunt mode use it), so the
+   partner gets real paint, real stillness and real concealment for free. */
+function makeMate(x,y){
+  return { x, y, prevx:x, prevy:y, vx:0, vy:0, facing:0, alive:true, pose:'stand',
+    currentPaint:{r:120,g:150,b:110}, targetPaint:{r:120,g:150,b:110},
+    currentPaint2:{r:120,g:150,b:110}, targetPaint2:{r:120,g:150,b:110}, splitPaint:false,
+    S:1, mq:0, mq2:0, m:0, conceal:0, C:1, ref:null, shifting:false,
+    freeze:false, freezeCap:MAX_CONCEAL_OPEN, dashT:0, dashDx:0, dashDy:0, dashFlare:0, dashRecT:0,
+    burrowT:0, tongueT:0, pryT:0, cutT:0, cutOn:false, carrying:0, carryHum:0,
+    lureLeft:LURE_CHARGES, cd:{dash:0,lure:0}, breathP:0 };
+}
+// the partner's movement, run from the guest's streamed intent
+function stepMate(dt){
+  const A=round.mate; if(!A||!A.alive) return;
+  A.prevx=A.x; A.prevy=A.y;
+  for(const k in A.cd) if(A.cd[k]>0) A.cd[k]=Math.max(0,A.cd[k]-dt);
+  if(A.dashRecT>0) A.dashRecT=Math.max(0,A.dashRecT-dt);
+  const dom = A.ref ? A.ref.dominantKey : 'grass';
+  let mult = MOVE_MULT[dom]!=null ? MOVE_MULT[dom] : MOVE_MULT._default;
+  mult *= 1 - BEAM_SLOW*mateBeamGrip();
+  if(A.dashRecT>0) mult*=DASH_RECOVER_MUL;
+  if(A.dashT>0){ A.dashT-=dt;
+    let nx=A.x+A.dashDx*DASH_SPEED*dt; if(!circleBlocked(nx,A.y)) A.x=nx; else A.dashT=0;
+    let ny=A.y+A.dashDy*DASH_SPEED*dt; if(!circleBlocked(A.x,ny)) A.y=ny; else A.dashT=0;
+  } else if(!A.freeze){
+    const mx=NET.mate.mx, my=NET.mate.my, mv=Math.hypot(mx,my);
+    const spd = mv<=IDLE_MAG ? 0 : (mv<=SNEAK_MAG ? PLAYER_CREEP : PLAYER_WALK);
+    const ux = mv>1e-4?mx/mv:0, uy = mv>1e-4?my/mv:0;
+    A.vx=ux*spd*mult; A.vy=uy*spd*mult;
+    let nx=A.x+A.vx*dt; if(!circleBlocked(nx,A.y)) A.x=nx; else A.vx=0;
+    let ny=A.y+A.vy*dt; if(!circleBlocked(A.x,ny)) A.y=ny; else A.vy=0;
+    if(spd>0) A.facing=Math.atan2(uy,ux);
+  } else { A.vx=0; A.vy=0; }
+  A.x=clamp(A.x,PLAYER_RADIUS,worldW-PLAYER_RADIUS); A.y=clamp(A.y,PLAYER_RADIUS,worldH-PLAYER_RADIUS);
+  crawlPaint(A,dt);
+  const sp=Math.hypot(A.x-A.prevx,A.y-A.prevy)/Math.max(dt,1e-6);
+  computeCamoFor(A, dt, sp);
+  A.carryHum=A.carrying*CARRY_C;
+  A.mateSpeed=sp;
+}
+function mateBeamGrip(){ if(!round||!round.ufos) return 0;
+  let g=0; for(const u of round.ufos){ if(!u.downed && u.state==='BEAM' && u.target===round.mate && u.beamCharge>g) g=u.beamCharge; }
+  return g; }
+// an ability the guest asked for, run against the partner actor
+function mateAbility(a, ax, ay){
+  const A=round.mate; if(!A||!A.alive||roundState!=='PLAYING') return;
+  if(a==='dash'){ if(A.cd.dash>0||A.dashT>0) return;
+    const n=Math.hypot(ax,ay)||1; A.dashDx=ax/n; A.dashDy=ay/n;
+    A.dashT=DASH_TIME; A.cd.dash=DASH_CD; A.dashFlare=DASH_FLARE_TIME; A.dashRecT=DASH_TIME+DASH_RECOVER_T; }
+  else if(a==='lure'){ if(A.cd.lure>0 || (A.lureLeft|0)<=0) return;
+    const n=Math.hypot(ax,ay)||1, dx=ax/n, dy=ay/n;
+    let tx=A.x+dx*LURE_R, ty=A.y+dy*LURE_R;
+    for(let s2=1.0; s2>0.15; s2-=0.08){ const cx=A.x+dx*LURE_R*s2, cy=A.y+dy*LURE_R*s2;
+      if(!circleBlocked(cx,cy)){ tx=cx; ty=cy; break; } }
+    round.lures.push({ x:tx, y:ty, life:LURE_LIFE, t:0 }); A.lureLeft--; A.cd.lure=LURE_CD; }
+}
+/* The partner's half of the objective: the same pry and the same delivery, against the same
+   shared pile. Kept separate from stepSalvage rather than generalised into it, because
+   stepSalvage also owns the round-wide things (the clock, the escalation, the win) and those
+   must happen exactly once per tick, not once per player. */
+function stepMateSalvage(dt){
+  const A=round.mate, R=round; if(!A||!A.alive) return;
+  for(const c of R.cores){ if(c.taken||!c.loose) continue;
+    if(A.carrying<CARRY_MAX && Math.hypot(c.x-A.x,c.y-A.y)<CORE_R*0.8){ c.taken=true; A.carrying++; } }
+  let onCore=null;
+  if(!R.cutter && A.carrying<CARRY_MAX)
+    for(const c of R.cores){ if(c.taken||c.loose) continue;
+      if(Math.hypot(c.x-A.x,c.y-A.y)<=CORE_R && !c.byPlayer){ onCore=c; break; } }
+  const still=(A.mateSpeed||0)<=MOVE_STILL_MAX && A.dashT<=0;
+  if(onCore && still && hide2pLeft()<=0 && R.spawnGrace<=0){
+    const need=pryNeed(R.delivered+R.carrying+A.carrying);
+    if((onCore.hold||0)<=0) pryRecruitAt(A);
+    onCore.hold=(onCore.hold||0)+dt; onCore.need=need; onCore.byMate=true;
+    A.pryT=onCore.hold;
+    pryTightenAt(A, onCore.hold/need);
+    if(onCore.hold>=need){ onCore.taken=true; onCore.hold=0; onCore.byMate=false; A.pryT=0; A.carrying++; pryCool(); }
+  } else { A.pryT=0; for(const c of R.cores) if(c.byMate && !c.taken){ c.byMate=false; } }
+  if(A.carrying>0 && Math.hypot(R.rig.x-A.x,R.rig.y-A.y)<RIG_R){
+    R.delivered+=A.carrying; A.carrying=0;
+    A.lureLeft=Math.min(9,(A.lureLeft|0)+1);
+    floatText(R.rig.x,R.rig.y-24,'PARTNER DELIVERED  '+R.delivered+'/'+salvTotal(),COL.cyan);
+    if(salvDone() && !R.cutter){ R.cutter=true;
+      for(const u of liveShips()){ u.lastSuspect.x=A.x; u.lastSuspect.y=A.y; u.suspicion=Math.max(u.suspicion,0.7);
+        u.giveupTimer=0; if(u.state==='PATROL'||u.state==='SCAN') u.state='INVESTIGATE'; }
+      showToast('⚡ CUTTER ONLINE. Bring one down.'); SFX.best(); }
+    else showToast('Partner bolted on core '+R.delivered+' of '+salvTotal());
+  }
+}
 function stepSalvage(dt, sp){
   const R=round, D=R.diff;
   // ---- pick up a core you dropped when they took you: no re-pry, it is already loose ----
@@ -3659,14 +3968,14 @@ function stepSalvage(dt, sp){
   // ---- PRY ----
   let onCore=null;
   if(!R.cutter && R.carrying<CARRY_MAX)
-    for(const c of R.cores){ if(c.taken||c.loose) continue;
+    for(const c of R.cores){ if(c.taken||c.loose||c.byMate) continue;
       if(Math.hypot(c.x-player.x,c.y-player.y)<=CORE_R){ onCore=c; break; } }
   const still = sp<=MOVE_STILL_MAX && player.tongueT<=0 && player.dashT<=0 && player.burrowT<=0;
   const canPry = !!onCore && still && hide2pLeft()<=0 && R.spawnGrace<=0;
   if(canPry){
     const need=pryNeed(R.delivered+R.carrying);
     if((onCore.hold||0)<=0){ pryRecruit(); SFX.ui(); }
-    onCore.hold=(onCore.hold||0)+dt; onCore.need=need;
+    onCore.hold=(onCore.hold||0)+dt; onCore.need=need; onCore.byPlayer=true;
     player.pryT=onCore.hold;                                    // computeCamoFor reads this
     pryTighten(onCore.hold/need);
     if(onCore.hold>=need){
@@ -3676,8 +3985,9 @@ function stepSalvage(dt, sp){
       showToast('Core in hand. Get it to the rig.'); vibe(30);
     }
   } else {
-    player.pryT=0; pryCool();
-    for(const c of R.cores) if(!c.taken && c.hold>0) c.hold=Math.max(0,c.hold-dt*PRY_DECAY);
+    player.pryT=0; for(const c of R.cores) if(c.byPlayer) c.byPlayer=false;
+    if(!round.coop) pryCool(); else for(const u of round.ufos) if(u.pryOn===player){ u.onPry=false; u.pryOn=null; }
+    for(const c of R.cores) if(!c.taken && c.hold>0 && !c.byMate) c.hold=Math.max(0,c.hold-dt*PRY_DECAY);
   }
   // ---- DELIVER (on contact: a camper has to catch you, not just stand there) ----
   if(R.carrying>0 && Math.hypot(R.rig.x-player.x,R.rig.y-player.y)<RIG_R) salvDeliver();
@@ -3733,16 +4043,24 @@ function stepSalvage(dt, sp){
   if(R.timeLeft<=0){ R.timeLeft=0; endSalvage(false); }
 }
 
-/* Being taken is a setback, not the end. Your cargo falls where you stood and stays there. */
-function salvTaken(u){
+/* Being taken is a setback, not the end. Your cargo falls where you stood and stays there,
+   which in co-op is a rescue your partner can run in and make. Lives are a TEAM pool: per
+   player would mean somebody sits out watching, which is the worst thing you can do to the
+   second person on the sofa. */
+function salvTaken(u,who){
+  const A = who || player;
   round.salvLives--;
-  for(let i=0;i<round.carrying;i++)
-    round.cores.push({ x:clamp(player.x+(Math.random()*44-22),TILE,worldW-TILE),
-                       y:clamp(player.y+(Math.random()*44-22),TILE,worldH-TILE),
+  const carried = (A===player) ? round.carrying : (A.carrying||0);
+  for(let i=0;i<carried;i++)
+    round.cores.push({ x:clamp(A.x+(Math.random()*44-22),TILE,worldW-TILE),
+                       y:clamp(A.y+(Math.random()*44-22),TILE,worldH-TILE),
                        taken:false, loose:true, hold:0 });
-  round.carrying=0; player.pryT=0; player.cutT=0; player.cutOn=false; pryCool();
+  if(A===player){ round.carrying=0; player.pryT=0; player.cutT=0; player.cutOn=false; }
+  else { A.carrying=0; A.pryT=0; A.cutT=0; A.cutOn=false; }
+  pryCool();
   addTrauma(TRAUMA.abduct*0.6); screenFlash(0.6); vibe([60,50,90]); SFX.lose();
   if(round.salvLives<=0){
+    if(round.mate) round.mate.alive=false;
     player.alive=false; round.caught=true; round.caughtBy=u; roundState='CAUGHT'; player.abductT=0;
     hitstopMs(110); punchZoom(0.12,200,600); tone(180,0.9,'sine',0.34,1500); noise(0.9,0.12,2400);
     return;
@@ -3750,9 +4068,9 @@ function salvTaken(u){
   // hauled up and dumped somewhere else on the map
   const hiders=MAP.spawns.filter(s=>s.role==='hider');
   let bestS=null,bd=-1;
-  for(const h of hiders){ const d=Math.hypot((h.x+0.5)*TILE-player.x,(h.y+0.5)*TILE-player.y); if(d>bd){bd=d;bestS=h;} }
-  if(bestS){ player.x=(bestS.x+0.5)*TILE; player.y=(bestS.y+0.5)*TILE; }
-  player.vx=0; player.vy=0; player.S=1;
+  for(const h of hiders){ const d=Math.hypot((h.x+0.5)*TILE-A.x,(h.y+0.5)*TILE-A.y); if(d>bd){bd=d;bestS=h;} }
+  if(bestS){ A.x=(bestS.x+0.5)*TILE; A.y=(bestS.y+0.5)*TILE; }
+  A.vx=0; A.vy=0; A.S=1;
   round.spawnGrace=SPAWN_GRACE*1.6; round.timeLeft=Math.max(0,round.timeLeft-SALV_TAKE_COST);
   for(const s of round.ufos){ s.suspicion=0; s.state='PATROL'; s.beamCharge=0; s.onPry=false; }
   showToast('TAKEN. They dropped you across the map.  ('+round.salvLives+' left, −'+SALV_TAKE_COST+'s)');
@@ -3782,7 +4100,20 @@ function endSalvage(win){ if(round.finalized) return;
   PROGRESS.stats.plays++; saveProgress(); checkUnlocks(); if(round.summary.isBest) SFX.best();
   round.summary.xp=Math.round(score/10)+(win?90:20); awardXP(round.summary.xp); checkChallenges(round.summary);
   if(win && !round.online) portalEarn('round_win', score);
+  if(round.online==='host') netSend({k:'cend', win:win?1:0, dv:del, dn:downed, lv:round.salvLives, sc:score, gr:grade});
   appState='SUMMARY'; menuIndex=0;
+}
+// the guest builds its own summary from the host's verdict, same shape as endSalvage's
+function netCoopEnd(d){
+  if(!round||round.finalized) return;
+  round.finalized=true; stopAllLoops();
+  if(studio.open){ studio.open=false; studio.state='CLOSED'; }
+  ctrlMode='MOVE'; camPan.x=0; camPan.y=0; camLock=false; pinch=null;
+  round.summary={ outcome:d.win?'WIN':'LOSE', salv:true, coop:true,
+    delivered:d.dv|0, total:salvTotal(), downed:d.dn|0, lives:d.lv|0, cutter:!!round.cutter,
+    score:d.sc|0, grade:d.gr||'C', survSec:0, timeUsed:0, avgBlendPct:0, streak:0,
+    near:0, spotted:0, isBest:false, prevBest:0, t0:nowMs() };
+  appState='SUMMARY'; menuIndex=0; SFX[d.win?'win':'lose']();
 }
 
 function stepSim(dt){
@@ -3794,9 +4125,9 @@ function stepSim(dt){
     return;
   }
   if(roundState!=='PLAYING') return;
-  if(round.online==='guest'){ stepGuestNet(dt); return; }        // P20: the hunter's world is streamed, not simulated
+  if(round.online==='guest'){ if(round.coop) stepCoopGuest(dt); else stepGuestNet(dt); return; }   // P20/co-op: the world is streamed, not simulated
   if(round.mode==='HUNT'){ stepHunt(dt); return; }
-  if(round.online==='host') stepHostNet(dt);                     // P20: stream snapshots to the hunter
+  if(round.online==='host'){ if(round.coop) stepCoopHost(dt); else stepHostNet(dt); }   // stream snapshots to the other player
   const slow=(round.diff.practice && (studio.open || ctrlMode==='INSPECT'))?STUDIO_SLOWMO:1; dt*=slow;
   player.prevx=player.x; player.prevy=player.y;
   gatherInput(); movePlayer(dt);
@@ -3804,6 +4135,9 @@ function stepSim(dt){
   if(sp>0.5) player.facing=Math.atan2(player.y-player.prevy, player.x-player.prevx);
   /* SALVAGE steps BEFORE computeCamo on purpose: the pry cap has to be set on the same tick
      that produces the C the ships then sense in updateBots, or the glow arrives a frame late. */
+  // authority, not role: the host runs this, and so does a local co-op round with no peer.
+  // Only the GUEST must not, because over there the partner is a streamed body.
+  if(round.coop && round.online!=='guest'){ stepMate(dt); stepMateSalvage(dt); }
   if(round.mode==='SALVAGE'){ player.carryHum=round.carrying*CARRY_C; stepSalvage(dt, sp); }
   computeCamo(dt, sp); maybeFootstep(dt); maybePaintDrip(dt);
   updateBlendSnap(dt);                              // P8-5 melt-in payoff
@@ -4250,7 +4584,12 @@ function drawDifficulty(){ const cx=vpW/2; const hunt=pendingMode==='HUNT', salv
 }
 function drawSummary(){ const cx=vpW/2, s=round.summary; if(!s){ gotoTitle(); return; }
   // P20: the host announces the verdict exactly once; the guest builds its own summary from it
-  if(round.online==='host' && !round._netEnd){ round._netEnd=1;
+  /* Co-op announces its own verdict from endSalvage ({k:'cend'}) because the two players are
+     on the SAME side and "hider won / hunter won" is meaningless. Sending this as well made the
+     guest run netGuestEnd too, which reaches into round.bots - an array a co-op guest does not
+     have, because it is in a SALVAGE round and bots only exist in HUNT. It threw on every
+     single co-op round ending. */
+  if(round.online==='host' && !round.coop && !round._netEnd){ round._netEnd=1;
     netSend({k:'end', win: s.outcome==='WIN' ? 'hider' : 'hunter', score:s.score}); }
   const win=s.outcome==='WIN', hunt=!!s.hunt, ta=!!s.ta, salv=!!s.salv;
   if(round.online){ txt(NET.role==='host'?'🌐 you HID — human hunter':'🌐 you HUNTED — human hider', cx, vpH*0.14-24, 11, COL.cyan,'center','700'); }
@@ -4649,7 +4988,14 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   world:{ w:worldW, h:worldH, cols:mapCols, rows:mapRows },
   tune: round?{ label:round.diff.label, chase:Math.round(round.diff.CHASE_SPD||0), track:Math.round(round.diff.BEAM_TRACK_SPD||0),
                 lock:round.diff.LOCK_TIME, beamR:BEAM_R, breakR:BEAM_BREAK_R, walk:PLAYER_WALK }:null,
-  net:{ status:NET.status, role:NET.role, code:NET.code, peer:NET.peer, online:round?(round.online||null):null },
+  net:{ status:NET.status, role:NET.role, code:NET.code, peer:NET.peer, online:round?(round.online||null):null, coop:!!NET.coop },
+  coop: round&&round.coop?{ role:round.online, mate:round.mate?{x:Math.round(round.mate.x),y:Math.round(round.mate.y),
+      alive:!!round.mate.alive, carrying:round.mate.carrying|0, conceal:+(round.mate.conceal||0).toFixed(2),
+      C:+(round.mate.C||0).toFixed(2), pryT:+(round.mate.pryT||0).toFixed(2), lureLeft:round.mate.lureLeft|0 }:null,
+    delivered:round.delivered, total:salvTotal(), cores:round.cores.length,
+    left:round.cores.filter(c=>!c.taken).length, cutter:!!round.cutter, lives:round.salvLives,
+    carrying:round.carrying|0, lures:round.lures.length,
+    targets:round.ufos.filter(u=>!u.downed).map(u=>u.target===round.mate?'mate':(u.target===player?'me':'-')) }:null,
   embed:{ embedded:EMBED, lsOk:LS_OK },
   move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},
   speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
@@ -4668,6 +5014,13 @@ try{ window.__aac = { get state(){ return { appState, roundState,
       // test can reach a late-round state in seconds instead of playing four minutes to it.
       dropCore(x,y){ if(round&&round.cores) round.cores.push({x:x,y:y,taken:false,loose:false,hold:0,need:0}); },
       setClock(sec){ if(round) round.timeLeft=sec; },
+      /* Start a CO-OP round with no peer, so the simulation half (partner body, shared pile,
+         a fleet that can target either of us, team lives) can be gated in ONE process instead
+         of through two clients and a relay. The wire half is coop.js's job. */
+      coopSolo(){ const e=LEVELS[0]; if(!e||!e.data) return false;
+        NET.coop=true; netStartCoopHost(e, 12345); round.online=null; return true; },
+      mateTo(x,y){ if(round&&round.mate){ round.mate.x=x; round.mate.y=y; round.mate.vx=0; round.mate.vy=0; } },
+      mateCarry(n2){ if(round&&round.mate) round.mate.carrying=n2|0; },
       snapCam(){ if(round){ cam.x=player.x; cam.y=player.y; camFollow.x=player.x; camFollow.y=player.y; camPan.x=0; camPan.y=0; } },
       skipCountdown(){ if(round && (roundState==='COUNTDOWN'||roundState==='RESUME_COUNTDOWN')){ round.countdown=0; roundState='PLAYING'; } },
       /* Advance the SIMULATION without drawing. The headless renderer leaks about 17MB of
