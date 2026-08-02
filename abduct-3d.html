@@ -178,7 +178,13 @@
     padding:0 14px; border-radius:12px; cursor:pointer; touch-action:manipulation;
     background:rgba(63,208,224,.14); border:1.5px solid var(--cyan); color:var(--cyan);
     font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.12em }
-  #lobby{ position:fixed; left:12px; top:170px; z-index:14; display:flex; flex-direction:column; gap:6px }
+  /* ⛔ ONE COLUMN, ONE ANCHOR. START ROUND used to be a separate fixed button at
+     top:114 while the lobby started at 170, so adding the room row pushed the
+     player-count line down underneath the JUMP button - the one line that tells
+     you whether your friend is actually in the room was hidden behind a control. */
+  #lobby{ position:fixed; left:12px; top:104px; z-index:14; display:flex; flex-direction:column; gap:6px }
+  #lobby #tStart{ position:static; top:auto; left:auto; width:100%; min-width:0 }
+  #lobby #tStart.hidden{ display:none }
   #lobby.hidden{ display:none }
   #lobby .lrow{ display:flex; gap:6px; align-items:center }
   #lobby .lbtn{ min-height:44px; min-width:70px; padding:0 10px; border-radius:11px; cursor:pointer;
@@ -189,7 +195,10 @@
   #lobTimeVal{ font-family:var(--mono); font-size:13px; font-weight:800; color:var(--txt);
     min-width:52px; text-align:center }
   #lobWho{ font-family:var(--mono); font-size:9.5px; letter-spacing:.06em; color:var(--muted-2);
-    max-width:190px; line-height:1.35 }
+    max-width:210px; line-height:1.35 }
+  #lobRoom{ font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.16em;
+    color:var(--amber) }
+  #lobby .lbtn.ok{ border-color:var(--cyan); color:var(--cyan) }
   #hwClose{ display:none }
   #hidewait.spec #hwClose{ display:block }
   #tStart{ position:fixed; left:12px; top:114px; z-index:14; min-height:48px; min-width:132px;
@@ -635,6 +644,7 @@
        have the abiulity to change the time somehow or the game host can set it."
        Everything here is edge chrome - the middle of the screen stays the game. -->
   <div id="lobby" class="hidden">
+    <button id="tStart" type="button" class="hidden">START ROUND</button>
     <div class="lrow" id="lobTeam">
       <button id="tTeamHide" class="lbtn" type="button">HIDE</button>
       <button id="tTeamSeek" class="lbtn" type="button">SEEK</button>
@@ -644,12 +654,16 @@
       <span id="lobTimeVal">2:00</span>
       <button id="tTimeUp" class="lbtn sq" type="button">+</button>
     </div>
+    <div class="lrow" id="lobRoomRow">
+      <button id="tCopyLink" class="lbtn" type="button">COPY LINK</button>
+      <span id="lobRoom">—</span>
+    </div>
     <div id="lobWho"></div>
   </div>
   <!-- A round is something you ASK FOR now. Before 2026-08-02 one started by
        itself the moment a second connection appeared, which put one of you in a
        UFO and both of you on a 120s clock nobody chose. -->
-  <button id="tStart" type="button" class="hidden">START ROUND</button>
+
   <div id="tapStart"><div class="big">▶ TAP TO PLAY</div><div class="sm">goes fullscreen · sound on</div></div>
 
   <div id="howto"><div class="in">
@@ -975,6 +989,10 @@ const LOCK_TIME = 2.2;          // sec of sustained beam to abduct
    now, so the head start is the painting window. */
 const HIDE_SECONDS = 120;       // the default head start: two minutes, as asked
 const HIDE_MIN = 60, HIDE_MAX = 300, HIDE_STEP = 30;   // the host may set 1-5 minutes
+/* ⛔ a build stamp on screen, because "is he even running the new one" cost a
+   whole test session. The room link carries whatever ?v= the host's tab had, so
+   an old link quietly hands an old build to everybody who opens it. */
+const BUILD = '0802q';
 let hideSecsLocal = null;       // the host's own copy, so a burst of taps all land
 const ROUND_SECONDS = 150;
 const INTERMISSION = 7;
@@ -5463,6 +5481,22 @@ function setupPaintUI(){
   if(_tp) _tp.onclick = ()=> togglePractice();
   const _ts = document.getElementById('tStart');
   if(_ts) _ts.onclick = ()=>{ setState('startReq', true, true); SFX.click(); };
+  /* ⛔ THERE WAS NO WAY TO INVITE ANYBODY FROM INSIDE THE GAME. The room lives
+     in location.hash and the only way to hand it over was to read the address
+     bar out loud. That is the whole reason a second device may never have been
+     in the same room. */
+  const _cl = document.getElementById('tCopyLink');
+  if(_cl) _cl.onclick = ()=>{
+    const url = location.href;
+    const done = ()=>{ _cl.textContent = 'LINK COPIED'; _cl.classList.add('ok');
+      setTimeout(()=>{ _cl.textContent = 'COPY LINK'; _cl.classList.remove('ok'); }, 2200); };
+    try{
+      if(navigator.clipboard && navigator.clipboard.writeText)
+        navigator.clipboard.writeText(url).then(done, ()=>prompt('Copy this link:', url));
+      else prompt('Copy this link:', url);
+    }catch(_){ prompt('Copy this link:', url); }
+    SFX.click();
+  };
   const _th = document.getElementById('tTeamHide'), _tk = document.getElementById('tTeamSeek');
   if(_th) _th.onclick = ()=>{ me && me.setState('team','hide', true); SFX.click(); };
   if(_tk) _tk.onclick = ()=>{ me && me.setState('team','seek', true); SFX.click(); };
@@ -6681,7 +6715,15 @@ function updateHUD(role, abd){
     /* the lobby only exists when there is a lobby: two or more people, waiting */
     const lob = $('lobby');
     if(lob){
-      const show = ph === 'waiting' && players.length > 1;
+      /* ⛔⛔ WAS `players.length > 1`, AND THAT IS WHY HE COULD NOT PICK A TEAM.
+         If the two devices are not in the SAME ROOM, every client sees exactly
+         one player - so the lobby never appeared, START ROUND never appeared,
+         and the game silently looked identical to the build before any of this
+         was written. There was also nothing on screen that told him whether the
+         other person had actually joined. The lobby is now up the moment you are
+         waiting, alone or not: it shows the room, how many are in it, and a link
+         to hand over. You can set your side before anyone else arrives. */
+      const show = ph === 'waiting';
       lob.classList.toggle('hidden', !show);
       if(show){
         const mine = (me && me.getState('team')) || null;
@@ -6695,9 +6737,17 @@ function updateHUD(role, abd){
         $('tTimeUp').style.opacity   = host ? '1' : '.35';
         const seek = players.filter(p=> p.state.getState('team')==='seek').length;
         const hide = players.length - seek;
-        $('lobWho').textContent = seek === 0
-          ? 'Nobody has picked SEEK — one of you will be chosen at random.'
-          : (seek + ' hunting · ' + hide + ' hiding' + (host ? '' : ' · the host sets the time'));
+        const room = (location.hash.match(/r=([A-Za-z0-9_-]+)/) || [,''])[1];
+        $('lobRoom').textContent = room ? ('ROOM ' + room) : 'ROOM —';
+        /* ⭐ SAY HOW MANY ARE HERE. Two people in two different rooms each see a
+           game that looks completely normal and never starts. The count is the
+           one fact that makes that visible instantly. */
+        $('lobWho').textContent = players.length < 2
+          ? 'Only you in this room. Send the link to play together. (build ' + BUILD + ')'
+          : (players.length + ' players · ' + (seek === 0
+              ? 'nobody picked SEEK, one will be chosen'
+              : seek + ' hunting, ' + hide + ' hiding')
+             + (host ? '' : ' · the host sets the time'));
       }
     }
     /* ⛔ AND HIDE THE SOLO PRACTICE TOGGLE. It is also labelled HUNT, so with the

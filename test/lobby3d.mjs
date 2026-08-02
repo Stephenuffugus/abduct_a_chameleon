@@ -110,6 +110,9 @@ const lobUp = await Promise.all([A,B].map(c => c.p.evaluate(()=>{
   return { vis: l && !l.classList.contains('hidden'),
            hide:r('tTeamHide'), seek:r('tTeamSeek'),
            time: document.getElementById('lobTimeVal').textContent,
+           room: (document.getElementById('lobRoom')||{}).textContent || '',
+           copy: (()=>{ const e=document.getElementById('tCopyLink'); if(!e) return null;
+                        const b=e.getBoundingClientRect(); return {h:Math.round(b.height)}; })(),
            who: document.getElementById('lobWho').textContent,
            duplicateHunt: !document.getElementById('tPractice').classList.contains('hidden') };
 })));
@@ -117,7 +120,14 @@ console.log('3 the lobby   ', JSON.stringify(lobUp[0]));
 if(!lobUp[0].vis || !lobUp[1].vis) bad.push('the lobby is not shown to both players');
 if(lobUp[0].hide.h < 44 || lobUp[0].seek.h < 44) bad.push('the team buttons are under 44px');
 if(lobUp[0].time !== '2:00') bad.push(`the hide clock does not default to two minutes (${lobUp[0].time})`);
-if(!/random/i.test(lobUp[0].who)) bad.push('with nobody picked, the lobby does not say one will be chosen');
+if(!/chosen|random/i.test(lobUp[0].who)) bad.push('with nobody picked, the lobby does not say one will be chosen');
+/* ⛔⛔ THE TWO FACTS THAT COST A WHOLE TEST SESSION. If two devices are not in the
+   same room each one sees a perfectly normal game that simply never starts, and
+   nothing on screen says so. The lobby must show WHICH room you are in, HOW MANY
+   are in it, and give you a link to hand over. */
+if(!/^ROOM [A-Za-z0-9_-]+$/.test(lobUp[0].room)) bad.push(`the lobby does not show a room code ("${lobUp[0].room}")`);
+if(!/2 players/.test(lobUp[0].who)) bad.push(`the lobby does not say how many are in the room ("${lobUp[0].who}")`);
+if(!lobUp[0].copy || lobUp[0].copy.h < 44) bad.push('there is no 44px COPY LINK button to invite anybody with');
 if(lobUp[0].duplicateHunt) bad.push('the solo HUNT button is still up beside the SEEK button - two controls labelled hunt');
 
 // A asks to seek, B asks to hide
