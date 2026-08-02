@@ -1347,6 +1347,8 @@ function onPointerDown(e){
       pointers.set(id,{sx,sy,role:'lvscroll',sy0:sy,scroll0:levelScroll,moved:false,app:appState}); return; }
     if(appState==='MODE_SELECT' && modeMaxScroll>0 && !showHelp && sy<vpH-60){   // the fixed Back button is never part of the scroll band
       pointers.set(id,{sx,sy,role:'mdscroll',sy0:sy,scroll0:modeScroll,moved:false,app:appState}); return; }
+    if(appState==='FILES' && filesMaxScroll>0 && !showHelp && !filesOpen && sy<vpH-70){
+      pointers.set(id,{sx,sy,role:'fscroll',sy0:sy,scroll0:filesScroll,moved:false,app:appState}); return; }
     handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
   // ROUND — paused overlay is a menu (uses navList)
   if(roundState==='PAUSED'){ handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
@@ -1413,6 +1415,8 @@ function onPointerMove(e){
     if(p.moved) levelScroll=clamp(p.scroll0-(sy-p.sy0),0,levelMaxScroll); }
   else if(p.role==='mdscroll'){ if(Math.abs(sy-p.sy0)>TAP_SLOP) p.moved=true;
     if(p.moved) modeScroll=clamp(p.scroll0-(sy-p.sy0),0,modeMaxScroll); }
+  else if(p.role==='fscroll'){ if(Math.abs(sy-p.sy0)>TAP_SLOP) p.moved=true;
+    if(p.moved) filesScroll=clamp(p.scroll0-(sy-p.sy0),0,filesMaxScroll); }
 }
 function onPointerUp(e){
   const cancelled = e.type==='pointercancel';   // a cancelled gesture must never fire tap actions
@@ -1428,6 +1432,7 @@ function onPointerUp(e){
   }
   else if(p.role==='lvscroll' && !p.moved && !cancelled && appState===p.app){ handleMenuTap(p.sx,p.sy); }         // level-select tap fires on clean release, same screen only
   else if(p.role==='mdscroll' && !p.moved && !cancelled && appState===p.app){ handleMenuTap(p.sx,p.sy); }         // same for the mode list
+  else if(p.role==='fscroll' && !p.moved && !cancelled && appState===p.app){ handleMenuTap(p.sx,p.sy); }          // and the files list
 }
 
 /* ---- movement + collision (§5.3) ---- */
@@ -4154,7 +4159,7 @@ let filesRead = (function(){ try{ const r=JSON.parse(localStorage.getItem(AAC_RE
 function filesSaveRead(){ try{ localStorage.setItem(AAC_READ_KEY, JSON.stringify([...filesRead])); }catch(_){} }
 function filesBank(){ return (typeof window!=='undefined' && window.AAC_FILES) ? window.AAC_FILES : []; }
 const AAC_THREAD_NAME = { FR:'FIELD REPORT', SF:'SUBJECT FILE', HW:'THE HOMEWORLD', IW:'INTERCEPTED WHISPER' };
-let filesOpen=false, filesPage=null, filesScroll=0, filesHits=[];
+let filesOpen=false, filesPage=null, filesScroll=0, filesMaxScroll=0, filesHits=[];
 function filesPick(){
   const bank=filesBank(); if(!bank.length) return null;
   const fresh=bank.filter(p=>!filesRead.has(p.n));
@@ -4197,7 +4202,7 @@ function drawFilesOverlay(secsLeft){
   uiBtn('CLOSE', x+pad+bw+10, y+h-26, bw, 48, ()=>{ filesClose(); SFX.back&&SFX.back(); }, {rad:9,size:11});
 }
 function drawFilesScreen(){
-  const cx=vpW/2, bank=filesBank();
+  const cx=vpW/2, bank=filesBank(); navList=[];
   const have=bank.filter(p=>filesRead.has(p.n)).length;
   txt('THE ABDUCTION FILES', cx, vpH*0.11, 22, COL.txt,'center','800');
   txt(have+' of '+AAC_FILES_TOTAL+' pages recovered', cx, vpH*0.11+22, 11, COL.muted,'center','500');
@@ -4205,8 +4210,20 @@ function drawFilesScreen(){
   const listTop=vpH*0.11+56, listH=vpH-listTop-70;
   const rowH=34, w=Math.min(340,vpW-40), x=cx-w/2;
   const sorted=bank.slice().sort((a,b)=>a.n-b.n);
-  const maxScroll=Math.max(0, sorted.length*rowH-listH);
-  filesScroll=clamp(filesScroll,0,maxScroll);
+  /* ⛔⛔⛔ 880 PAGES OF WRITING THAT NOBODY COULD OPEN OR SCROLL PAST ROW SEVEN.
+     The rows were registered in `roundHits`, and onPointerDown only ever consults
+     roundHits while appState==='ROUND' - this screen is appState==='FILES', so not one
+     row was tappable by touch, mouse, keyboard or gamepad. `filesScroll` was clamped
+     every frame and written by nothing at all, so the list was pinned at offset 0 and
+     showed the first seven entries of eight hundred and eighty, all of them reading
+     "not yet recovered" because pages are sorted by number and you recover them at
+     random. An entire shipped feature, dead on arrival, presented as an empty archive.
+     (roundHits is also never cleared outside a round, so every frame on this screen
+     leaked another set of rects into an array that only grows.)
+     Rows belong in navList, which is the list every menu screen is driven from, and
+     the scroll extent has to be published for a drag handler to move. */
+  filesMaxScroll=Math.max(0, sorted.length*rowH-listH);
+  filesScroll=clamp(filesScroll,0,filesMaxScroll);
   filesHits=[];
   ctx.save(); ctx.beginPath(); ctx.rect(x,listTop,w,listH); ctx.clip();
   for(let i=0;i<sorted.length;i++){
@@ -4216,10 +4233,14 @@ function drawFilesScreen(){
     panel(x,ry+2,w,rowH-6,7);
     txt(String(p.n).padStart(4,'0'), x+12, ry+rowH/2, 10, got?COL.cyan:'rgba(120,130,155,0.6)','left','700');
     txt(got?p.h:'not yet recovered', x+52, ry+rowH/2, 11, got?COL.txt:'rgba(120,130,155,0.6)','left', got?'600':'500');
-    if(got) filesHits.push({x:x,y:ry+2,w:w,h:rowH-6,fn:()=>{ filesPage=p; filesOpen=true; SFX.ui&&SFX.ui(); }});
+    // clip the hit rect to the visible band so a row scrolled under the header cannot be tapped
+    const vy0=Math.max(ry+2,listTop), vy1=Math.min(ry+rowH-4,listTop+listH);
+    if(got && vy1-vy0>8) navList.push({x:x,y:vy0,w:w,h:vy1-vy0,label:'page '+p.n,
+      fn:()=>{ filesPage=p; filesOpen=true; SFX.ui&&SFX.ui(); }});
   }
   ctx.restore();
-  for(const hh of filesHits) roundHits.push(hh);
+  if(filesMaxScroll){ const sbH=listH*listH/(sorted.length*rowH), sbY=listTop+(listH-sbH)*(filesScroll/filesMaxScroll);
+    ctx.fillStyle='rgba(120,130,155,0.30)'; rr(x+w-4,sbY,3,sbH,2); ctx.fill(); }
   if(!bank.length) txt('the bank is still being written', cx, listTop+40, 12, COL.muted,'center','500');
   navBtn('\u2039  Back', cx-Math.min(150,vpW*0.35), vpH-56, Math.min(300,vpW*0.7), 44, ()=>{ gotoTitle(); }, {size:14});
   if(filesOpen && filesPage) drawFilesOverlay(null);
@@ -4811,7 +4832,17 @@ function frame(now){
       acc+=simDt; let steps=0; while(acc>=DT_FIXED && steps<5){ stepSim(DT_FIXED); acc-=DT_FIXED; steps++; }
       if(steps>=5) acc=0;
     }
-    if(roundState==='CAUGHT'){ player.abductT+=realDt; if(player.abductT>=ABDUCT_CUTSCENE) finishRound('LOSE'); }
+    /* ⛔⛔ THE MOST COMMON LOSS IN SALVAGE NEVER REACHED ITS OWN ENDING. Running out
+       of lives set roundState='CAUGHT' and returned, and this line then handed it to
+       finishRound - the SURVIVE ending, whose score is built out of survival seconds,
+       average blend and hidden streaks. So a run that delivered NOTHING and got
+       abducted three times was scored on how long it had been good at hiding: S grade,
+       thousands of points, NEW BEST and a full XP payout, written into the same
+       display|SALVAGE|difficulty personal-best key a real win writes to. Doing nothing
+       outscored playing the mode. endSalvage already had a correct loss path - lives
+       remaining, cores delivered, cutter, ships downed - and nothing ever called it. */
+    if(roundState==='CAUGHT'){ player.abductT+=realDt;
+      if(player.abductT>=ABDUCT_CUTSCENE){ if(round.mode==='SALVAGE') endSalvage(false); else finishRound('LOSE'); } }
     else if(roundState==='TIMEOUT'){ round.summaryT+=realDt; if(round.summaryT>=TIMEOUT_ANIM) finishRound('WIN'); }
     updateParticles(realDt); updateAmbient(realDt); updateChameleonAnim(realDt); updateCamera(realDt);
     if(roundState==='PLAYING') stepTour(realDt);   // P14: the tour tracks REAL time (practice slow-mo would stall its steps)
@@ -4913,6 +4944,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   tour:{active:tut.active, step:tut.step}, levelOrder:levelOrderNames,
   region: round?{ biome:round.biome||null, tuned:round.diff._regionTuned||null, scanR:Math.round(round.diff.SCAN_R||0) }:null,
   world:{ w:worldW, h:worldH, cols:mapCols, rows:mapRows },
+  filesOpen:!!filesOpen, filesScroll:Math.round(filesScroll), filesMaxScroll:Math.round(filesMaxScroll), filesOwned:filesRead.size,
   vp:{ w:vpW, h:vpH, dpr:+dpr.toFixed(2), hudScale:+hudScale.toFixed(2) },   // what the game THINKS the screen is
   tune: round?{ label:round.diff.label, chase:Math.round(round.diff.CHASE_SPD||0), track:Math.round(round.diff.BEAM_TRACK_SPD||0),
                 lock:round.diff.LOCK_TIME, beamR:BEAM_R, breakR:BEAM_BREAK_R, walk:PLAYER_WALK }:null,

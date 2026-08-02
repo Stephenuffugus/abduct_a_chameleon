@@ -289,6 +289,23 @@ function deliver(W,maxSec){
         for(let f=0; f<180 && !over; f+=6){ W.pump(6); if(W.S().appState==='SUMMARY') over=true; } }
       ok('F: but enough of them does end it', over || W.S().appState==='SUMMARY',
          'appState='+W.S().appState+' lives='+(W.S().salv&&W.S().salv.lives));
+      /* ⛔⛔ AND IT HAS TO BE SALVAGE'S OWN ENDING. This gate used to stop at "the round
+         ended", which is the assertion that let the real bug ship: running out of lives
+         set roundState='CAUGHT' and fell through to finishRound, the SURVIVE ending,
+         whose score is survival seconds + average blend + hidden streaks. A run that
+         delivered nothing and was abducted three times came out S grade, thousands of
+         points and NEW BEST, into the same personal-best key a real win writes to.
+         Doing nothing outscored playing. Check the SHAPE of the summary, and check that
+         a total failure is graded like one. */
+      const sm = W.S().summary || {};
+      ok('F: the loss uses SALVAGE\'s own summary, not SURVIVE\'s',
+         sm.salv===true && sm.outcome==='LOSE' && typeof sm.delivered==='number' && typeof sm.cutter!=='undefined',
+         JSON.stringify({salv:sm.salv, outcome:sm.outcome, delivered:sm.delivered, cutter:sm.cutter, grade:sm.grade}));
+      ok('F: delivering nothing and being taken three times is not an S',
+         sm.delivered>0 || (sm.grade!=='S' && sm.grade!=='A'),
+         'delivered='+sm.delivered+' grade='+sm.grade+' score='+sm.score);
+      ok('F: and it is not a personal best',
+         sm.delivered>0 || sm.isBest!==true, 'isBest='+sm.isBest+' score='+sm.score+' prevBest='+sm.prevBest);
       ok('F: no runtime errors', W.errors.length===0, W.errors.slice(0,2).join(' | '));
     }
   }
