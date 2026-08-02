@@ -1262,7 +1262,7 @@ const HIDE_MIN = 60, HIDE_MAX = 300, HIDE_STEP = 30;   // the host may set 1-5 m
 /* ⛔ a build stamp on screen, because "is he even running the new one" cost a
    whole test session. The room link carries whatever ?v= the host's tab had, so
    an old link quietly hands an old build to everybody who opens it. */
-const BUILD = '0802v';
+const BUILD = '0802w';
 let hideSecsLocal = null;       // the host's own copy, so a burst of taps all land
 const ROUND_SECONDS = 150;
 const INTERMISSION = 7;
@@ -2428,6 +2428,18 @@ function makeRandomMap(seed){
      AABB by PLAYER_RADIUS into the gap and narrows a 1.8m opening to nothing. */
   for(const k2 of doorSet){
     const c = k2.split(','), dx = +c[0], dy = +c[1];
+    /* ⭐ A DOORWAY SHOULD LOOK LIKE ONE. Until now a door was the ABSENCE of a
+       wall - a gap in a run, indistinguishable at a glance from a bit of wall
+       the generator happened not to place. A hunter searching a block on foot
+       has to read a whole facade and find the way in, so the way in has to
+       announce itself: a timber frame, jambs flush to the flanking walls and a
+       lintel across the top.
+       Emitted straight into objs rather than through put(), because these cells
+       are about to be RESERVED and put() would refuse them - the reservation is
+       what stops the cover pass dropping a boulder in the doorway. */
+    const vertRun = wallSet.has(ckey(dx,dy-1)) || wallSet.has(ckey(dx,dy+1));
+    objs.push({ x:dx, y:dy, type: vertRun ? 'doorway_ns' : 'doorway_ew',
+                u: wallOwner.get(k2) });
     seen.add(ckey(dx,dy));
     for(const off of [[1,0],[-1,0],[0,1],[0,-1]]){
       const nx2 = dx+off[0], ny2 = dy+off[1], nk = ckey(nx2,ny2);
@@ -3131,6 +3143,9 @@ const ROOF_HUES = [0x6a5344, 0x4a4f57, 0x7a4b3a, 0x565b4a, 0x3f4650, 0x6b6355];
 /* lamplight, candle, a television. Warm and low - a cold blue window would read
    as another moon and the night already has one. */
 const WINDOW_HUES = [0xFFD79A, 0xFFC073, 0xF7E7C2, 0xE8B86A];
+const DOOR_MAT = new THREE.MeshStandardMaterial({ color:0x6b5238, roughness:.92 });
+const ROOF_PROP_MAT = new THREE.MeshStandardMaterial({ color:0x8a8f98, roughness:.75, metalness:.25 });
+const WASH_HUES = [0xC9D4E8, 0xE0B7A0, 0x9FC0A8, 0xD8C68A, 0xB9A9D6];
 const WINDOW_MATS = WINDOW_HUES.map(c => new THREE.MeshBasicMaterial({
   color:c, transparent:true, opacity:0.55, depthWrite:false, fog:true }));
 const ROCK_HUES = [0x6b7079, 0x7d6f5e, 0x5d6672, 0x776a70];
@@ -4923,12 +4938,24 @@ function addCoverInner(type, gx, gy, unit){
       for(let f=0; f<4; f++){
         // one face in four is left blank so a run of walls is not a lit grid
         if((hash2(gx*13+f, gy*17+f*3) % 100) < 26) continue;
+        /* ⛔ A LIT PANE WITH NO FRAME IS A CARD FLOATING IN THE AIR. Shot 01 of
+           the detail pass is exactly that: a warm rectangle hanging in the dark
+           with nothing around it, because the pane is unlit (it is a light) while
+           the wall behind it can be almost black in a dark mood. It is the same
+           mistake the graffiti made in reverse - a surface and the thing on it
+           have to agree about how bright the world is.
+           A timber reveal a size up fixes it for nothing: even against a black
+           wall the eye now reads a window set into something. */
         const q = new THREE.Mesh(new THREE.PlaneGeometry(ww, wh), wmMat);
-        if(f===0){ q.position.set(0, yy,  eps); }
-        else if(f===1){ q.position.set(0, yy, -eps); q.rotation.y = Math.PI; }
-        else if(f===2){ q.position.set( eps, yy, 0); q.rotation.y =  Math.PI/2; }
-        else { q.position.set(-eps, yy, 0); q.rotation.y = -Math.PI/2; }
-        g.add(q);
+        const fr = new THREE.Mesh(new THREE.PlaneGeometry(ww+0.26, wh+0.24), DOOR_MAT);
+        if(f===0){ q.position.set(0, yy,  eps); fr.position.set(0, yy,  eps-0.012); }
+        else if(f===1){ q.position.set(0, yy, -eps); q.rotation.y = Math.PI;
+                        fr.position.set(0, yy, -eps+0.012); fr.rotation.y = Math.PI; }
+        else if(f===2){ q.position.set( eps, yy, 0); q.rotation.y =  Math.PI/2;
+                        fr.position.set( eps-0.012, yy, 0); fr.rotation.y =  Math.PI/2; }
+        else { q.position.set(-eps, yy, 0); q.rotation.y = -Math.PI/2;
+               fr.position.set(-eps+0.012, yy, 0); fr.rotation.y = -Math.PI/2; }
+        g.add(fr); g.add(q);
       }
     }
     solids.push({ minX:w.x-TILE/2, maxX:w.x+TILE/2, minZ:w.z-TILE/2, maxZ:w.z+TILE/2 });
@@ -4983,6 +5010,21 @@ function addCoverInner(type, gx, gy, unit){
     losMeshes.push(hull, fin);
     wrecks.push({ x:w.x, z:w.z, lamp, taken:false });
     addTarget(w.x, w.z, 0x6E7C93, 2.2);
+  }else if(type==='doorway_ns' || type==='doorway_ew'){
+    /* ⚖ DECORATION ONLY. Not in solids, not in losMeshes, nothing added to
+       paintTargets - the jambs sit flush against the flanking wall cells, so the
+       1.8m of clear passage the door rule fought for is untouched. A frame you
+       can walk through is the point; a frame you bump into would undo the whole
+       reachability argument. */
+    const ns = type === 'doorway_ns';
+    const jw = 0.16, jh = 2.5, half = TILE/2 - jw/2;
+    for(const side of [-1, 1]){
+      const post = new THREE.Mesh(new THREE.BoxGeometry(ns?0.34:jw, jh, ns?jw:0.34), DOOR_MAT);
+      post.position.set(ns ? 0 : side*half, jh/2, ns ? side*half : 0);
+      g.add(post);
+    }
+    const lint = new THREE.Mesh(new THREE.BoxGeometry(ns?0.34:TILE, 0.22, ns?TILE:0.34), DOOR_MAT);
+    lint.position.y = jh + 0.11; g.add(lint);
   }else if(type==='roof'){
     /* one interior tile of a building's roof. No posts — the walls hold it up —
        and it sits higher than a canopy so the two read as different shelter.
@@ -4992,6 +5034,50 @@ function addCoverInner(type, gx, gy, unit){
                        (unit == null) ? (gx+29) : unit, (unit == null) ? (gy+31) : 7);
     const slab = new THREE.Mesh(new THREE.BoxGeometry(3.05, 0.26, 3.05), rm);
     slab.position.y = 2.9; g.add(slab); losMeshes.push(slab);
+    /* ⭐⭐ THE ROOFS ARE THE HUNTER'S ENTIRE VIEW, and they were bare slabs.
+       A saucer looks straight down, so a favela from the air was a set of flat
+       rectangles - which is both dull and, worse, TOO EASY TO READ: anything on
+       a roof stood out against nothing at all. Tanks, aerials, vents and washing
+       give the top-down view texture a hunter has to parse, which is the same
+       reason the litter pass exists at ground level.
+       ⚖ Decoration only - never into losMeshes or solids. Roofs are above
+       STAND_MAX_TOP so nobody can stand up there anyway, which means these can
+       never block a sightline that matters or become an unintended perch. */
+    const rh = hash2(gx*5+3, gy*11+7) % 100;
+    if(rh < 22){
+      const top = 3.03;
+      if(rh < 6){                                    // a water tank on short legs
+        const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.52,0.52,0.95,10), ROOF_PROP_MAT);
+        tank.position.y = top + 0.72; g.add(tank);
+        for(const dx2 of [-0.34,0.34]) for(const dz2 of [-0.34,0.34]){
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.08,0.5,0.08), DOOR_MAT);
+          leg.position.set(dx2, top+0.25, dz2); g.add(leg);
+        }
+      } else if(rh < 12){                            // an aerial
+        const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,1.7,5), DOOR_MAT);
+        mast.position.y = top + 0.85; g.add(mast);
+        for(let k=0;k<3;k++){
+          const arm = new THREE.Mesh(new THREE.BoxGeometry(0.7,0.045,0.045), DOOR_MAT);
+          arm.position.y = top + 1.05 + k*0.26; arm.rotation.y = k*0.5; g.add(arm);
+        }
+      } else if(rh < 17){                            // a vent block
+        const v = new THREE.Mesh(new THREE.BoxGeometry(0.75,0.42,0.6), ROOF_PROP_MAT);
+        v.position.set(0.3, top+0.21, -0.2); v.rotation.y = (hash2(gx,gy)%314)/100; g.add(v);
+      } else {                                       // a washing line
+        for(const dx2 of [-1.05, 1.05]){
+          const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,1.15,5), DOOR_MAT);
+          pole.position.set(dx2, top+0.57, 0); g.add(pole);
+        }
+        const line = new THREE.Mesh(new THREE.BoxGeometry(2.1,0.03,0.03), DOOR_MAT);
+        line.position.y = top + 1.1; g.add(line);
+        for(let k=0;k<3;k++){
+          const c2 = WASH_HUES[hash2(gx+k, gy*3+k) % WASH_HUES.length];
+          const sheet = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.55),
+            new THREE.MeshLambertMaterial({ color:c2, side:THREE.DoubleSide }));
+          sheet.position.set(-0.7 + k*0.7, top + 0.82, 0); g.add(sheet);
+        }
+      }
+    }
   }else if(type==='canopy'){
     /* ⭐⭐ THE THING THAT ACTUALLY BEATS A HUNTER WHO LOOKS STRAIGHT DOWN.
        Measured 2026-08-02: overhead cover existed on 2-3% of a map, and on
