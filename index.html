@@ -1733,7 +1733,9 @@ function updateUfo(u,dt,D){
      design. Set the state directly rather than nudging suspicion: PATROL only reaches SCAN
      this tick and SCAN only reaches INVESTIGATE the next, so a nudge would arrive two frames
      late and read as the throw not working. */
-  u.lured=false;
+  // `lured` means "currently walking to a clicker", not "was nudged this frame": clearing it
+  // every tick made it read true for exactly one frame and useless as a signal to anything.
+  if(u.state!=='INVESTIGATE') u.lured=false;
   if(round.lures.length && (u.state==='PATROL'||u.state==='SCAN')){
     let bl=null, bd=LURE_PULL;
     for(const L of round.lures){ const dd=Math.hypot(L.x-u.x,L.y-u.y); if(dd<bd){ bd=dd; bl=L; } }
@@ -2456,10 +2458,17 @@ function drawRoundHUD(){
   // ---- ability bar (vertical column, action-hand side) — hidden under a held shot; ❄ stays live while looking ----
   if(!studio.open){
   const abx = right ? vpW-edge-44 : edge; const cdMax={dash:DASH_CD,decoy:DECOY_CD,ink:INK_CD,tongue:TONGUE_CD,burrow:BURROW_CD,lure:LURE_CD};
-  const aby = ay-14-44*ABILITIES.length-10*(ABILITIES.length-1);
-  ABILITIES.forEach((ab,i)=>{ const y=aby+i*54;
+  /* The column grew to seven. Rather than hand-check the arithmetic again every time an
+     ability is added, the pitch now shrinks to fit whatever is above it (the timer panel ends
+     at y=52) with 44px as a hard floor so a button never goes under the thumb minimum. */
+  const N=ABILITIES.length, want=44*N+10*(N-1);
+  const room=Math.max(44*N, (ay-14)-60);
+  const pitch=Math.max(44, Math.min(54, room/N));
+  const aby = ay-14-(pitch*N-(pitch-44));
+  ABILITIES.forEach((ab,i)=>{ const y=aby+i*pitch;
     const gated = ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');   // P9: hard-anchor while scouting
-    const cd = ab.key==='freeze'?0:(player.cd[ab.key]||0), ready=cd<=0 && !gated;
+    const out = ab.charges && (player.lureLeft|0)<=0;                                  // spent, not cooling
+    const cd = ab.key==='freeze'?0:(player.cd[ab.key]||0), ready=cd<=0 && !gated && !out;
     const on = ab.key==='freeze' && player.freeze;
     ctx.globalAlpha = gated?0.4:1;
     ctx.fillStyle=on?'rgba(63,208,224,0.28)':(ready?'rgba(21,27,44,0.88)':'rgba(21,27,44,0.5)'); rr(abx,y,44,44,11); ctx.fill();
@@ -2467,6 +2476,11 @@ function drawRoundHUD(){
     txt(ab.glyph, abx+22, y+21, 17, ready?COL.txt:COL.muted, 'center','700');
     if(cd>0){ ctx.fillStyle='#05070d'; ctx.globalAlpha=(gated?0.4:1)*0.55; ctx.beginPath(); ctx.moveTo(abx+22,y+22);
       ctx.arc(abx+22,y+22,23,-Math.PI/2,-Math.PI/2+TAU*clamp01(cd/(cdMax[ab.key]||1)),false); ctx.closePath(); ctx.fill(); }
+    // a consumable has to SHOW its count or "nothing happened" is the only feedback you get
+    if(ab.charges){ const n=player.lureLeft|0;
+      ctx.fillStyle=n>0?'rgba(63,208,224,0.92)':'rgba(224,101,94,0.9)';
+      ctx.beginPath(); ctx.arc(abx+38,y+6,8,0,TAU); ctx.fill();
+      txt(String(n), abx+38, y+6, 10, '#0b0f1a','center','800'); }
     ctx.globalAlpha=1;
     roundHits.push({x:abx,y,w:44,h:44,fn:()=>{ const g=ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');
       if(g) return; if(ab.key==='freeze') freezeHeld=!freezeHeld; else useAbility(ab.key); }});
@@ -4025,10 +4039,12 @@ function drawHelp(){ ctx.fillStyle='rgba(8,12,25,0.88)'; ctx.fillRect(0,0,vpW,vp
     '⏱  HOLD STILL to settle. 🌳 Hug cover. The MODE pill takes you home.',
     '🪝  TONGUE zips you to the nearest cover, your way out of a beam lock.',
     '🕳  BURROW sinks you into soft ground: only your eyes show, until it wears off.',
+    '🔔  LURE throws a clicker. A patrol goes to look at it, whatever colour you are.',
+    '      Three a round, so spend them on ground you have to stand still on.',
     '',
-    'Desktop: WASD move · Shift sneak · E paint · I look · Q match · B tongue · X burrow · Esc back',
+    'Desktop: WASD move · Shift sneak · E paint · I look · Q match · B tongue · X burrow · F lure · Esc back',
   ];
-  for(const l of lines){ txt(l, cx, y, 13.5, /^(🕹|🎨|👁|⏱|🪝|🕳)/.test(l)?COL.txt:COL.muted, 'center', '500'); y+=Math.min(26,(vpH*0.62)/lines.length); }
+  for(const l of lines){ txt(l, cx, y, 13.5, /^(🕹|🎨|👁|⏱|🪝|🕳|🔔)/.test(l)?COL.txt:COL.muted, 'center', '500'); y+=Math.min(26,(vpH*0.62)/lines.length); }
   y+=14; const bw=Math.min(220,vpW-48); navList=[]; menuIndex=0;
   navBtn('Got it', cx-bw/2, y, bw, 46, ()=>{ showHelp=false; }, {size:15, weight:'700'});
   navListApp=appState;
@@ -4112,7 +4128,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   C:+player.C.toFixed(3), terrain: player.ref?player.ref.dominantKey:null,
   timeLeft: round?Math.round(round.timeLeft):null, levels: LEVELS.length,
   playerPos:{x:Math.round(player.x),y:Math.round(player.y)},
-  ufoPos: round?round.ufos.map(u=>({x:Math.round(u.x),y:Math.round(u.y),s:u.state,susp:+u.suspicion.toFixed(2),beam:+u.beamCharge.toFixed(2)})):[],
+  ufoPos: round?round.ufos.map(u=>({x:Math.round(u.x),y:Math.round(u.y),s:u.state,susp:+u.suspicion.toFixed(2),beam:+u.beamCharge.toFixed(2),lu:!!u.lured})):[],
   summary: round&&round.summary?round.summary:null,
   ability: round?{freeze:player.freeze,dashCd:+player.cd.dash.toFixed(2),decoyCd:+player.cd.decoy.toFixed(2),inkCd:+player.cd.ink.toFixed(2),freezeCap:+player.freezeCap.toFixed(3),tongueCd:+(player.cd.tongue||0).toFixed(2),burrowCd:+(player.cd.burrow||0).toFixed(2),tongueT:+(player.tongueT||0).toFixed(2),burrowT:+(player.burrowT||0).toFixed(2)}:null,
   decoys: round?round.decoys.length:0, inks: round?round.inks.length:0, pose: player.pose,
@@ -4152,7 +4168,10 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   navRects(){ return navList.map(n=>({ x:n.x, y:n.y, w:n.w, h:n.h, label:n.label||'' })); },
   t:{ teleport(x,y){ if(round&&player.alive){ player.x=x; player.y=y; player.vx=0; player.vy=0; } },
       moveUfo(i,x,y){ const u=round&&round.ufos[i]; if(u){ u.x=x; u.y=y; } },
-      covers(){ return coverObjects.map(o=>({type:o.type,wx:o.wx,wy:o.wy})); } } }; }catch(_){}
+      covers(){ return coverObjects.map(o=>({type:o.type,wx:o.wx,wy:o.wy})); },
+      // place a clicker directly, so a test can measure the AI RULE without also depending on
+      // whether the player happened to have a charge and a clear throwing line
+      dropLure(x,y){ if(round&&round.lures) round.lures.push({x:x,y:y,life:LURE_LIFE,t:0}); } } }; }catch(_){}
 boot();
 
 /* ?join=CODE — the QR's landing path: scanned on the second phone, this
