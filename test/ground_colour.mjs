@@ -96,7 +96,13 @@ for(let i=0;i<rows.length;i++) for(let j=i+1;j<rows.length;j++){
   if(d < APART) bad.push(`${rows[i].key} and ${rows[j].key} render ${d.toFixed(0)} apart (${rows[i].got.join(',')} vs ${rows[j].got.join(',')}) - a player cannot tell which ground they are standing on`);
 }
 if(rows.length < 6) bad.push(`only ${rows.length} terrains were sampled - not enough to judge the palette`);
-if(bad.length){ console.log('\nFAIL ground_colour:'); bad.slice(0,8).forEach(x=>console.log('   - '+x)); }
+if(bad.length){ console.log('\nFAIL ground_colour:'); bad.slice(0,8).forEach(x=>console.log('   - '+x));
+  console.log('\n   NOTE (2026-08-02): this gate is NOT in `npm run all` yet, and it is red on');
+  console.log('   purpose. Fixing the terrain winding (the whole playfield was lit from');
+  console.log('   underneath) revealed that the lights are still carrying the compensation a');
+  console.log('   previous session added FOR that bug, so the warm night crushes dirt, mud and');
+  console.log('   grass onto each other. The night grade is the Director\'s call; this is the');
+  console.log('   measurement that should drive it. Wire it into `all` once he has picked.'); }
 else console.log('ok   ground_colour: every terrain reaches at least ' + (DARK*100) + '% of its table colour and no two render alike');
 await b.close(); srv.close();
 process.exit(bad.length?1:0);
