@@ -1886,7 +1886,21 @@ async function init(){
     setupScene();
     renderer.setAnimationLoop(loop);
     await Promise.all([loadCharacter(), loadProps()]);   // P35/P36: rigged body + real props (primitives as fallback)
-    await insertCoin();
+    /* ⛔⛔⛔ 2026-08-02 — THE FRONT DOOR BELONGED TO SOMEBODY ELSE.
+       insertCoin() with no options mounts Playroom's own lobby, and shot at 844x390
+       that is 100% of the screen: a stranger's cartoon avatar, a colour picker, the
+       name "Rainbow85" assigned to the player, Launch / Invite, and "Multiplayer by
+       Playroom v.0.0.97" along the bottom. No chameleon, no saucer, no mention of the
+       game. It is also what a finger hit when it finally reached ▶ PLAY - the probe
+       came back `btn-launchjoin`, which is a button in that panel.
+
+       skipLobby is the vendor's own option for this (its default table reads
+       `{spectator, streamMode, baseUrl, allowGamepads, enableBots, avatars, roomCode,
+       skipLobby, ...}`), and this game already has its OWN lobby at #lobby with HIDE,
+       SEEK, a round timer, the room code and a join QR. Two lobbies was one too many
+       and the wrong one was in front. `profile` is set for the same reason: without it
+       the SDK assigns a random name and cartoon face to a player who has one. */
+    await insertCoin({ skipLobby: true, profile: { name: 'CHAMELEON', photo: '' } });
     me = myPlayer();
     setupInput();
     setupPaintUI();
