@@ -2866,6 +2866,7 @@ function _gatherRes(o, geo, mat, tex){
       for(const k in mm){ const v = mm[k]; if(v && v.isTexture) tex.add(v); } } }
 }
 function disposeWorldChildren(){
+  _instMatCache.clear();          // the shared per-world materials die with the world
   const dGeo = new Set(), dMat = new Set(), dTex = new Set();
   for(const c of worldGroup.children) c.traverse(o=> _gatherRes(o, dGeo, dMat, dTex));
   while(worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
@@ -3336,20 +3337,49 @@ function buildWorld(map){
   }
 
   // P37: decorative grass tufts on soft ground — dressing only, never paint targets or LOS
+  /* ⛔⛔ 220 TUFTS OF GRASS WERE 220 SEPARATE OBJECTS. This cloned a whole GLB per cell
+     and added it to the scene, and flushMarks - forty lines up - already states the rule
+     it was breaking: "a few hundred marks must not be a few hundred draw calls on a
+     phone, which is the target device". Measured on a 844x390 viewport, the worst map
+     submitted 794 draw calls from 1841 meshes.
+     ⚠ Sharing the MATERIAL does not fix this and I measured that too: caching instMat
+     took unique materials from 794 to 523 and moved the draw-call count by exactly zero,
+     because three.js issues one call per MESH regardless of what they share. The only
+     thing that removes a draw call is removing an object, so the tufts collect their
+     transforms first and become one InstancedMesh per (geometry, material) in the
+     template - two draw calls for the lot instead of hundreds.
+     ⚖ Deco only. These are dressing: never paint targets, never LOS, never solid, so
+     nothing downstream needs to find them individually. */
   const DECO_ON = { grass:0.10, moss:0.10, foliage:0.14, dirt:0.03, sand:0.02, mud:0.04 };
   let deco = 0;
+  const decoAt = new Map();                       // prop key -> array of world matrices
+  const _dm = new THREE.Matrix4(), _dq = new THREE.Quaternion(), _dp = new THREE.Vector3(), _ds = new THREE.Vector3();
   for(let y=0;y<mapRows && deco<220;y++) for(let x=0;x<mapCols && deco<220;x++){
     const ch = DECO_ON[map.terrain[y][x]]; if(!ch) continue;
     const h = hash2(x*7+3, y*11+5);
     if((h%1000)/1000 >= ch) continue;
-    const P = propLib[(h>>6)%2 ? 'grass' : 'grass_small']; if(!P) break;
-    const n = P.scene.clone(true);
+    const key = (h>>6)%2 ? 'grass' : 'grass_small';
+    const P = propLib[key]; if(!P) break;
     const sc = (0.7 + ((h>>3)%40)/100) / Math.max(1e-6, P.size.y);
-    n.scale.setScalar(sc);
-    n.position.set((x+0.5-mapCols/2)*TILE + (((h>>8)%100)/100-0.5)*TILE*0.6, -P.minY*sc,
-                   (y+0.5-mapRows/2)*TILE + (((h>>12)%100)/100-0.5)*TILE*0.6);
-    n.rotation.y = (h%628)/100;
-    worldGroup.add(n); deco++;
+    _dp.set((x+0.5-mapCols/2)*TILE + (((h>>8)%100)/100-0.5)*TILE*0.6, -P.minY*sc,
+            (y+0.5-mapRows/2)*TILE + (((h>>12)%100)/100-0.5)*TILE*0.6);
+    _dq.setFromAxisAngle(new THREE.Vector3(0,1,0), (h%628)/100);
+    _ds.setScalar(sc);
+    if(!decoAt.has(key)) decoAt.set(key, []);
+    decoAt.get(key).push(new THREE.Matrix4().compose(_dp, _dq, _ds));
+    deco++;
+  }
+  for(const [key, mats] of decoAt){
+    const P = propLib[key]; if(!P || !mats.length) continue;
+    P.scene.updateMatrixWorld(true);
+    P.scene.traverse(o=>{
+      if(!o.isMesh || !o.geometry) return;
+      const im = new THREE.InstancedMesh(o.geometry, o.material, mats.length);
+      im.frustumCulled = false;                    // one object now covers the whole map
+      for(let i=0;i<mats.length;i++) _dm.copy(mats[i]).multiply(o.matrixWorld), im.setMatrixAt(i, _dm);
+      im.instanceMatrix.needsUpdate = true;
+      worldGroup.add(im);
+    });
   }
   while(solidOwner.length < solids.length) solidOwner.push(-1);   // anything added after the props
   reseatSpawns();
@@ -3609,8 +3639,22 @@ const WINDOW_MATS = WINDOW_HUES.map(c => new THREE.MeshBasicMaterial({
 const ROCK_HUES = [0x6b7079, 0x7d6f5e, 0x5d6672, 0x776a70];
 const LEAF_HUES = [0x2f5e37, 0x3d6b2f, 0x2a4f42, 0x556b2a];
 function hash2(a,b){ let h=(a*374761393+b*668265263)|0; h=(h^(h>>>13))*1274126177|0; return (h>>>0); }
+/* ⛔⛔ ONE MATERIAL PER PROP MEANT ONE DRAW CALL PER PROP. This cloned the base material
+   on every single call, so a map with 1841 meshes had 794 UNIQUE MATERIALS and submitted
+   794 draw calls - measured, worst map, on a 844x390 phone viewport. three.js batches by
+   material; nothing can batch when every object has its own.
+   And the clone was never necessary: the only thing that varies is a colour picked out of
+   a fixed `hues` array by cell hash, so the number of DISTINCT materials this can ever
+   produce is bases x hues - a handful, not hundreds. Cache them.
+   ⚖ The cache is cleared with the world (see disposeWorldChildren) rather than kept
+   across maps, so the disposal pass can still tell a live material from a dead one. */
+const _instMatCache = new Map();
 function instMat(baseMat, hues, gx, gy){
-  const m = baseMat.clone(); m.color = new THREE.Color(hues[hash2(gx,gy)%hues.length]); return m;
+  const i = hash2(gx,gy) % hues.length;
+  const key = baseMat.uuid + '|' + i;
+  let m = _instMatCache.get(key);
+  if(!m){ m = baseMat.clone(); m.color = new THREE.Color(hues[i]); _instMatCache.set(key, m); }
+  return m;
 }
 function patternTexture(c1, c2, kind){
   const cv = document.createElement('canvas'); cv.width = 64; cv.height = 64;
@@ -5259,6 +5303,29 @@ window.__aac3dCombat = function(){
            jam: (me && me.getState('jam')) || null };
 };
 window.__aac3dRawMap = function(){ return MAP; };
+/* What the phone is actually being asked to draw. renderer.info is three.js's own count,
+   read on a settled frame; the mesh and unique-material totals sit beside it so a
+   regression says WHICH of the three moved rather than just that something did. */
+window.__aac3dPerf = function(){
+  let meshes = 0; const mats = new Set();
+  scene.traverse(o=>{ if(!o.isMesh && !o.isInstancedMesh && !o.isSkinnedMesh) return;
+    meshes += o.isInstancedMesh ? 1 : 1;
+    const m = o.material; for(const mm of (Array.isArray(m)?m:[m])) if(mm) mats.add(mm.uuid); });
+  const inf = renderer.info;
+  return { calls: inf.render.calls, tris: inf.render.triangles,
+           meshes, materials: mats.size,
+           geometries: inf.memory.geometries, textures: inf.memory.textures,
+           instanced: (()=>{ let n=0; scene.traverse(o=>{ if(o.isInstancedMesh) n++; }); return n; })(),
+           /* WHERE the meshes are, so a draw-call number says what to fix rather than
+              only that something is wrong. Counted by the nearest named ancestor. */
+           by: (()=>{ const t = {};
+             worldGroup.traverse(o=>{ if(!o.isMesh && !o.isInstancedMesh) return;
+               let a2 = o, name = '(unnamed)';
+               while(a2 && a2 !== worldGroup){ if(a2.name){ name = a2.name; break; } a2 = a2.parent; }
+               if(name === '(unnamed)' && o.isInstancedMesh) name = '(instanced)';
+               t[name] = (t[name]||0) + 1; });
+             return Object.entries(t).sort((x,y)=>y[1]-x[1]).slice(0,10); })() };
+};
 window.__aac3dLobbyDbg = function(){
   return { host:isHost(), hsl:hideSecsLocal, raw:getState('hideSecs'),
            ph:getState('phase')||'waiting',
