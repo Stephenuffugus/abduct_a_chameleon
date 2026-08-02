@@ -99,6 +99,65 @@ else {
   if(!/start/i.test(lobby.start.text)) bad.push(`START ROUND does not say what it does ("${lobby.start.text}")`);
 }
 
+/* 5. YOU PICK YOUR SIDE, AND THE HOST OWNS THE CLOCK.
+   Stephen: "when two players go to play together they should be able to choose
+   which team they are on... at least like 2 minutes to hide... and the game host
+   can set it and it has to be at least 1 minutes or something and no more than 5." */
+const lobUp = await Promise.all([A,B].map(c => c.p.evaluate(()=>{
+  const l = document.getElementById('lobby');
+  const r = id => { const e=document.getElementById(id); const b=e.getBoundingClientRect();
+    return { h:Math.round(b.height), on:e.classList.contains('on') }; };
+  return { vis: l && !l.classList.contains('hidden'),
+           hide:r('tTeamHide'), seek:r('tTeamSeek'),
+           time: document.getElementById('lobTimeVal').textContent,
+           who: document.getElementById('lobWho').textContent,
+           duplicateHunt: !document.getElementById('tPractice').classList.contains('hidden') };
+})));
+console.log('3 the lobby   ', JSON.stringify(lobUp[0]));
+if(!lobUp[0].vis || !lobUp[1].vis) bad.push('the lobby is not shown to both players');
+if(lobUp[0].hide.h < 44 || lobUp[0].seek.h < 44) bad.push('the team buttons are under 44px');
+if(lobUp[0].time !== '2:00') bad.push(`the hide clock does not default to two minutes (${lobUp[0].time})`);
+if(!/random/i.test(lobUp[0].who)) bad.push('with nobody picked, the lobby does not say one will be chosen');
+if(lobUp[0].duplicateHunt) bad.push('the solo HUNT button is still up beside the SEEK button - two controls labelled hunt');
+
+// A asks to seek, B asks to hide
+await A.p.evaluate(()=>document.getElementById('tTeamSeek').click());
+await B.p.evaluate(()=>document.getElementById('tTeamHide').click());
+/* ⛔ ASSERT THE VALUE, NOT THE LABEL. lobTimeVal is painted by updateHUD once a
+   frame, so reading it in the same tick as a click is always one frame stale -
+   an earlier version of this reported "the clock will not move" while the state
+   underneath was stepping 150, 180, 210 perfectly, then passed on a re-run. A
+   gate that flakes teaches you to distrust the green. Drive the HOST only, space
+   the taps, and check the number the round will actually use. */
+const HOST = (await A.p.evaluate(()=>window.__aac3dRound().host)) ? A : B;
+const GUEST = HOST === A ? B : A;
+const wind = async (id, times) => {
+  for(let i=0;i<times;i++){
+    await HOST.p.evaluate(bid=>document.getElementById(bid).click(), id);
+    await wait(70);
+  }
+  await wait(1000);
+  return HOST.p.evaluate(()=>({ secs: window.__aac3dRound().hideSecs,
+                                text: document.getElementById('lobTimeVal').textContent }));
+};
+const floor_ = await wind('tTimeDown', 12);
+console.log('4 clock floor ', JSON.stringify(floor_));
+if(floor_.secs !== 60)     bad.push(`winding down did not stop at the one minute floor (${floor_.secs}s)`);
+if(floor_.text !== '1:00') bad.push(`the clock reads "${floor_.text}" while it is really ${floor_.secs}s`);
+const ceil_ = await wind('tTimeUp', 14);
+console.log('5 clock ceil  ', JSON.stringify(ceil_));
+if(ceil_.secs !== 300)     bad.push(`winding up did not stop at the five minute ceiling (${ceil_.secs}s)`);
+if(ceil_.text !== '5:00')  bad.push(`the clock reads "${ceil_.text}" while it is really ${ceil_.secs}s`);
+/* somebody has to own the clock, or two people fight over one number on the wire */
+const beforeGuest = ceil_.secs;
+for(let i=0;i<4;i++){ await GUEST.p.evaluate(()=>document.getElementById('tTimeDown').click()); await wait(70); }
+await wait(900);
+const afterGuest = await HOST.p.evaluate(()=>window.__aac3dRound().hideSecs);
+console.log('5b guest tries', JSON.stringify({ beforeGuest, afterGuest }));
+if(afterGuest !== beforeGuest) bad.push(`a non-host moved the clock (${beforeGuest} -> ${afterGuest})`);
+const back = await wind('tTimeDown', 12);
+if(back.secs !== 60) bad.push(`could not put the clock back to one minute (${back.secs}s)`);
+
 // 4. and pressing it does the thing they expected
 for(const c of [A,B]) await c.p.evaluate(()=>{const e=document.getElementById('tStart'); if(e && !e.classList.contains('hidden')) e.click();});
 let roles = [];
@@ -113,9 +172,24 @@ if((roles[0]==='seeker') === (roles[1]==='seeker'))
 if(after.phase !== 'playing') bad.push(`pressing START did not begin a round (phase ${after.phase})`);
 if(after.botExists) bad.push('the training bot is still running inside a real round');
 
+// the person who asked to SEEK is the one in the saucer, and the clock is theirs
+const picked = { A: await A.p.evaluate(()=>window.__aac3dRound()),
+                 B: await B.p.evaluate(()=>window.__aac3dRound()) };
+console.log('6 sides kept  ', JSON.stringify({ A:picked.A.myRole, B:picked.B.myRole,
+  hideLeft: Math.round(picked.A.hideLeft) }));
+if(picked.A.myRole !== 'seeker') bad.push(`the player who asked to SEEK was made a ${picked.A.myRole}`);
+if(picked.B.myRole !== 'hider')  bad.push(`the player who asked to HIDE was made a ${picked.B.myRole}`);
+/* ⛔ assert the round's CONFIGURED length, not what is left of it - the poll that
+   waits for roles to sync can eat 40 of the 60 seconds before this line runs, and
+   a gate that fails because the gate was slow teaches you to distrust the green */
+if(picked.A.hideSecs !== 60)
+  bad.push(`the round ignored the chosen hide time (ran ${picked.A.hideSecs}s, chose 60)`);
+if(picked.A.hideLeft <= 0) bad.push('the hiders got no head start at all');
+
 const errs = [...A.errs, ...B.errs];
 if(errs.length) bad.push('JS errors: ' + errs.slice(0,2).join(' | '));
 console.log(bad.length ? '\nFAIL lobby3d:\n  - ' + bad.join('\n  - ')
-  : '\nok   lobby3d  two people land in free play with no bot and no countdown, START ROUND is unmissable, and pressing it makes exactly one hunter');
+  : '\nok   lobby3d  free play with no bot and no countdown, both see the lobby, the clock holds 1-5 minutes, ' +
+    'picking SEEK puts you in the saucer and picking HIDE keeps you on the ground, and the round runs the clock they chose');
 await b.close(); srv.close();
 process.exit(bad.length ? 1 : 0);
