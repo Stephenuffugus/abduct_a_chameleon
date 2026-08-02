@@ -94,12 +94,47 @@ const STUDIO_SLOWMO = 0.35;
 // bot ai — shared thresholds
 const ENTER_SUSPECT = 0.35, EXIT_SUSPECT = 0.15, ENTER_INVEST = 0.60;
 const ENTER_CHASE = 0.85, DROP_CHASE = 0.45;
-const BEAM_R = 26, BEAM_BREAK_R = 64, BEAM_HOLD_C = 0.05, REACQUIRE_TIME = 0.9, BEAM_DRAIN = 0.6;
+/* ⛔⛔ BEAM_R WAS 26 AND THAT MADE THE LOCK MATHEMATICALLY IMPOSSIBLE TO TUNE.
+   A pursuing saucer never damps (steer's arrive-slowdown is skipped in pursuit) and turns at
+   TURN_RATE*2 = 6.4 rad/s, so its minimum turning circle is BEAM_TRACK_SPD/6.4. To hold
+   station over a moving target the circle has to fit INSIDE the ring, i.e.
+
+        BEAM_TRACK_SPD  <  6.4 * BEAM_R                     (the ceiling)
+
+   and to stop the target simply walking out of the ring before any charge accrues,
+
+        BEAM_TRACK_SPD  >  PLAYER_WALK * max(MOVE_MULT)     (the floor: 150 * 1.10 ice = 165)
+
+   At BEAM_R=26 the ceiling was 166.4 and the floor 165: a legal window ONE AND A HALF px/s
+   wide, and none of the three shipped values (118 / 155 / 180) sat in it. EASY and NORMAL
+   were under the floor, so the beam could never charge against anyone who kept walking;
+   HARD was over the ceiling, so the saucer orbited a 28.1px circle around a 26px ring and
+   raising its speed made it WORSE. That is why "it takes really long to actually be
+   abducted" and why every previous attempt to fix it by turning the speed dial up failed.
+   Widening the ring to 34 (the value hunt mode already had to adopt, line 180, for exactly
+   this reason) opens the window to 165 < B < 217.6, and a real tuning exists.
+   The escape is deliberately untouched: BEAM_BREAK_R keeps its ~2.1 ratio to the ring, and
+   nothing in the DETECTION path moved, so a hidden player is trip-wire identical to before. */
+const BEAM_R = 34, BEAM_BREAK_R = 72, BEAM_HOLD_C = 0.05, REACQUIRE_TIME = 0.9, BEAM_DRAIN = 0.6;
+/* 1v1 keeps the OLD numbers on purpose. The human hunter's ship has no turn-rate limit at
+   all (its velocity is set straight from the peer's intent), so it was never subject to the
+   bug above, and widening its catch circle by 71% of area while also speeding it up would
+   wreck the one mode Stephen already calls random. Tune versus-mode on its own evidence. */
+const NET_BEAM_R = 26, NET_TRACTOR_R = 26*2.4;
+// ...and its flight speed is frozen at the pre-retune CHASE_SPD table for the same reason.
+// (CHASE_SPD is never region-tuned - REGION_HUNT only touches the sensing values - so a flat
+// table reproduces the old behaviour exactly.)
+const NET_CHASE_BASE = { EASY:155, NORMAL:192, HARD:228 };
+function netHunterSpd(D){ return (NET_CHASE_BASE[D&&D.label]||192)*1.12; }
 // The beam GRIPS: player speed × (1 − BEAM_SLOW·charge) while held. Before this, BEAM_TRACK_SPD
 // was below walk speed on every difficulty, so holding the stick outran the beam forever and
 // abduction could never complete against a moving player. Escape early, or with tools — not by strolling.
 const BEAM_SLOW = 0.6;
 const TURN_RATE = 3.2, ARRIVE_DT = 0.25, BELIEF_TRACK = 6.0;
+/* How far ahead of a moving target a ship is allowed to aim. The chaser is conservative;
+   a ship converging from elsewhere leads much harder, because its whole job is to be
+   somewhere you have not got to yet. Zero inside BEAM - the ring has to sit ON the body. */
+const LEAD_MAX = 0.9, CUTOFF_LEAD_MAX = 2.5, CUTOFF_RANGE = 900, STATION_DT = 0.15;
 const SPAWN_GRACE = 1.5, COORD_RANGE = 480;
 /* 1v1 round shape (Stephen + Penny live playtest 7/30): a real hide phase
    before the hunt (the hunter is frozen + the survive clock waits), a
@@ -116,15 +151,15 @@ function hide2pLeft(){ return round&&round.hide2pEnds ? Math.max(0,(round.hide2p
 // per-difficulty
 const DIFF = {
   EASY:   { UFO_COUNT:2, SCAN_R:144, PATROL_SPD:90,  SCAN_SPD:36, INVEST_SPD:100,
-            CHASE_SPD:155, BEAM_TRACK_SPD:118, SUSPECT_GAIN:1.3, SUSPECT_DECAY:0.85,
+            CHASE_SPD:190, BEAM_TRACK_SPD:166, SUSPECT_GAIN:1.3, SUSPECT_DECAY:0.85,
             LOCK_TIME:2.4, NOISE_FLOOR:0.09, GIVEUP_TIME:4.5, COOLDOWN_TIME:3.5,
             PATROL_REROLL:30, COORDINATE:false, SURVIVE_TIME:90,  diffIndex:0, label:'EASY' },
   NORMAL: { UFO_COUNT:4, SCAN_R:176, PATROL_SPD:118, SCAN_SPD:48, INVEST_SPD:135,
-            CHASE_SPD:192, BEAM_TRACK_SPD:155, SUSPECT_GAIN:1.8, SUSPECT_DECAY:0.65,
+            CHASE_SPD:220, BEAM_TRACK_SPD:174, SUSPECT_GAIN:1.8, SUSPECT_DECAY:0.65,
             LOCK_TIME:1.7, NOISE_FLOOR:0.06, GIVEUP_TIME:6.0, COOLDOWN_TIME:2.5,
             PATROL_REROLL:22, COORDINATE:false, SURVIVE_TIME:120, diffIndex:1, label:'NORMAL' },
   HARD:   { UFO_COUNT:6, SCAN_R:208, PATROL_SPD:150, SCAN_SPD:60, INVEST_SPD:170,
-            CHASE_SPD:228, BEAM_TRACK_SPD:180, SUSPECT_GAIN:2.6, SUSPECT_DECAY:0.45,
+            CHASE_SPD:250, BEAM_TRACK_SPD:182, SUSPECT_GAIN:2.6, SUSPECT_DECAY:0.45,
             LOCK_TIME:1.1, NOISE_FLOOR:0.04, GIVEUP_TIME:8.0, COOLDOWN_TIME:1.5,
             PATROL_REROLL:16, COORDINATE:true,  SURVIVE_TIME:180, diffIndex:2, label:'HARD' },
 };
@@ -150,6 +185,12 @@ const LS_BEST = 'aac.best.v1', LS_SETTINGS = 'aac.settings.v1';
 // P5 abilities
 const FREEZE_CAP_MAX=0.985, FREEZE_SETTLE_MULT=0.45;
 const DASH_SPEED=470, DASH_TIME=0.16, DASH_CD=2.4, DASH_FLARE=0.5, DASH_FLARE_TIME=0.5;
+/* Dash on cooldown adds 470*0.16/2.4 = 31.3 px/s of SUSTAINED speed, and it ignores both
+   the terrain multiplier and the beam's grip. Spammed on ice that is 196 px/s, faster than
+   any tractor beam is allowed to be, which quietly re-opened the escape the ring fix closes.
+   A short recovery keeps the whole 75px burst (dash is still the best repositioning tool in
+   the game) while removing the free top speed: spammed, it now averages 157 on grass. */
+const DASH_RECOVER_T=0.5, DASH_RECOVER_MUL=0.55;
 const DECOY_LIFE=6.0, DECOY_CD=12.0, INK_R=95, INK_LIFE=3.6, INK_CD=10.0, INK_MAX=2;
 // P23 abilities II — Tongue (zip to an anchor: THE beam counterplay now that the beam grips)
 // and Burrow (sink into soft ground; a panic hide that works even in the wrong paint)
@@ -829,7 +870,7 @@ const player = { x:0,y:0, vx:0,vy:0, facing:0, prevx:0,prevy:0,
   animT:0, walkPhase:0, breathP:0, squash:0, blinkT:2, blinkE:0, repaintT:0,
   pose:'stand', poseBlend:{},
   // P5 abilities
-  freeze:false, freezeCap:MAX_CONCEAL_OPEN, dashT:0, dashDx:0, dashDy:0, dashFlare:0,
+  freeze:false, freezeCap:MAX_CONCEAL_OPEN, dashT:0, dashDx:0, dashDy:0, dashFlare:0, dashRecT:0,
   tongueT:0, tongueTx:0, tongueTy:0, burrowT:0,
   cd:{ dash:0, decoy:0, ink:0, tongue:0, burrow:0 } };
 
@@ -992,7 +1033,7 @@ function gatherInput(){
 let freezeHeld=false;
 function useAbility(k){ if(!round||roundState!=='PLAYING'||!player.alive) return;
   if(k==='dash'){ if(player.cd.dash>0) return; const d=Math.hypot(input.mx,input.my)>0.1?{x:input.mx,y:input.my}:{x:Math.cos(player.facing),y:Math.sin(player.facing)};
-    const n=Math.hypot(d.x,d.y)||1; player.dashDx=d.x/n; player.dashDy=d.y/n; player.dashT=DASH_TIME; player.cd.dash=DASH_CD; player.dashFlare=DASH_FLARE_TIME;
+    const n=Math.hypot(d.x,d.y)||1; player.dashDx=d.x/n; player.dashDy=d.y/n; player.dashT=DASH_TIME; player.cd.dash=DASH_CD; player.dashFlare=DASH_FLARE_TIME; player.dashRecT=DASH_TIME+DASH_RECOVER_T;
     SFX.ui(); addTrauma(0.12); punchZoom(0.02,80,220); vibe(20); }
   else if(k==='decoy'){ if(player.cd.decoy>0) return; player.cd.decoy=DECOY_CD;
     round.decoys.push({ x:player.x, y:player.y, paint:Object.assign({},player.currentPaint), C:Math.max(0.25,player.C), life:DECOY_LIFE, pose:player.pose });
@@ -1324,6 +1365,7 @@ function movePlayer(dt){
       const ny=player.y+dy/d*step; if(!circleBlocked(player.x,ny)) player.y=ny; else player.tongueT=0; }
     player.x=clamp(player.x,PLAYER_RADIUS,worldW-PLAYER_RADIUS); player.y=clamp(player.y,PLAYER_RADIUS,worldH-PLAYER_RADIUS); return; }
   // DASH burst overrides normal movement, ignores terrain mult
+  if(player.dashRecT>0){ player.dashRecT=Math.max(0,player.dashRecT-dt); mult*=DASH_RECOVER_MUL; }   // you land heavy
   if(player.dashT>0){ player.dashT-=dt; player.vx=player.dashDx*DASH_SPEED; player.vy=player.dashDy*DASH_SPEED;
     let dx=player.x+player.vx*dt; if(!circleBlocked(dx,player.y)) player.x=dx; else player.dashT=0;
     let dy=player.y+player.vy*dt; if(!circleBlocked(player.x,dy)) player.y=dy; else player.dashT=0;
@@ -1336,7 +1378,7 @@ function movePlayer(dt){
      lets go of you a little - down to half speed dead-centre, fading to
      nothing at the ring's edge. Escapes become fights, not sprints. */
   if(round && round.online==='host' && round.ufos[0] && hide2pLeft()<=0){
-    const _u=round.ufos[0], _d=Math.hypot(_u.x-player.x,_u.y-player.y), _R=BEAM_R*2.4;
+    const _u=round.ufos[0], _d=Math.hypot(_u.x-player.x,_u.y-player.y), _R=NET_TRACTOR_R;
     if(_d<_R) base*=0.5+0.5*(_d/_R);
   }
   const desx = ux*base*mult, desy = uy*base*mult;
@@ -1528,11 +1570,48 @@ const BotSeeker = { think(){ /* intent computed inline in updateUfo for the offl
 
 function turnToward(cur,target,maxStep){ let d=target-cur; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI;
   if(d>maxStep)d=maxStep; else if(d<-maxStep)d=-maxStep; return cur+d; }
-function steer(u,tx,ty,maxSpd,dt,pursuit){ const dx=tx-u.x, dy=ty-u.y, dist=Math.hypot(dx,dy);
+/* INTERCEPT, not a fixed lead. Aiming a constant L seconds ahead is the obvious idea and it
+   is WRONG: at L=1.5 the ship aims 225px past a walking player and never enters the ring at
+   all, so the catch time goes to infinity. The right shape is the classic intercept
+   solution - find the time t at which |P_rel + V_target*t| == V_ship*t, i.e. the moment the
+   two can actually meet, and steer at THAT point. It is exact for a straight-line runner,
+   it self-limits to zero as the ship closes (so it never pushes the ship off a lock), and
+   it degrades to plain pursuit when no solution exists. Capped, because a target who is
+   about to turn should not be over-led.
+   Returns the aim point, or null when pure pursuit is correct. */
+function interceptPoint(u,tx,ty,tvx,tvy,spd,capT){
+  const rx=tx-u.x, ry=ty-u.y;
+  const a=tvx*tvx+tvy*tvy-spd*spd;
+  const b=2*(rx*tvx+ry*tvy);
+  const c=rx*rx+ry*ry;
+  let t;
+  if(Math.abs(a)<1e-6){ if(Math.abs(b)<1e-6) return null; t=-c/b; }
+  else { const disc=b*b-4*a*c; if(disc<0) return null;
+    const sq=Math.sqrt(disc), t1=(-b+sq)/(2*a), t2=(-b-sq)/(2*a);
+    t=Math.min(t1>0?t1:Infinity, t2>0?t2:Infinity); }
+  if(!isFinite(t) || t<=0) return null;
+  t=Math.min(t,capT);
+  return { x:tx+tvx*t, y:ty+tvy*t };
+}
+function steer(u,tx,ty,maxSpd,dt,pursuit,mvx,mvy){ const dx=tx-u.x, dy=ty-u.y, dist=Math.hypot(dx,dy);
   if(dist<0.001) return; u.heading=turnToward(u.heading, Math.atan2(dy,dx), TURN_RATE*(pursuit?2:1)*dt);
-  // pursuit: no arrival damping — the arrive-slowdown made a chasing ship SLOWER than a walking
-  // player inside ~48px, so it could hover forever at 40px and never reach beam range (26)
-  const spd=pursuit?maxSpd:Math.min(maxSpd, dist/ARRIVE_DT); u.vx=Math.cos(u.heading)*spd; u.vy=Math.sin(u.heading)*spd;
+  /* Three regimes, and the middle one is new.
+     - patrol/investigate: arrive damping, so a ship eases onto a waypoint.
+     - pursuit with NO target velocity: flat out. (The old comment is still true: plain arrive
+       damping made a chaser slower than a walking player inside 48px and it hovered forever.)
+     - pursuit WITH the target's velocity: station-keeping. Match the target's speed and add a
+       closing term. This is the fix for the real problem, which was never top speed - it was
+       that the saucer JOUSTED. Flying flat out at a point it is already almost on top of, it
+       shot straight through the player, and because velocity is locked to heading it then had
+       to fly a half-circle to come back, losing about 85px every time. Traced live, the gap
+       under an active beam went 27 -> 60 -> 69 -> 34 -> 12 -> 100px: the ring was passing over
+       the player like a searchlight instead of sitting on them. Matching velocity means it
+       parks and STAYS parked, which is what a tractor beam is supposed to do, and it can
+       never be slower than its target because the target's own speed is the floor. */
+  let spd;
+  if(pursuit && mvx!==undefined) spd=Math.min(maxSpd, Math.hypot(mvx,mvy)+dist/STATION_DT);
+  else spd=pursuit?maxSpd:Math.min(maxSpd, dist/ARRIVE_DT);
+  u.vx=Math.cos(u.heading)*spd; u.vy=Math.sin(u.heading)*spd;
   u.x+=u.vx*dt; u.y+=u.vy*dt; u.x=clamp(u.x,0,worldW); u.y=clamp(u.y,0,worldH); }
 
 function updateBots(dt){
@@ -1545,6 +1624,28 @@ function updateBots(dt){
           b.lastSuspect.x=a.lastSuspect.x; b.lastSuspect.y=a.lastSuspect.y;
           b.suspicion=Math.max(b.suspicion,0.5); } } } } }
   }
+  /* THE CUTOFF. One saucer on your tail is a race you can win by being faster than it in a
+     straight line, and Stephen was. A fleet should not lose that race, because a fleet does
+     not have to follow you - it can go and stand where you are heading. Any ship that is not
+     the one chasing, and is close enough to help, flies a hard intercept on the player's
+     current velocity instead of resuming its patrol. Running a predictable line now runs you
+     INTO somebody. Break the line and the cutoff aims at nothing, which is the point:
+     it converts "how fast are you" into "how readable are you". */
+  let chaser=null;
+  for(const u of ufos) if(u.state==='CHASE'||u.state==='BEAM'){ chaser=u; break; }
+  if(chaser && !round.diff.practice){
+    const psp=Math.hypot(player.vx,player.vy);
+    for(const u of ufos){ if(u===chaser||u.remote) continue;
+      if(u.state==='CHASE'||u.state==='BEAM'||u.state==='COOLDOWN') continue;
+      if(Math.hypot(u.x-player.x,u.y-player.y)>CUTOFF_RANGE) continue;
+      if(psp<40) continue;                                        // standing still: nothing to cut off
+      const ip=interceptPoint(u,player.x,player.y,player.vx,player.vy,D.INVEST_SPD,CUTOFF_LEAD_MAX);
+      if(!ip) continue;
+      u.lastSuspect.x=ip.x; u.lastSuspect.y=ip.y; u.cutoff=true;
+      u.suspicion=Math.max(u.suspicion,ENTER_INVEST); u.giveupTimer=0;
+      if(u.state==='PATROL'||u.state==='SCAN') u.state='INVESTIGATE';
+    }
+  } else { for(const u of ufos) u.cutoff=false; }
   let nearest=0;
   for(const u of ufos){ if(u.remote){ remoteUfoStep(u,dt,D); } else updateUfo(u,dt,D);
     const d=Math.hypot(u.x-player.x,u.y-player.y); const prox=clamp01(1-d/(D.SCAN_R*2)); if(prox>nearest)nearest=prox; }
@@ -1619,9 +1720,19 @@ function updateUfo(u,dt,D){
       break; }
     case 'CHASE': {
       if(u.suspicion<DROP_CHASE){ u.state='INVESTIGATE'; u.giveupTimer=0; break; }
-      const tx = (d<senseR && losClear(u.x,u.y,player.x,player.y))?player.x:u.lastSuspect.x;
-      const ty = (d<senseR && losClear(u.x,u.y,player.x,player.y))?player.y:u.lastSuspect.y;
-      steer(u,tx,ty,D.CHASE_SPD,dt,true);
+      const seen = d<senseR && losClear(u.x,u.y,player.x,player.y);
+      let tx = seen?player.x:u.lastSuspect.x;
+      let ty = seen?player.y:u.lastSuspect.y;
+      // cut the corner on a target we can actually see moving. This is what makes a
+      // predictable straight line lose: the ship stops following your tail and goes to
+      // where you are GOING. Juke and the aim error is bounded by V*LEAD_MAX and washes
+      // out in a fraction of a second, so evasion still beats it - unpredictability does.
+      // the lead fades to nothing as the ring gets close, or the ship leads itself PAST the
+      // player, ends up in front, and has to turn around: an own goal worth ~85px a time
+      const leadT = LEAD_MAX*clamp01((d-BEAM_R*2)/(D.SCAN_R*0.8));
+      if(seen && leadT>0.02){ const ip=interceptPoint(u,player.x,player.y,player.vx,player.vy,D.CHASE_SPD,leadT);
+        if(ip){ tx=ip.x; ty=ip.y; } }
+      steer(u,tx,ty,D.CHASE_SPD,dt,true, seen?player.vx:undefined, seen?player.vy:undefined);
       if(d<BEAM_R){ u.state='BEAM'; u.reacquireTimer=0; u.beamHold=0; addTrauma(TRAUMA.beamLock); hitstopMs(40); punchZoom(0.05,120,300); vibe(40); }
       break; }
     case 'BEAM': {
@@ -1633,8 +1744,8 @@ function updateUfo(u,dt,D){
       const clear=losClear(u.x,u.y,player.x,player.y);
       if(!clear){ u.reacquireTimer+=dt; if(u.reacquireTimer>REACQUIRE_TIME*(1+u.beamCharge)){ u.state='CHASE'; break; } }
       else u.reacquireTimer=0;
-      // spring-track over the player
-      steer(u,player.x,player.y,D.BEAM_TRACK_SPD,dt,true);
+      // station-keep over the player: match their velocity, never joust through them
+      steer(u,player.x,player.y,D.BEAM_TRACK_SPD,dt,true,player.vx,player.vy);
       if(round.diff.practice){ // never completes; flash SPOTTED then lose interest
         u.beamHold+=dt; round.spottedFlash=0.3;
         if(u.beamHold>2){ u.state='INVESTIGATE'; u.suspicion*=0.5; u.giveupTimer=0; }
@@ -2750,7 +2861,7 @@ function netStartGuest(entry, seed){
 function remoteUfoStep(u,dt,D){
   // hide phase: the hunter's ship is grounded and its sensors are dark
   if(hide2pLeft()>0){ u.vx*=0.8; u.vy*=0.8; u.state='PATROL'; u.suspicion=0; u.beamCharge=0; return; }
-  const SPD=D.CHASE_SPD*1.12;                                    // region tuning carries into the human hunter
+  const SPD=netHunterSpd(D);                                     // frozen at the pre-retune table - see NET_CHASE_BASE
   const mx=NET.intent.mx, my=NET.intent.my, mv=Math.hypot(mx,my);
   if(mv>0.05){ u.vx=mx/Math.max(1,mv)*SPD; u.vy=my/Math.max(1,mv)*SPD; u.heading=Math.atan2(my,mx); }
   else { u.vx*=0.85; u.vy*=0.85; }
@@ -2770,7 +2881,7 @@ function remoteUfoStep(u,dt,D){
   u.suspicion=clamp01(u.suspicion); u.signal=signal;
   // the beam is proximity-engaged like HUNT mode; re-hide still breaks the lock (the hider's tools all work)
   const prev=u.state;
-  if(d<BEAM_R && losClear(u.x,u.y,player.x,player.y) && (player.C>=BEAM_HOLD_C || exp2p) && round.spawnGrace<=0){
+  if(d<NET_BEAM_R && losClear(u.x,u.y,player.x,player.y) && (player.C>=BEAM_HOLD_C || exp2p) && round.spawnGrace<=0){
     if(u.state!=='BEAM'){ addTrauma(TRAUMA.beamLock); vibe(40); }
     u.state='BEAM'; u.beamCharge+=(1/D.LOCK_TIME)*dt;
     if(u.beamCharge>=1) triggerAbduction(u);
@@ -2821,7 +2932,7 @@ function stepGuestNet(dt){
     return; }
   NET.sendT+=dt; if(NET.sendT>=1/20){ NET.sendT=0; netSend({k:'in', mx:+input.mx.toFixed(2), my:+input.my.toFixed(2)}); }
   // predict own saucer, then ease toward the host's authority — snappy but honest
-  const D=round.diff, SPD=D.CHASE_SPD*1.12, mv=Math.hypot(input.mx,input.my);
+  const D=round.diff, SPD=netHunterSpd(D), mv=Math.hypot(input.mx,input.my);
   if(mv>0.05){ player.x+=input.mx/Math.max(1,mv)*SPD*dt; player.y+=input.my/Math.max(1,mv)*SPD*dt;
     player.facing=Math.atan2(input.my,input.mx); }
   player.x=clamp(player.x,0,worldW); player.y=clamp(player.y,0,worldH);
@@ -2941,7 +3052,7 @@ function startRound(entry, mode, diff, fixedSeed){
     caught:false, caughtBy:null, finalized:false, spawnGrace:SPAWN_GRACE, nearUfo:0, debug:false,
     spottedReason:'', reasonUntil:0, spottedFlash:0, summaryT:0, seed, summary:null,
     decoys:[], inks:[], beacons:[], taBanked:0, heat:!!diff.heat, heatT:0, heatUfoT:0 };
-  player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.cd={dash:0,decoy:0,ink:0,tongue:0,burrow:0};
+  player.freeze=false; player.freezeCap=MAX_CONCEAL_OPEN; player.dashT=0; player.dashFlare=0; player.dashRecT=0; player.cd={dash:0,decoy:0,ink:0,tongue:0,burrow:0};
   player.tongueT=0; player.burrowT=0;
   player.splitPaint=false; studio.activeTone=0; player.mq2=0;
   player.currentPaint2={...player.currentPaint}; player.targetPaint2={...player.targetPaint}; player.paintHSV2=rgb2hsv(player.currentPaint);
@@ -3964,6 +4075,9 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   hold:{locked:camLock, vz:+vz.toFixed(3), vzTarget:+vzTarget.toFixed(3), pinch:!!pinch, brackets:+holdBracketT.toFixed(2)},
   tour:{active:tut.active, step:tut.step}, levelOrder:levelOrderNames,
   region: round?{ biome:round.biome||null, tuned:round.diff._regionTuned||null, scanR:Math.round(round.diff.SCAN_R||0) }:null,
+  world:{ w:worldW, h:worldH, cols:mapCols, rows:mapRows },
+  tune: round?{ label:round.diff.label, chase:Math.round(round.diff.CHASE_SPD||0), track:Math.round(round.diff.BEAM_TRACK_SPD||0),
+                lock:round.diff.LOCK_TIME, beamR:BEAM_R, breakR:BEAM_BREAK_R, walk:PLAYER_WALK }:null,
   net:{ status:NET.status, role:NET.role, code:NET.code, peer:NET.peer, online:round?(round.online||null):null },
   embed:{ embedded:EMBED, lsOk:LS_OK },
   move:{speed:+((input&&input.speed)||0).toFixed(1),mag:+((input&&input.moveMag)||0).toFixed(3),tag:(input&&input.moveTag)||'idle'},

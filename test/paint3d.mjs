@@ -65,6 +65,14 @@ const MEASURE = () => {
   const pct = () => parseInt(($('matchPct').textContent || '0').replace('%', ''), 10) || 0;
 
   if (!$('tPaint') || !$('paint')) return { fatal: 'touch UI or paint panel missing' };
+  /* ⛔⛔ EVERY PRESS IN THIS FILE IS el.click(), WHICH DISPATCHES STRAIGHT TO THE
+     HANDLER AND SKIPS HIT TESTING. That is why this gate was green on 2026-08-02
+     while Stephen could not paint at all: #paintViews was auto-placed on top of
+     the controls column and a real thumb hit a camera-view button instead of
+     MATCH GROUND. A programmatic click cannot see anything lying on top.
+     This file tests the LOGIC of painting. test/reach3d.mjs tests whether a
+     finger can get to it, with document.elementFromPoint at every control's own
+     centre across eight phone viewports. Neither is sufficient alone - keep both. */
   $('tPaint').click();
   const p = $('paint'), pr = r(p);
   const out = {

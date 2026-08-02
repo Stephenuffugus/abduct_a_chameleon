@@ -541,13 +541,48 @@
      zoom. Meccha Chameleon's layout, and the reason its paint reads as the game.
      Lesson: a panel that fits is not a panel that works. Measure what the player
      can SEE, not just what they can reach. */
+  /* ⛔⛔⛔ 2026-08-02 — THE DOCK WAS A DESKTOP PANEL ON A PHONE.
+     Measured at 800x380: the controls column had ~600px of content in a 214px
+     window. Two thirds of it - including MATCH COVER, the only route to a
+     two-tone 100% - sat below a fold nobody knew was scrollable. Adding the view
+     rail its own row made it worse, because the answer was never layout tetris.
+     A phone dock shows what you need to PAINT: what you are matching against,
+     MATCH GROUND, MATCH COVER, and the terrain swatches. The colour wheel, the
+     brush sizes, the poses, the mirror canvas and the eyedropper are all real
+     features and all of them are slower than one tap - so they live behind MORE.
+     Desktop (tall viewport) is untouched and still shows everything at once. */
+  #paintMore{ display:none }
   @media (max-height: 760px){
+    #paintMore{ display:block; min-height:34px; padding:0 10px; border-radius:8px;
+      background:#0A0E19; border:1px solid var(--line); color:var(--muted);
+      font-family:var(--mono); font-size:10px; font-weight:800; letter-spacing:.1em;
+      cursor:pointer; touch-action:manipulation }
+    #paint.more #paintMore{ border-color:var(--amber); color:var(--amber) }
+    #paint:not(.more) #bodyCanvas, #paint:not(.more) #svBox, #paint:not(.more) #hueBar,
+    #paint:not(.more) #paintBrush, #paint:not(.more) #paintPoses, #paint:not(.more) #paintHint,
+    #paint:not(.more) #pickBtn{ display:none !important }
     #paint:not(.hidden){
+      /* ⛔⛔⛔ 2026-08-02 — #paintViews HAD NO GRID AREA AND LANDED ON THE CONTROLS.
+         Stephen: "the coloring is actually completely broken... I tried the fill.
+         I tried using the autoclick match background and it's horrible. none of
+         it works."
+         The grid named three areas - head, right, done - and #paintViews is a
+         FOURTH direct child of #paint with no area of its own. Grid auto-placed
+         it, and measured at 800x380 it occupied y 82-298 ON TOP of #paintRight
+         (y 71-309): a 216px tall rail of camera buttons lying across MATCH
+         GROUND, the eyedropper and MATCH COVER. Tapping "match" hit a view
+         button and swung the camera instead. Nothing was broken about painting;
+         you could not get to it.
+         ⛔ AND paint3d COULD NEVER SEE THIS - it presses buttons with el.click(),
+         which dispatches straight to the handler and skips hit testing entirely.
+         test/reach3d.mjs now asks the document what is actually on top.
+         The rail gets its own row. Four areas for four children, so nothing is
+         ever auto-placed into somebody else's cell again. */
       display:grid;
       grid-template-columns:minmax(0,1fr);
-      grid-template-rows:auto minmax(0,1fr) auto;
-      grid-template-areas:"head" "right" "done";
-      row-gap:8px;
+      grid-template-rows:auto auto minmax(0,1fr) auto;
+      grid-template-areas:"head" "views" "right" "done";
+      row-gap:5px;
       top:6px !important; bottom:6px !important; transform:none !important;
       right:82px !important;                 /* clears the 62px touch column */
       /* 268 max, not 528: at 932x430 the dock+touch column is 350px, so the
@@ -557,8 +592,33 @@
     }
     :root{ --dockw:calc(clamp(188px, 30vw, 268px) + 82px) }
     #paintHead{ grid-area:head; margin-bottom:0 !important }
+    /* a horizontal strip, not a column: it is four short words and it has to cost
+       the character view as little height as possible */
+    #paintViews{ grid-area:views; position:static !important; display:flex !important;
+      flex-direction:row !important; gap:5px !important; width:100% !important;
+      top:auto !important; right:auto !important; left:auto !important; transform:none !important }
+    #paintViews .pview{ flex:1 1 0; min-width:0; height:34px !important; padding:0 !important;
+      font-size:9px !important }
+    /* ⛔⛔ THE READ-OUT WAS EATING THE ENTIRE COLUMN. Measured at 740x360:
+       #paintTarget occupied 167px of a 182px window, so MATCH GROUND sat on the
+       bottom edge and MATCH COVER and the swatches were both below a fold nobody
+       knew was scrollable. One chip telling you what you are matching against had
+       taken the whole panel.
+       Everything below is a HEIGHT BUDGET, not styling. At 360px tall the dock is
+       348: head 48 + rail 34 + DONE 44 + gaps 24 leaves 198 for controls, and the
+       four things a player needs - the chip, MATCH GROUND, MATCH COVER and the
+       swatches - now come to 196. It fits by construction rather than by luck,
+       and test/reach3d.mjs holds it there. */
+    #paintTarget{ padding:4px 6px !important; line-height:1.2 !important;
+      font-size:9.5px !important; max-height:52px; overflow:hidden }
+    #paintTarget *{ font-size:9.5px !important; line-height:1.2 !important }
+    #paintTarget .sw, #paintTarget canvas{ width:20px !important; height:20px !important }
+    #paintActions button{ min-height:44px !important; padding:0 7px !important }
+    #matchCoverBtn{ min-height:44px !important; padding:0 7px !important; font-size:10.5px !important }
+    #paintDone{ min-height:44px !important; font-size:12px !important }
+    #swatches > button{ width:40px !important; height:40px !important; flex:0 0 40px }
     #paintRight{ grid-area:right; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
-      display:flex; flex-direction:column; gap:6px }
+      display:flex; flex-direction:column; gap:5px }
     /* flex-shrink defaults to 1, so an overflowing column SQUASHES its children
        instead of scrolling: the 44px hue bar was rendering 18px tall and back
        under the touch minimum. Let them keep their size and let the column
@@ -991,6 +1051,9 @@
     background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;backdrop-filter:blur(8px);width:236px">
     <div id="paintHead" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <b style="font-size:12px;letter-spacing:.14em">PAINT YOURSELF</b>
+      <!-- ⭐ 8/02: on a phone the dock shows what you need to PAINT and nothing
+           else; everything slower lives one tap behind MORE. -->
+      <button id="paintMore" type="button">MORE</button>
       <!-- Penny 7/29: got STUCK in paint mode. This was 26px and muted - half
            the touch law and invisible. 48px, loud, plus the DONE bar below.
            8/01: neither exit ever helped, because on a landscape phone the panel
@@ -6391,6 +6454,8 @@ function setupPaintUI(){
   /* P39: a TOGGLE, because once armed the second half of the gesture happens out
      on the world where there is nothing else to press - the way out has to be
      the same 48px target that got you in. */
+  const _pm = document.getElementById('paintMore');
+  if(_pm) _pm.onclick = ()=>{ document.getElementById('paint').classList.toggle('more'); SFX.click(); };
   const _pk = document.getElementById('pickBtn');
   if(_pk) _pk.onclick = ()=>{ setPickArmed(!pickArmed); SFX.click(); };
   const wheelPick = (cv, fn)=>{
