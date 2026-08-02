@@ -279,7 +279,15 @@
     background:rgba(242,179,61,.16); border:1.5px solid var(--amber); color:var(--amber);
     font-family:var(--mono); font-size:12px; font-weight:800; letter-spacing:.10em }
   @media (max-height: 470px){ #tPractice{ top:52px; min-height:44px; font-size:11px }
-    #tStart{ top:104px; min-height:44px; font-size:11px; min-width:120px } }
+    #tStart{ top:104px; min-height:44px; font-size:11px; min-width:110px }
+    /* ⛔ the lobby is the last thing still reaching into the sight line hud3d
+       measures. It is edge chrome and it only exists while WAITING, but 'only
+       while waiting' is most of what a new player sees, so it gets narrowed
+       rather than excused. Heights stay at the 44px floor - this takes width. */
+    #lobby .lbtn{ min-width:58px; padding:0 7px; font-size:11px }
+    #lobby .lbtn.sq{ min-width:44px }
+    #lobWho{ max-width:150px; font-size:9px }
+    #lobRoom{ font-size:11px; letter-spacing:.10em } }
   #hidewait .num{ font-size:26px; font-weight:900; color:var(--txt); font-variant-numeric:tabular-nums }
   #hwTabs{ display:flex; gap:8px; justify-content:center }
   #hwTabs button{ min-height:44px; padding:0 18px; border-radius:10px; cursor:pointer;
@@ -1334,7 +1342,7 @@ const HIDE_MIN = 60, HIDE_MAX = 300, HIDE_STEP = 30;   // the host may set 1-5 m
 /* ⛔ a build stamp on screen, because "is he even running the new one" cost a
    whole test session. The room link carries whatever ?v= the host's tab had, so
    an old link quietly hands an old build to everybody who opens it. */
-const BUILD = '0802w';
+const BUILD = '0802x';
 let hideSecsLocal = null;       // the host's own copy, so a burst of taps all land
 const ROUND_SECONDS = 150;
 const INTERMISSION = 7;
@@ -2850,7 +2858,15 @@ function buildWorld(map){
     ];
     let placed = 0;
     for(const o of (map.objects||[])){
-      if(o.type!=='wall' || placed >= 130) continue;
+      /* ⛔⛔ 2026-08-02 — "the random graffiti everywhere is pretty bad. it's
+         literally like floating. maybe we just need like one piece of graffiti
+         or two. you know two on different walls and that's it."
+         There were FOUR mark passes running at once - wall faces, wall TOPS,
+         platform tops and the ground - with caps of 130, 70, 60 and dozens. Two
+         of them are gone entirely below. This one stays because a tag at body
+         height on a vertical wall is the only one that is actually graffiti, and
+         it is now counted in single figures. */
+      if(o.type!=='wall' || placed >= 6) continue;
       const h = hash2(o.x*41+7, o.y*43+13);
       if(h % 100 >= 46) continue;                       // a bit under half of walls
       const free = FACES.filter(f=> !wallAt.has((o.x+f.dx)+','+(o.y+f.dy)));
@@ -2882,32 +2898,17 @@ function buildWorld(map){
      so wall tops and the tops of every perch get marked too. That also makes
      the jump matter twice over - climb a crate with a stencil on it and the
      stencil is now the thing you have to paint. */
-  (function(){
-    if(!markAtlas.length) return;
-    let placed = 0;
-    for(const o of (map.objects||[])){
-      if(o.type!=='wall' || placed >= 70) continue;
-      const h = hash2(o.x*67+29, o.y*71+31);
-      if(h % 100 >= 34) continue;
-      const e = markAtlas[(h>>>6) % markAtlas.length];
-      const w = cellToWorld(o.x, o.y);
-      const jx = ((h>>>9)%100)/100 - 0.5, jz = ((h>>>13)%100)/100 - 0.5;
-      placeMark(w.x + jx*TILE*0.5, 4.24, w.z + jz*TILE*0.5,
-        ((h>>>17)%628)/100, -Math.PI/2, 1.2 + ((h>>>19)%70)/100, e, 1.1);
-      placed++;
-    }
-    let pp = 0;
-    for(const pl of platforms){
-      if(pp >= 60) break;
-      const h = hash2(Math.round(pl.cx*10)+83, Math.round(pl.cz*10)+89);
-      if(h % 100 >= 38) continue;
-      const e = markAtlas[(h>>>6) % markAtlas.length];
-      if(e.kind === 'poster') continue;
-      const size = Math.min(1.5, Math.max(0.7, (pl.maxX-pl.minX) * 0.75));
-      placeMark(pl.cx, pl.top + 0.03, pl.cz, ((h>>>17)%628)/100, -Math.PI/2, size, e, 0.9);
-      pp++;
-    }
-  })();
+  /* ⛔ THE WALL-TOP AND PLATFORM MARK PASSES ARE BOTH DELETED (2026-08-02).
+     Stephen: "the random graffiti everywhere is pretty bad. it's literally like
+     floating... not floating on the swing set on the playground."
+     The wall-top pass laid up to SEVENTY flat decals at y=4.24 - the top face of
+     a 4.2m wall. From the ground those are slivers hanging in mid air, which is
+     the "floating" exactly; from a saucer they are litter on a surface nobody can
+     stand on. The platform pass is the one he named: up to sixty tags across the
+     tops of crates, benches, picnic tables and playground equipment. A tag on a
+     swing set is not detail, it is the generator forgetting what a wall is.
+     Graffiti now exists in one place only - the side of a wall, at body height,
+     capped in single figures - which is the pass above. */
 
   /* ── MARKS ON HARD GROUND ────────────────────────────────────────────
      Open ground was the flattest thing in the game: one colour for metres in
@@ -2917,13 +2918,18 @@ function buildWorld(map){
     const HARD = { concrete:0.09, rock:0.06, metal:0.08, ash:0.09, dirt:0.05,
                    sand:0.04, crystal:0.05, ice:0.04, mud:0.05 };
     let placed = 0;
-    for(let y=0;y<mapRows && placed<110;y++) for(let x=0;x<mapCols && placed<110;x++){
+    for(let y=0;y<mapRows && placed<34;y++) for(let x=0;x<mapCols && placed<34;x++){
       const k = (MAP.terrain[y] && MAP.terrain[y][x]) || 'void';
       const p2 = HARD[k]; if(!p2) continue;
       const h = hash2(x*53+17, y*59+23);
       if((h % 1000)/1000 >= p2) continue;
       const e = markAtlas[(h>>>6) % markAtlas.length];
-      if(e.kind === 'poster') continue;                 // posters belong on walls
+      /* ⛔ GROUND MARKS ARE WEATHERING, NOT GRAFFITI. Scorches, stains and chalk
+         break up a flat floor and read as wear; a bright spray tag lying face up
+         in the middle of a street reads as litter, and eighty of them read as the
+         "random graffiti everywhere" he was complaining about. Only the quiet
+         kinds down here. */
+      if(e.kind === 'poster' || e.kind === 'tag' || e.kind === 'stencil') continue;
       const w = cellToWorld(x, y);
       const jx = ((h>>>9)%100)/100 - 0.5, jz = ((h>>>13)%100)/100 - 0.5;
       const px = w.x + jx*TILE*0.6, pz = w.z + jz*TILE*0.6;
@@ -3174,16 +3180,23 @@ function reseatSpawns(){
   };
   /* a spawn is stored in CELL coordinates and lands on the cell CENTRE, so only
      cells whose centre sits in the big region are somewhere we may put anybody */
+  /* ⛔ AND NOT ON TOP OF A CRATE. jump3d caught a hider spawning at y=1.7 once
+     the favela filled every room with furniture: perches went from 49 to 231, so
+     the odds of a spawn cell having a barrel on it stopped being negligible.
+     It is not fatal - you are grounded, just standing on a box - but you begin
+     the round a foot in the air, in the open, on the one surface in the room
+     that is not the ground you were about to paint yourself to match. */
+  const onProp = (x, z) => supportAt(x, z).top > 0.05;
   const pool = [];
   for(let gy=1; gy<mapRows-1; gy++) for(let gx=1; gx<mapCols-1; gx++){
     const w = cellToWorld(gx, gy);
-    if(regionAtWorld(w.x, w.z) === best) pool.push([gx, gy]);
+    if(regionAtWorld(w.x, w.z) === best && !onProp(w.x, w.z)) pool.push([gx, gy]);
   }
   if(!pool.length) return 0;
   let moved = 0, pick = 1;
   for(const sp of MAP.spawns){
     const w = cellToWorld(sp.x, sp.y);
-    if(regionAtWorld(w.x, w.z) === best) continue;
+    if(regionAtWorld(w.x, w.z) === best && !onProp(w.x, w.z)) continue;
     const c = pool[(pick * 7919) % pool.length];
     sp.x = c[0]; sp.y = c[1]; pick += 13; moved++;
   }
@@ -5104,8 +5117,15 @@ function addCoverInner(type, gx, gy, unit){
     // same rule as the walls: the roof belongs to the structure, not to the cell
     const rm = instMat(COVER_MAT.crate, ROOF_HUES,
                        (unit == null) ? (gx+29) : unit, (unit == null) ? (gy+31) : 7);
+    /* ⭐ ROOFS SIT AT DIFFERENT HEIGHTS NOW. Stephen: "they need a lot more
+       variance." Every roof in the game was pinned to 2.9, so a block from the
+       air was one flat plane no matter how many units it held - no silhouette,
+       no shadow line, nothing to tell one apartment from the next even after
+       they stopped sharing a colour. Three steps keyed to the UNIT, capped under
+       the 4.2 wall so a roof never pokes out of the top of its own building. */
+    const rY = 2.9 + ((unit == null ? hash2(gx,gy) : hash2(unit*17+3, 5)) % 3) * 0.52;
     const slab = new THREE.Mesh(new THREE.BoxGeometry(3.05, 0.26, 3.05), rm);
-    slab.position.y = 2.9; g.add(slab); losMeshes.push(slab);
+    slab.position.y = rY; g.add(slab); losMeshes.push(slab);
     /* ⭐⭐ THE ROOFS ARE THE HUNTER'S ENTIRE VIEW, and they were bare slabs.
        A saucer looks straight down, so a favela from the air was a set of flat
        rectangles - which is both dull and, worse, TOO EASY TO READ: anything on
@@ -5117,7 +5137,7 @@ function addCoverInner(type, gx, gy, unit){
        never block a sightline that matters or become an unintended perch. */
     const rh = hash2(gx*5+3, gy*11+7) % 100;
     if(rh < 22){
-      const top = 3.03;
+      const top = rY + 0.13;
       if(rh < 6){                                    // a water tank on short legs
         const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.52,0.52,0.95,10), ROOF_PROP_MAT);
         tank.position.y = top + 0.72; g.add(tank);
