@@ -1353,10 +1353,15 @@ function onPointerDown(e){
   // round on-screen buttons first — AIM never covers them, so MATCH and the
   // abilities stay live and there is always a way out of aiming
   for(const h of roundHits){ if(inRect(sx,sy,h)){ h.fn(); pointers.set(id,{sx,sy,role:'ui'}); return; } }
-  /* AIM owns the world while it is armed: drag anywhere to move the ring onto what
-     you want to copy. It disarms itself on MATCH (see doMatch), so unlike the paint
-     mode it replaced there is no state where the player is rooted with no exit. */
-  if(studio.reticleOn && roundState==='PLAYING'){ pointers.set(id,{sx,sy,role:'reticle'}); studioReticleDrag(sx,sy); return; }
+  /* ⛔⛔ AIM TAKES THE ACTION HAND, NEVER THE MOVEMENT HAND. The first version of this
+     claimed the whole screen the moment the ring was armed and returned above the
+     joystick branch, so on a phone tapping 🎯 welded the player to the floor while the
+     UFOs kept hunting - measured at 198.3 world px of movement with AIM off and 0.0
+     with it on. That is precisely the "rooted with no exit" failure the paint MODE was
+     deleted for, rebuilt in four lines, with the comment above it asserting it could
+     not happen. A mode that can take your legs is a mode, whatever it is called.
+     The movement half is now untouchable: the aim ring lives on the same thumb that
+     already owns the camera. */
   if(roundState==='CAUGHT'||roundState==='TIMEOUT'){ pointers.set(id,{sx,sy,role:'ui'}); return; }
   if(pinch){ pointers.set(id,{sx,sy,role:'ui'}); return; }   // a third finger never fights an active pinch
   if(tryStartPinch(id,sx,sy)) return;           // second finger while a pan finger is live → pinch zoom (P9)
@@ -1364,9 +1369,17 @@ function onPointerDown(e){
   const joyOnLeft = settings.handed!=='left';   // right-handed → move with left thumb; actions on right
   const onJoySide = joyOnLeft ? (sx < vpW*0.5) : (sx >= vpW*0.5);
   if(onJoySide){
-    const jcx=clamp(sx,JOY_R+JOY_MARGIN,vpW-JOY_R-JOY_MARGIN), jcy=clamp(sy,JOY_R+JOY_MARGIN,vpH-JOY_R-JOY_MARGIN);
-    joystick={ id, cx:jcx, cy:jcy, dx:0, dy:0, mag:0 };
+    /* ⛔ THE STICK DOES NOT TELEPORT. This clamped the stick CENTRE into the screen but
+       left the thumb where it was, so a thumb inside the outer JOY_R+JOY_MARGIN band -
+       the bottom-left corner of a landscape phone, where a thumb rests - was instantly
+       up to 86px from the centre and the chameleon sprinted off at full speed in a
+       direction nobody chose. In a game whose entire fail state is being seen moving,
+       an unrequested walk is the worst possible bug. The centre goes exactly under the
+       thumb; if that puts the ring off-screen, the ring is what gets clipped. */
+    joystick={ id, cx:sx, cy:sy, dx:0, dy:0, mag:0 };
     pointers.set(id,{sx,sy,role:'joystick'});
+  } else if(studio.reticleOn && roundState==='PLAYING'){  // armed aim owns the ACTION hand only
+    pointers.set(id,{sx,sy,role:'reticle'}); studioReticleDrag(sx,sy);
   } else if(round.mode!=='HUNT'){                        // right thumb pans the camera (not in HUNT)
     pointers.set(id,{sx,sy,role:'pan',sx0:sx,sy0:sy,px0:camPan.x,py0:camPan.y});
   } else {
@@ -2579,20 +2592,29 @@ function drawRoundHUD(){
   ax += right ? -(60+gap) : (96+gap);
   uiBtn('🕺', ax, ay, 60, BS, ()=> cyclePose(1), {rad:14, size:20}); pushMode('pose',ax,60);
   txt(POSE_NAMES[player.pose], ax+30, ay-8, 9, COL.muted, 'center', '600');
-  if(round.online){ uiBtn('LEAVE', edge, 14, 62, 40, ()=>{ netLeave(); gotoTitle(); }, {rad:9, size:11, color:COL.danger, stroke:COL.danger});
-    txt('🌐 LIVE', edge+70, 34, 10, COL.cyan, 'left','800');
+  /* ⛔ THE SYSTEM CLUSTER GOES OPPOSITE THE ABILITIES. Pause, mute and the MODE pill
+     were pinned to the LEFT edge unconditionally, and a left-handed player has their
+     ability column there too - measured, the 96x40 pill sat directly on top of two
+     44x44 ability buttons (1100px2 of overlap at 667x375), and roundHits is scanned in
+     draw order, so reaching for Freeze paused the game and reaching for Dash sent the
+     camera home. Same class as the 3D paint column that a camera rail covered while
+     every click-based gate passed. 44px, too: 40 was under this game's own floor. */
+  const sysW=Math.max(96, Math.round(96*hudScale));
+  const sysX = right ? edge : vpW-edge-sysW;
+  if(round.online){ uiBtn('LEAVE', sysX, 14, 62, 44, ()=>{ netLeave(); gotoTitle(); }, {rad:9, size:11, color:COL.danger, stroke:COL.danger});
+    txt('🌐 LIVE', sysX+70, 36, 10, COL.cyan, 'left','800');
     // the hider's head start: hide, paint, settle before the ship lifts off
     if(hide2pLeft()>0){
       panel(vpW/2-160, 64, 320, 46, 10);
       txt('HIDE + PAINT YOURSELF', vpW/2, 84, 13, COL.amber,'center','800');
       txt('the hunter lifts off in '+Math.ceil(hide2pLeft())+'s', vpW/2, 101, 10, COL.muted,'center','600');
     } }
-  else uiBtn('⏸', edge, 14, 40, 40, ()=> togglePause(), {rad:9, size:16});
-  uiBtn(settings.muted?'🔇':'🔊', edge+46+(round.online?22:0), 14, 40, 40, ()=> setMuted(!settings.muted), {rad:9, size:14});
+  else uiBtn('⏸', sysX, 14, 44, 44, ()=> togglePause(), {rad:9, size:16});
+  uiBtn(settings.muted?'🔇':'🔊', sysX+50+(round.online?18:0), 14, 44, 44, ()=> setMuted(!settings.muted), {rad:9, size:14});
   // MODE pill (always visible, always the one road ALL the way home to Move)
   { const mc = ctrlMode==='INSPECT'?COL.green:COL.cyan;
     const label = ctrlMode==='INSPECT'?'👁 LOOK':'🕹 MOVE';
-    const pw=Math.round(96*hudScale), ph=Math.round(Math.max(40,40*hudScale)), pxp=edge, pyp=62;
+    const pw=sysW, ph=Math.round(Math.max(44,44*hudScale)), pxp=sysX, pyp=64;
     ctx.fillStyle='rgba(21,27,44,0.92)'; rr(pxp,pyp,pw,ph,10); ctx.fill();
     ctx.strokeStyle=mc; ctx.lineWidth=2; rr(pxp,pyp,pw,ph,10); ctx.stroke();
     txt(label, pxp+pw/2, pyp+ph/2, 12, mc, 'center', '800');
@@ -2638,30 +2660,51 @@ function drawRoundHUD(){
   const BAR = (round.mode==='SALVAGE' && round.cutter)
     ? [{key:'cut', name:'Cut', glyph:'⚡', cut:true}].concat(ABILITIES) : ABILITIES;
   const N=BAR.length;
-  const room=Math.max(44*N, (ay-14)-60);
-  const pitch=Math.max(44, Math.min(54, room/N));
-  const aby = ay-14-(pitch*N-(pitch-44));
-  BAR.forEach((ab,i)=>{ const y=aby+i*pitch;
+  /* ⛔⛔⛔ THE COLUMN HAD NO TOP. It was laid out bottom-up from the dock with the
+     pitch floored at 44px and NOTHING checking where the top landed:
+
+       vpH 390 (a phone on its side), 7 abilities -> aby = -10
+       vpH 390, 8 abilities (SALVAGE with the cutter online) -> aby = -54
+
+     So on the target device the top ability sat off the top of the screen, and in
+     SALVAGE the CUT button - the verb the entire mode exists to reach, after four
+     minutes of work - was ENTIRELY off the viewport and could not be tapped at all.
+     Its only other input is KeyG, on a phone. The comment two blocks up reasons
+     carefully about which of two placements the CUT button should have; both of them
+     were off screen.
+
+     The band is what is between the timer panel and the dock. If the column does not
+     fit it, it WRAPS into a second column inboard rather than growing past the top -
+     44px is a floor, not a suggestion, so the only thing left to spend is width, and
+     the action-hand edge of a landscape phone has 800px of it. */
+  const bandTop=60, bandH=Math.max(44, (ay-14)-bandTop);
+  const perCol=Math.max(1, Math.floor(bandH/44));
+  const cols=Math.ceil(N/perCol);
+  const rows=Math.ceil(N/cols);
+  const pitch=Math.max(44, Math.min(54, bandH/rows));
+  const aby=Math.max(bandTop, ay-14-(pitch*rows-(pitch-44)));
+  BAR.forEach((ab,i)=>{ const col=Math.floor(i/rows), y=aby+(i%rows)*pitch;
     const gated = ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');   // P9: hard-anchor while scouting
     const out = (ab.charges && (player.lureLeft|0)<=0) || (ab.cut && !round.cutTarget && !player.cutOn);
     const cd = (ab.key==='freeze'||ab.cut)?0:(player.cd[ab.key]||0), ready=cd<=0 && !gated && !out;
     const on = (ab.key==='freeze' && player.freeze) || (ab.cut && player.cutOn);
     ctx.globalAlpha = gated?0.4:1;
-    ctx.fillStyle=on?'rgba(63,208,224,0.28)':(ready?'rgba(21,27,44,0.88)':'rgba(21,27,44,0.5)'); rr(abx,y,44,44,11); ctx.fill();
-    ctx.strokeStyle=on?COL.cyan:(ready?COL.line:'#242c44'); ctx.lineWidth=on?2:1; rr(abx,y,44,44,11); ctx.stroke();
-    txt(ab.glyph, abx+22, y+21, 17, ready?COL.txt:COL.muted, 'center','700');
-    if(cd>0){ ctx.fillStyle='#05070d'; ctx.globalAlpha=(gated?0.4:1)*0.55; ctx.beginPath(); ctx.moveTo(abx+22,y+22);
-      ctx.arc(abx+22,y+22,23,-Math.PI/2,-Math.PI/2+TAU*clamp01(cd/(cdMax[ab.key]||1)),false); ctx.closePath(); ctx.fill(); }
+    const bx2 = abx + (right ? -col*50 : col*50);
+    ctx.fillStyle=on?'rgba(63,208,224,0.28)':(ready?'rgba(21,27,44,0.88)':'rgba(21,27,44,0.5)'); rr(bx2,y,44,44,11); ctx.fill();
+    ctx.strokeStyle=on?COL.cyan:(ready?COL.line:'#242c44'); ctx.lineWidth=on?2:1; rr(bx2,y,44,44,11); ctx.stroke();
+    txt(ab.glyph, bx2+22, y+21, 17, ready?COL.txt:COL.muted, 'center','700');
+    if(cd>0){ ctx.fillStyle='#05070d'; ctx.globalAlpha=(gated?0.4:1)*0.55; ctx.beginPath(); ctx.moveTo(bx2+22,y+22);
+      ctx.arc(bx2+22,y+22,23,-Math.PI/2,-Math.PI/2+TAU*clamp01(cd/(cdMax[ab.key]||1)),false); ctx.closePath(); ctx.fill(); }
     // a consumable has to SHOW its count or "nothing happened" is the only feedback you get
-    if(ab.cut){ txt('CUT', abx+22, y+36, 8, on?COL.danger:(ready?COL.amber:COL.muted),'center','800');
+    if(ab.cut){ txt('CUT', bx2+22, y+36, 8, on?COL.danger:(ready?COL.amber:COL.muted),'center','800');
       if(player.cutOn){ ctx.strokeStyle=COL.danger; ctx.lineWidth=3;
-        ctx.beginPath(); ctx.arc(abx+22,y+22,20,-Math.PI/2,-Math.PI/2+TAU*clamp01(player.cutT/CUT_TIME)); ctx.stroke(); } }
+        ctx.beginPath(); ctx.arc(bx2+22,y+22,20,-Math.PI/2,-Math.PI/2+TAU*clamp01(player.cutT/CUT_TIME)); ctx.stroke(); } }
     if(ab.charges){ const n=player.lureLeft|0;
       ctx.fillStyle=n>0?'rgba(63,208,224,0.92)':'rgba(224,101,94,0.9)';
-      ctx.beginPath(); ctx.arc(abx+38,y+6,8,0,TAU); ctx.fill();
-      txt(String(n), abx+38, y+6, 10, '#0b0f1a','center','800'); }
+      ctx.beginPath(); ctx.arc(bx2+38,y+6,8,0,TAU); ctx.fill();
+      txt(String(n), bx2+38, y+6, 10, '#0b0f1a','center','800'); }
     ctx.globalAlpha=1;
-    roundHits.push({x:abx,y,w:44,h:44,fn:()=>{ const g=ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');
+    roundHits.push({x:bx2,y,w:44,h:44,fn:()=>{ const g=ctrlMode!=='MOVE' && !(ab.key==='freeze' && ctrlMode==='INSPECT');
       if(g) return;
       if(ab.cut){ if(!round.cutTarget && !player.cutOn){ showToast('Nothing in cutter range'); SFX.back(); return; }
         player.cutOn=!player.cutOn; if(!player.cutOn) player.cutT=0; SFX.ui(); vibe(20); return; }
@@ -4889,6 +4932,14 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   // every tappable rect the CURRENT screen drew, in CSS px — the gate that catches a control
   // laid out below the fold. Arrow-key tests cannot see that class of bug; this can.
   navRects(){ return navList.map(n=>({ x:n.x, y:n.y, w:n.w, h:n.h, label:n.label||'' })); },
+  /* Every tappable rect the CURRENT ROUND drew. navRects covers menus; this covers the
+     thing a player actually holds for four minutes, and it is the list that had never
+     been audited - which is how the whole ability column came to be laid out off the top
+     of a landscape phone, with SALVAGE's CUT button at y=-54. */
+  roundRects(){ return roundHits.map(h=>({ x:Math.round(h.x), y:Math.round(h.y), w:Math.round(h.w), h:Math.round(h.h) })); },
+  setHand(which){ settings.handed = which==='left' ? 'left' : 'right'; return settings.handed; },
+  // the cutter is the eighth entry in the ability column and the state its layout broke in
+  armCutter(on){ if(round){ round.cutter = on!==false; } return !!(round&&round.cutter); },
   t:{ teleport(x,y){ if(round&&player.alive){ player.x=x; player.y=y; player.vx=0; player.vy=0; } },
       moveUfo(i,x,y){ const u=round&&round.ufos[i]; if(u){ u.x=x; u.y=y; } },
       covers(){ return coverObjects.map(o=>({type:o.type,wx:o.wx,wy:o.wy})); },

@@ -105,6 +105,47 @@ async function main(){
   ok('S1 MATCH spends the aim and disarms it (no rooted limbo)', st().studio.aim===false && st().paintCount===pc0+1, 'aim='+st().studio.aim+' painted='+st().paintCount);
   ok('S1 still able to move after aiming', st().mode==='MOVE', 'mode='+st().mode);
 
+  /* ⛔⛔ THE TWO WAYS A STICK CAN BETRAY YOU, both measured, both shipped once.
+     1. ARMING AIM MUST NOT TAKE THE MOVEMENT HAND. The first cut of the aim ring
+        claimed the whole screen and returned above the joystick branch: 198.3 world px
+        of movement with it off, 0.0 with it on. That is the rooted-with-no-exit state
+        the paint mode was deleted for, rebuilt.
+     2. THE STICK MUST NOT TELEPORT. The centre was clamped into the screen while the
+        thumb was not, so a thumb resting in the outer 86px band started a full-speed
+        walk nobody asked for - in a game where moving is what gets you seen. */
+  const walk = () => { const p0 = st().playerPos;
+    const jx2 = Math.floor(VW()*0.25), jy2 = Math.floor(VH()*0.6);
+    fire('pointerdown',{clientX:jx2,clientY:jy2,pointerId:41});
+    fire('pointermove',{clientX:jx2+130,clientY:jy2,pointerId:41}); pump(30);
+    fire('pointerup',{clientX:jx2+130,clientY:jy2,pointerId:41}); pump(2);
+    const p1 = st().playerPos; return Math.hypot(p1.x-p0.x, p1.y-p0.y); };
+  if(st().studio.aim) { tapRect(btn('aim'),44); pump(4); }
+  const freeWalk = walk();
+  tapRect(btn('aim'),45); pump(4);
+  const aimedWalk = st().studio.aim ? walk() : -1;
+  ok('S1 you can still WALK with the aim ring armed', aimedWalk > freeWalk*0.5 && aimedWalk > 20,
+     `free ${freeWalk.toFixed(1)}px vs armed ${aimedWalk.toFixed(1)}px`);
+  if(st().studio.aim){ tapRect(btn('aim'),46); pump(4); }
+  /* A thumb DOWN with no drag at all must move you nowhere. Put it INSIDE the outer
+     JOY_R+JOY_MARGIN=86px band (that is the band the old clamp teleported out of) but
+     clear of the bottom dock, or the press is swallowed by a button and the assertion
+     passes without ever reaching the stick. */
+  const rx = 5, ry = Math.floor(VH()*0.45);
+  /* ⛔ AND IT HAS TO INCLUDE A MOVE. The old clamp only set the stick CENTRE; the
+     offset that drives you is computed in pointerMOVE, so a press with no motion
+     looked innocent and this assertion passed against the bug. Two pixels of thumb
+     jitter - which every real thumb produces - is what turns an 81px centre offset
+     into a full-speed walk. Nudge it, then measure. */
+  const rest0 = st().playerPos;
+  fire('pointerdown',{clientX:rx,clientY:ry,pointerId:47}); pump(2);
+  fire('pointermove',{clientX:rx+2,clientY:ry,pointerId:47}); pump(20);
+  const rest1 = st().playerPos;
+  const jitterSpeed = st().move.speed, jitterTag = st().move.tag;
+  fire('pointerup',{clientX:rx+2,clientY:ry,pointerId:47}); pump(2);
+  ok('S1 two pixels of thumb jitter at the screen edge is not a full-speed walk',
+     jitterSpeed === 0 && Math.hypot(rest1.x-rest0.x, rest1.y-rest0.y) < 2,
+     `moved ${Math.hypot(rest1.x-rest0.x, rest1.y-rest0.y).toFixed(1)}px at speed ${jitterSpeed} (${jitterTag})`);
+
   // ---- S2 analog speed curve ----
   const jx=Math.floor(VW()*0.25), jy=Math.floor(VH()*0.6);   // left half = move side (right-handed default)
   const jdrag=(dx)=>{ fire('pointerup',{clientX:jx,clientY:jy,pointerId:3}); fire('pointerdown',{clientX:jx,clientY:jy,pointerId:3}); fire('pointermove',{clientX:jx+dx,clientY:jy,pointerId:3}); pump(2); };
@@ -139,12 +180,11 @@ async function main(){
   key('KeyI'); pump(60);
   ok('S5 Done → MOVE, zoom + pan return', st().mode==='MOVE' && st().inspect.zoomT<0.4 && Math.hypot(st().camPan.x,st().camPan.y)<5, `mode=${st().mode} zoomT=${st().inspect.zoomT} pan=${Math.hypot(st().camPan.x,st().camPan.y).toFixed(1)}`);
 
-  // ---- S6 MATCH works in PAINT ----
-  key('KeyE'); pump(4);   // PAINT
-  const before=st().paint.mqAim; key('Digit8'); pump(2);  // aim a far color → mqAim drops
+  // ---- S6 MATCH recovers a bad paint ----
+  window.__aac.t.setPaint('#AAB0BC'); pump(4);            // wear concrete on grass
+  const mq0=st().paint.mqAim;
   tapRect(btn('match'),24); pump(6);
-  ok('S6 MATCH works while painting', st().paint.mqAim>before || st().paint.mqAim>=0.85, `mqAim ${before}→${st().paint.mqAim}`);
-  key('KeyE'); pump(4);
+  ok('S6 MATCH recovers a bad paint in one tap', st().paint.mqAim>mq0 && st().paint.mqAim>=0.85, `mqAim ${mq0}→${st().paint.mqAim}`);
 
   // ---- HUNT stays in MOVE (guards) ----
   key('Escape'); pump(6); // pause

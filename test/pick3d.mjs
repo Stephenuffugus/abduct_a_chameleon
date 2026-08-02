@@ -60,9 +60,19 @@ for (const [W,H] of [[667,375],[932,430]]) {
     const S = window.__aac3dStudio;
     document.getElementById('tPaint').click();      // open the studio the way a player does
     await nap(900);
+    /* ⛔ REACH IT THE WAY A PLAYER DOES. Under 760px of height the studio puts its slow
+       path (the colour wheel, the body preview, the eyedropper) behind MORE, so on a
+       phone #pickBtn is display:none until MORE is pressed - and this gate measured it
+       at 0px tall and reported the button as broken for two viewports. The button was
+       fine; the gate did not know how to get to it. Assert the ROUTE, then the button. */
+    const more = document.getElementById('paintMore');
+    const moreShown = !!(more && more.offsetParent !== null);
+    const moreBB = moreShown ? more.getBoundingClientRect() : null;
+    if (moreShown && !document.getElementById('paint').classList.contains('more')) { more.click(); await nap(300); }
     const btn = document.getElementById('pickBtn');
     const bb = btn ? btn.getBoundingClientRect() : null;
     const before = S.brush();
+    const route = { moreShown, moreH: moreBB ? Math.round(moreBB.height) : null };
 
     // 1. arming shows itself
     S.pickArm(true); await nap(120);
@@ -115,16 +125,19 @@ for (const [W,H] of [[667,375],[932,430]]) {
                    hint: (document.getElementById('pickHint')||{}).textContent || '',
                    stillArmed: document.body.classList.contains('picking') });
     }
-    return { before, bb: bb && { w:Math.round(bb.width), h:Math.round(bb.height) },
+    return { before, route, bb: bb && { w:Math.round(bb.width), h:Math.round(bb.height) },
              armedOn, afterEsc, shots };
   });
 
-  lines.push(`${tag}  button ${m.bb ? m.bb.w+'x'+m.bb.h : 'MISSING'}, armed label "${m.armedOn.label}"`);
+  lines.push(`${tag}  ${m.route.moreShown ? 'behind MORE ('+m.route.moreH+'px)' : 'always visible'}, button ${m.bb ? m.bb.w+'x'+m.bb.h : 'MISSING'}, armed label "${m.armedOn.label}"`);
   for(const s of m.shots)
     lines.push(`        tapped ${s.peek ? s.peek.name.padEnd(9) : '(nothing)'} ${s.peek ? s.peek.hex : ''} -> brush ${s.brush}  ` +
       `alone ${s.score}` + (s.bestTwo != null ? `, both tones ${s.bestTwo}` : ' (only surface here)') +
       (s.isATone === false ? '  ⛔ NOT A TONE' : ''));
 
+  // the ROUTE to the button is part of the button: a 20px MORE hides a 48px PICK
+  if(m.route.moreShown && m.route.moreH < 44)
+    bad.push(`${tag}: MORE is ${m.route.moreH}px tall, so the only way to reach PICK is under the 44px floor`);
   if(!m.bb) bad.push(`${tag}: there is no PICK A COLOUR button`);
   else if(m.bb.h < 44) bad.push(`${tag}: the picker button is ${m.bb.h}px tall, under the 44px floor`);
   if(!m.armedOn.armed || !m.armedOn.body) bad.push(`${tag}: arming the picker does not show that it is armed`);
