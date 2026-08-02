@@ -4072,6 +4072,13 @@ function drawMenu(){ applyScreenTransform(); drawMenuBg(); navList=[];
   const ta=clamp01((nowMs()-_menuT0)/180);
   ctx.save(); ctx.globalAlpha=ta;
   if(FX_MOTION>0 && ta<1) ctx.translate(0,(1-easeOutCubic(ta))*14);
+  /* ⛔ DO NOT DRAW A SCREEN NOBODY CAN SEE. The help card is a full-screen overlay and
+     the menu underneath kept rendering every frame, which is why it needed a scrim to
+     hide it and why the scrim was never quite enough - the wordmark and the buttons
+     read straight through the instructions. Skipping the screen it covers is cheaper
+     AND is the only version where the card is actually alone on the display. The one
+     exception is BOOT, which is where the navList for the card itself comes from. */
+  if(showHelp && appState!=='BOOT'){ ctx.restore(); ctx.globalAlpha=1; drawHelp(); navListApp=appState; return; }
   if(appState==='BOOT') drawBoot();
   else if(appState==='TITLE') drawTitle();
   else if(appState==='FILES') drawFilesScreen();
@@ -4191,12 +4198,19 @@ function drawTitle(){
   const stackH=ROWS.reduce((a,b)=>a+b,0)+gap*(ROWS.length-1);
   const footH=EMBED?52:(vpH>=440?26:8);
   let by=vpH-footH-stackH;                                         // bottom-anchored: the last row always lands on screen
-  const headH=Math.max(120, by-8);                                 // whatever is left over is the art's
+  /* ⛔ THE BAND IS WHAT IS LEFT, NOT A WISH. This read Math.max(120, by-8), which on a
+     phone in LANDSCAPE claimed 120px of head room out of the 86px that existed - and
+     then sized the wordmark off the WIDTH alone, which landscape has plenty of. Result,
+     shot at 844x390 in Chrome: "CHAMELEON" rendered at 60px straight THROUGH the PLAY
+     button. Type now has to fit the band it actually has, in both axes. */
+  const headH=Math.max(0, by-8);                                   // whatever is left over is the art's
   /* Bands, not fractions. The first pass at this put the wordmark at headH*0.55 while the
      ship hung at headH*0.16, and on a 320px screen "ABDUCT A" ran straight through the
-     alien's head. Type gets its height from the WIDTH, the art gets whatever vertical band
+     alien's head. Type gets its height from the width AND the band, the art gets whatever
      is left, and the art is bottom-anchored into that band so the two can never collide. */
-  const t1=Math.min(56,vpW*0.11), t2=Math.min(60,vpW*0.12);
+  const tW=Math.min(56,vpW*0.11);
+  const tH=Math.max(15,(headH-30)/2.48);                           // two lines at 1.15em plus the tagline gap
+  const t1=Math.min(tW,tH), t2=Math.min(tW*1.07,tH*1.07);
   const wordsH=t1*1.15+t2*1.15+34;
   const artH=Math.max(0, headH-wordsH), artS=clamp(artH/130,0.5,1);
   if(artH>=56){
@@ -4214,7 +4228,8 @@ function drawTitle(){
   txt('CHAMELEON', cx, w2y, t2, COL.amber,'center','800');
   const tagY=w2y+t2*0.55+15;
   if(tagY<by-14) txt('Paint yourself to vanish. Outlast the hunters.', cx, tagY, Math.min(14,vpW*0.037), COL.muted,'center','500');
-  if(tagY+16<by-14) txt('six regions · twelve hiding grounds · one long night', cx, tagY+16, 10, 'rgba(140,150,175,0.75)','center','500');
+  // 11px is this project's readability floor; below it the line is decoration, not information
+  if(tagY+17<by-14) txt('six regions · twelve hiding grounds · one long night', cx, tagY+17, 11, 'rgba(150,160,185,0.8)','center','500');
   navBtn('▶  PLAY', bx,by,bw,ROWS[0], ()=>{ startPlay(); }, {size:20}); by+=ROWS[0]+gap;
   navBtn('🌐  Play Online — 1v1', bx,by,bw,ROWS[1], ()=>{ appState='ONLINE'; menuIndex=0; SFX.ui(); }, {size:15}); by+=ROWS[1]+gap;
   navBtn('🧪  3D — new, in the lab', bx,by,bw,ROWS[2], ()=>{ try{ location.href='abduct-3d.html'; }catch(_){} }, {size:13, color:COL.green}); by+=ROWS[2]+gap;
@@ -4663,31 +4678,81 @@ function drawWardrobe(){ const cx=vpW/2; navList=[];
   const bw=Math.min(200,vpW-48); navBtn('‹ Back', cx-bw/2, vpH-46, bw, 36, ()=>{ appState='TITLE'; menuIndex=0; }, {size:14});
 }
 
-function drawHelp(){ ctx.fillStyle='rgba(8,12,25,0.88)'; ctx.fillRect(0,0,vpW,vpH);
-  const cx=vpW/2; let y=vpH*0.14;
-  txt('HOW TO PLAY', cx, y, 24, COL.amber,'center','800'); y+=44;
-  const lines=[
-    'You are a person, seen from above — paint your body to match the ground.',
-    'UFOs scan from their ships for anything that does not match the terrain.',
-    '',
-    '🕹  MOVE: drag the move side — push gently to SNEAK, far to walk.',
-    '      Drag the other side to peek toward the ships.',
-    '👁  LOOK: tap 👁 to plant yourself and rise to the hunters’ altitude.',
-    '      Drag to look around · pinch or scroll to zoom in and out.',
-    '🎨  PAINT: tap 🎨 — the view is HELD like a photo while you paint.',
-    '      MATCH samples the ground; nudge the color until you read “HIDDEN”.',
-    '      Tap empty space to look again — your framing stays put.',
-    '⏱  HOLD STILL to settle. 🌳 Hug cover. The MODE pill takes you home.',
-    '🪝  TONGUE zips you to the nearest cover, your way out of a beam lock.',
-    '🕳  BURROW sinks you into soft ground: only your eyes show, until it wears off.',
-    '🔔  LURE throws a clicker. A patrol goes to look at it, whatever colour you are.',
-    '      Three a round, so spend them on ground you have to stand still on.',
-    '',
-    'Desktop: WASD move · Shift sneak · E paint · I look · Q match · B tongue · X burrow · F lure · Esc back',
+/* HOW TO PLAY. This card AUTO-SHOWS on first boot (see _firstTitle), so it is the
+   first thing anybody reads, and until 2026-08-02 it did not fit a phone: eighteen
+   fixed-13.5px centred lines of up to 85 characters, drawn at vpW/2 with no wrapping
+   whatsoever. Shot at 390x740 in Chrome, EVERY line ran off BOTH edges; test/fits.js
+   measures the old version at -58..448 inside a 390px screen. A word wrap that
+   measures the real font has been sitting in this file the whole time - it is what
+   keeps the Abduction Files pages inside their card - and this never called it.
+
+   It is also shorter. First Flight (the guided practice tour) is the teacher and it
+   teaches by doing; this is a reference card, and a reference card that is a wall of
+   prose is one nobody finishes.
+
+   LANDSCAPE GETS TWO COLUMNS. A phone on its side is 390px TALL. One column there
+   forced the text down to 10px and the keyboard line to 8.5px, under this project's
+   11px floor - so the fix for "it does not fit" would have been "you cannot read it",
+   which is the same bug wearing a different coat. The keyboard line only appears on a
+   screen wide enough to plausibly have a keyboard; on a phone it was never anything
+   but clutter. */
+function drawHelp(){ ctx.fillStyle='rgba(6,9,18,0.97)'; ctx.fillRect(0,0,vpW,vpH);
+  const wide = vpW>=640 && vpW>vpH*1.4;                       // a phone on its side
+  const cardW=Math.min(wide?720:380, vpW-20), cx=vpW/2, x0=cx-cardW/2, pad=14;
+  const showKeys = vpW>=900;                                  // desktop only
+  const ROWS=[
+    ['MOVE',  'Drag your side of the screen. A gentle push sneaks, a far push walks.'],
+    ['LOOK',  'Rise to the hunters’ altitude and see yourself the way they do.'],
+    ['MATCH', 'One tap and you become the ground you are standing on.'],
+    ['AIM',   'Arm it first and MATCH copies whatever you drag the ring onto instead.'],
+    ['STILL', 'Colour is only half of it. Moving gives you away, so settle before a ship passes.'],
+    ['TOOLS', 'Tongue zips you to cover. Burrow sinks you into soft ground. Lure throws a clicker for a patrol to chase.'],
   ];
-  for(const l of lines){ txt(l, cx, y, 13.5, /^(🕹|🎨|👁|⏱|🪝|🕳|🔔)/.test(l)?COL.txt:COL.muted, 'center', '500'); y+=Math.min(26,(vpH*0.62)/lines.length); }
-  y+=14; const bw=Math.min(220,vpW-48); navList=[]; menuIndex=0;
-  navBtn('Got it', cx-bw/2, y, bw, 46, ()=>{ showHelp=false; }, {size:15, weight:'700'});
+  const INTRO='You are seen from above. Paint yourself to match the ground, hold still, and the ships lose you.';
+  const KEYS='Keys: WASD move, Shift sneak, I look, Q match, E aim, B tongue, X burrow, F lure, Esc back';
+  const MIN_SIZE=11;                                          // 0.7rem, this project's floor
+  const btnH=48, top=Math.max(10,vpH*0.05), avail=vpH-top-btnH-30;
+  const cols = wide?2:1;
+  let size=14, lay=null;
+  for(;;){
+    const colW=(cardW-pad*2-(cols-1)*18)/cols;
+    const labW=Math.round(size*4.4), textW=colW-labW-8, lh=Math.round(size*1.42);
+    const intro=filesWrap(INTRO, cardW-pad*2, size);
+    const keys=showKeys?filesWrap(KEYS, cardW-pad*2, size-1):[];
+    const rows=ROWS.map(function(r){ return {k:r[0], lines:filesWrap(r[1], textW, size)}; });
+    const perCol=Math.ceil(rows.length/cols);
+    let colH=0; for(let c=0;c<cols;c++){ let hh=0;
+      for(let i2=c*perCol;i2<Math.min(rows.length,(c+1)*perCol);i2++) hh+=Math.max(lh,rows[i2].lines.length*lh)+7;
+      colH=Math.max(colH,hh); }
+    const h=Math.round(size*2.2)+intro.length*lh+10+colH+(keys.length?8+keys.length*Math.round((size-1)*1.35):0);
+    lay={colW,labW,textW,lh,intro,keys,rows,perCol,colH,h};
+    if(h<=avail || size<=MIN_SIZE) break;
+    size-=0.5;
+  }
+  let y=top+Math.max(0,(avail-lay.h)/2);
+  /* ⛔ AN OPAQUE CARD, NOT A SCRIM. The title screen keeps drawing underneath this
+     overlay, so at 0.88 alpha the wordmark and the menu buttons read straight through
+     the instructions: test/fits.js counted nine pairs of strings sharing a rectangle at
+     390x740, with "ABDUCT A" sitting on top of "One tap and you become the ground". */
+  ctx.fillStyle='#0B0F1C'; rr(x0, y-pad, cardW, lay.h+pad*2, 16); ctx.fill();
+  ctx.strokeStyle=COL.line; ctx.lineWidth=1; rr(x0, y-pad, cardW, lay.h+pad*2, 16); ctx.stroke();
+  txt('HOW TO PLAY', cx, y+size, size*1.7, COL.amber,'center','800'); y+=Math.round(size*2.2);
+  for(const l of lay.intro){ txt(l, cx, y+lay.lh/2, size, COL.muted,'center','500'); y+=lay.lh; }
+  y+=10;
+  for(let c=0;c<cols;c++){
+    const colX=x0+pad+c*(lay.colW+18); let cy=y;
+    for(let i2=c*lay.perCol;i2<Math.min(lay.rows.length,(c+1)*lay.perCol);i2++){
+      const r=lay.rows[i2];
+      txt(r.k, colX, cy+lay.lh/2, size, COL.cyan, 'left','800');
+      for(let k=0;k<r.lines.length;k++) txt(r.lines[k], colX+lay.labW+8, cy+lay.lh/2+k*lay.lh, size, COL.txt,'left','500');
+      cy+=Math.max(lay.lh, r.lines.length*lay.lh)+7;
+    }
+  }
+  y+=lay.colH;
+  if(lay.keys.length){ y+=8;
+    for(const l of lay.keys){ txt(l, cx, y+lay.lh/2, size-1, COL.muted,'center','500'); y+=Math.round((size-1)*1.35); } }
+  const bw=Math.min(220,vpW-48); navList=[]; menuIndex=0;
+  navBtn('Got it', cx-bw/2, vpH-btnH-14, bw, btnH, ()=>{ showHelp=false; }, {size:15, weight:'700'});
   navListApp=appState;
 }
 
@@ -4805,6 +4870,7 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   tour:{active:tut.active, step:tut.step}, levelOrder:levelOrderNames,
   region: round?{ biome:round.biome||null, tuned:round.diff._regionTuned||null, scanR:Math.round(round.diff.SCAN_R||0) }:null,
   world:{ w:worldW, h:worldH, cols:mapCols, rows:mapRows },
+  vp:{ w:vpW, h:vpH, dpr:+dpr.toFixed(2), hudScale:+hudScale.toFixed(2) },   // what the game THINKS the screen is
   tune: round?{ label:round.diff.label, chase:Math.round(round.diff.CHASE_SPD||0), track:Math.round(round.diff.BEAM_TRACK_SPD||0),
                 lock:round.diff.LOCK_TIME, beamR:BEAM_R, breakR:BEAM_BREAK_R, walk:PLAYER_WALK }:null,
   net:{ status:NET.status, role:NET.role, code:NET.code, peer:NET.peer, online:round?(round.online||null):null, coop:!!NET.coop },
