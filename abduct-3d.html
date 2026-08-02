@@ -2836,11 +2836,54 @@ function terrainKeyAt(wx,wz){
   return MAP.terrain[gy][gx] || 'void';
 }
 
+/* ⛔⛔⛔ 2026-08-02 — CHANGING THE MAP LEAKED A WHOLE WORLD, EVERY TIME.
+   The teardown was `while(worldGroup.children.length) worldGroup.remove(children[0])`.
+   remove() unparents; it frees nothing on the GPU. Measured by wrapping the context's own
+   createBuffer/deleteBuffer over six map loads:
+
+       load 1  1996 live buffers      load 4  4790
+       load 2  3251                   load 5  5810
+       load 3  3767                   load 6  6119      deleteBuffer called ZERO times
+
+   825 GL buffers orphaned per load, textures 35 -> 140, on a phone, until the driver
+   loses the context.
+
+   ⛔ AND THE OBVIOUS FIX IS WORSE THAN THE LEAK. Props are `propLib[k].scene.clone(true)`
+   and the rig is `SkeletonUtils.clone(charBase.scene)`; three.js clone() SHARES geometry
+   and material with the template. "Walk the doomed group and dispose everything" destroys
+   every future clone of that prop and later maps come up empty - a silent, permanent
+   corruption that a leak at least announces.
+
+   So: collect what is going, unparent it, then walk everything STILL alive - the rest of
+   the scene, propLib, charBase - and dispose only the difference. Nothing that is still
+   referenced anywhere is touched, which means this keeps working when somebody adds a new
+   shared asset without knowing this function exists. */
+function _gatherRes(o, geo, mat, tex){
+  if(o.geometry) geo.add(o.geometry);
+  const m = o.material;
+  if(m){ const list = Array.isArray(m) ? m : [m];
+    for(const mm of list){ if(!mm) continue; mat.add(mm);
+      for(const k in mm){ const v = mm[k]; if(v && v.isTexture) tex.add(v); } } }
+}
+function disposeWorldChildren(){
+  const dGeo = new Set(), dMat = new Set(), dTex = new Set();
+  for(const c of worldGroup.children) c.traverse(o=> _gatherRes(o, dGeo, dMat, dTex));
+  while(worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
+
+  const aGeo = new Set(), aMat = new Set(), aTex = new Set();
+  scene.traverse(o=> _gatherRes(o, aGeo, aMat, aTex));
+  try{ for(const k in propLib){ const P = propLib[k]; if(P && P.scene) P.scene.traverse(o=> _gatherRes(o, aGeo, aMat, aTex)); } }catch(_){}
+  try{ if(charBase && charBase.scene) charBase.scene.traverse(o=> _gatherRes(o, aGeo, aMat, aTex)); }catch(_){}
+
+  for(const g of dGeo) if(!aGeo.has(g)) g.dispose();
+  for(const m of dMat) if(!aMat.has(m)) m.dispose();
+  for(const t of dTex) if(!aTex.has(t)) t.dispose();
+}
 function buildWorld(map){
   MAP = map;
   applyMood(moodForMap(map && map.name)); mapCols = map.grid.cols; mapRows = map.grid.rows;
   halfW = mapCols*TILE/2; halfH = mapRows*TILE/2;
-  while(worldGroup.children.length) worldGroup.remove(worldGroup.children[0]);
+  disposeWorldChildren();
   cover = []; losMeshes = []; solids = []; solidOwner = []; paintTargets = []; platforms = []; wrecks = []; markCount = 0; markQueue = [];
   buildMarkAtlas(map && map.name || 'world');
   velY = 0; grounded = true; standingOn = null;
