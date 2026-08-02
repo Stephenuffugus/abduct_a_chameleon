@@ -1137,6 +1137,7 @@ function onWheel(e){
   e.preventDefault();                                            // always eat it — never page-zoom over the game
   const dy=(e.deltaMode===1?e.deltaY*33:e.deltaY)*(e.ctrlKey?3:1);
   if(appState==='LEVEL_SELECT'){ levelScroll=clamp(levelScroll+dy*0.6,0,levelMaxScroll); return; }
+  if(appState==='MODE_SELECT'){ modeScroll=clamp(modeScroll+dy*0.6,0,modeMaxScroll); return; }
   if(appState==='SETTINGS'){ settingsScroll=clamp(settingsScroll+dy*0.6,0,settingsMaxScroll); return; }
   if(appState!=='ROUND'||roundState!=='PLAYING'||!round||round.mode==='HUNT'||!player.alive) return;
   ensureAudio();
@@ -1207,6 +1208,8 @@ function onPointerDown(e){
   if(appState!=='ROUND'){
     if(appState==='LEVEL_SELECT' && levelMaxScroll>0 && !showHelp){    // P10: a serious map set scrolls — tap fires on release if the finger didn't drag
       pointers.set(id,{sx,sy,role:'lvscroll',sy0:sy,scroll0:levelScroll,moved:false,app:appState}); return; }
+    if(appState==='MODE_SELECT' && modeMaxScroll>0 && !showHelp && sy<vpH-60){   // the fixed Back button is never part of the scroll band
+      pointers.set(id,{sx,sy,role:'mdscroll',sy0:sy,scroll0:modeScroll,moved:false,app:appState}); return; }
     handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
   // ROUND — paused overlay is a menu (uses navList)
   if(roundState==='PAUSED'){ handleMenuTap(sx,sy); pointers.set(id,{sx,sy,role:'ui'}); return; }
@@ -1271,6 +1274,8 @@ function onPointerMove(e){
   else if(p.role==='sscroll'){ settingsScroll=clamp(p.scroll0-(sy-p.sy0),0,settingsMaxScroll); }
   else if(p.role==='lvscroll'){ if(Math.abs(sy-p.sy0)>TAP_SLOP) p.moved=true;
     if(p.moved) levelScroll=clamp(p.scroll0-(sy-p.sy0),0,levelMaxScroll); }
+  else if(p.role==='mdscroll'){ if(Math.abs(sy-p.sy0)>TAP_SLOP) p.moved=true;
+    if(p.moved) modeScroll=clamp(p.scroll0-(sy-p.sy0),0,modeMaxScroll); }
 }
 function onPointerUp(e){
   const cancelled = e.type==='pointercancel';   // a cancelled gesture must never fire tap actions
@@ -1286,6 +1291,7 @@ function onPointerUp(e){
   }
   else if(p.role==='pan' && p.tap && !cancelled && ctrlMode==='PAINT' && camLock && studio.open){ exitPaint(); }  // clean tap above the panel hops back to LOOK
   else if(p.role==='lvscroll' && !p.moved && !cancelled && appState===p.app){ handleMenuTap(p.sx,p.sy); }         // level-select tap fires on clean release, same screen only
+  else if(p.role==='mdscroll' && !p.moved && !cancelled && appState===p.app){ handleMenuTap(p.sx,p.sy); }         // same for the mode list
 }
 
 /* ---- movement + collision (§5.3) ---- */
@@ -3223,11 +3229,13 @@ function navBtn(label,x,y,w,h,fn,opts){ opts=opts||{}; const idx=navList.length;
   ctx.strokeStyle=opts.disabled?COL.line:(sel?COL.amber:(opts.stroke||COL.line)); ctx.lineWidth=sel?2.5:1.5; rr(x,y,w,h,opts.rad||10); ctx.stroke();
   txt(label,x+w/2,y+h/2-(opts.sub?7:0),opts.size||17,opts.disabled?COL.muted:(sel?COL.amber:(opts.color||COL.txt)),'center',opts.weight||'700');
   if(opts.sub) txt(opts.sub,x+w/2,y+h/2+13,10,COL.muted,'center','500');
-  if(!opts.disabled) navList.push({x,y,w,h,fn}); }
+  // noHit: the caller pushes its own rect (a scrolling band clips hit rects to the visible strip)
+  if(!opts.disabled && !opts.noHit) navList.push({x,y,w,h,fn,label:label}); }
 function menuNav(dx,dy){
   if(appState==='SETTINGS' && !showHelp){ if(dx) settingsAdjust(dx); else settingsNav(dy||1); return; }   // P10: settings is keyboard-first now
   if(!navList.length) return; const d=(dy||dx||1); menuIndex=(menuIndex+d+navList.length)%navList.length;
-  if(appState==='LEVEL_SELECT') levelNavPending=true; SFX.ui(); }
+  if(appState==='LEVEL_SELECT') levelNavPending=true;
+  if(appState==='MODE_SELECT') modeNavPending=true; SFX.ui(); }
 function menuConfirm(){ if(showHelp){ showHelp=false; return; }
   if(appState==='SETTINGS'){ settingsConfirm(); return; }
   if(navListApp!==appState) return;   // an async flip (peer joined, round ended) outran the draw — swallow, next frame rebuilds
@@ -3360,39 +3368,76 @@ function drawFilesScreen(){
   navBtn('\u2039  Back', cx-Math.min(150,vpW*0.35), vpH-56, Math.min(300,vpW*0.7), 44, ()=>{ gotoTitle(); }, {size:14});
   if(filesOpen && filesPage) drawFilesOverlay(null);
 }
+/* ⛔ THE TITLE SCREEN IS LAID OUT FROM THE BOTTOM UP NOW, AND IT HAD TO BE.
+   It used to start the button stack at `Math.max(vpH*0.62, ...)` and then stack six
+   rows downward, with a compression factor `k` derived from vpH ALONE. On a 375x667
+   phone k came out at 1 (no compression at all) while the art had already pushed the
+   stack start to y=414, so the last three rows ran to y=730: The Files was sliced in
+   half by the bottom edge and How to Play and Sound were entirely off the screen.
+   Three shipped features unreachable by touch on the commonest screen there is.
+   The art is decoration and the buttons are the product, so the buttons now claim
+   their space first and the art gets whatever is left. Every row is >=48px (house
+   rule) and the three utility buttons share one row instead of stacking. */
 function drawTitle(){
   const cx=vpW/2; hueAnim+=0;
-  // P10: our actual characters — the person hider slowly repainting to the ground hue, waving; the alien under its ship
-  const chx=cx-120, chy=vpH*0.30; const hue=(hueAnim*40)%360; const cc=hsv2rgb(hue,0.45,0.72);
-  drawHumanoid(chx, chy, 0, rgb2hex(cc), 0.15, { pose:'wave', r:20, breathP:hueAnim*2.2, skin:PROGRESS.equipped&&PROGRESS.equipped.skin });
-  const ux=cx+130, uy=vpH*0.22+Math.sin(hueAnim*2)*8;
-  ctx.save(); ctx.translate(ux,uy); ctx.fillStyle='rgba(63,208,224,0.15)'; ctx.beginPath(); ctx.moveTo(-24,0); ctx.lineTo(24,0); ctx.lineTo(14,70); ctx.lineTo(-14,70); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#1b2337'; ctx.strokeStyle=COL.cyan; ctx.lineWidth=2; ctx.beginPath(); ctx.ellipse(0,0,26,15,0,0,Math.PI*2); ctx.fill(); ctx.stroke(); ctx.restore();
-  drawHumanoid(ux, uy+84, 0, '#EDEFF4', 0, { pose:'point', r:13, alien:true, breathP:hueAnim*1.7 });
-  const t1=Math.min(56,vpW*0.11,vpH*0.10), t2=Math.min(60,vpW*0.12,vpH*0.107);   // P10: scale the wordmark to short viewports too
-  txt('ABDUCT A', cx, vpH*0.40, t1, COL.txt,'center','800');
-  txt('CHAMELEON', cx, vpH*0.40+t1, t2, COL.amber,'center','800');
-  const tagY=vpH*0.40+t1+t2*0.62+22;
-  txt('Paint yourself to vanish. Outlast the hunters.', cx, tagY, Math.min(14,vpH*0.032), COL.muted,'center','500');
-  if(vpH>=520) txt('six regions · twelve hiding grounds · one long night', cx, tagY+16, 10, 'rgba(140,150,175,0.75)','center','500');
-  const k=clamp(vpH/560,0.68,1);                                  // compress the button stack on short viewports
-  const bw=Math.min(300,vpW-60), bx=cx-bw/2; let by=Math.max(vpH*0.62, tagY+22*k);
-  navBtn('▶  PLAY', bx,by,bw,Math.round(54*k), ()=>{ startPlay(); }, {size:20}); by+=Math.round(64*k);
-  navBtn('🌐  Play Online — 1v1', bx,by,bw,Math.round(46*k), ()=>{ appState='ONLINE'; menuIndex=0; SFX.ui(); }, {size:15}); by+=Math.round(56*k);
-  navBtn('🧪  3D — new, in the lab', bx,by,bw,Math.round(40*k), ()=>{ try{ location.href='abduct-3d.html'; }catch(_){} }, {size:13, color:COL.green}); by+=Math.round(50*k);
-  const hw=(bw-10)/2;
-  navBtn('👕  Wardrobe', bx,by,hw,Math.round(44*k), ()=>{ appState='WARDROBE'; menuIndex=0; SFX.ui(); }, {size:14});
-  navBtn('⚙  Settings', bx+hw+10,by,hw,Math.round(44*k), ()=>{ openSettings('TITLE'); }, {size:14}); by+=Math.round(54*k);
-  navBtn('\u{1F5C2}  The Files', bx,by,hw,Math.round(42*k), ()=>{ appState='FILES'; filesScroll=0; filesOpen=false; SFX.ui(); }, {size:13});
-  by+=Math.round(50*k);
-  navBtn('How to Play', bx,by,hw,Math.round(42*k), ()=>{ showHelp=true; SFX.ui(); }, {size:13});
-  navBtn(settings.muted?'🔇  Muted':'🔊  Sound', bx+hw+10,by,hw,Math.round(42*k), ()=>{ setMuted(!settings.muted); }, {size:13});
-  if(EMBED){                                                        // P22: inside the portal iframe
-    navBtn('⛶  Open full screen', cx-Math.min(150,vpW*0.3), vpH-58, Math.min(300,vpW*0.6), 34, ()=>openStandalone(), {size:12});
-    if(!LS_OK) txt('⚠ progress may not save inside the portal — open full screen to keep your XP', cx, vpH-70, 10, PAL.warn,'center','600');
+  const bw=Math.min(300,vpW-60), bx=cx-bw/2, gap=10;
+  const ROWS=[56,48,48,48,48];                                     // PLAY · Online · 3D · [Wardrobe|Settings] · [Files|How to Play|Sound]
+  const stackH=ROWS.reduce((a,b)=>a+b,0)+gap*(ROWS.length-1);
+  const footH=EMBED?52:(vpH>=440?26:8);
+  let by=vpH-footH-stackH;                                         // bottom-anchored: the last row always lands on screen
+  const headH=Math.max(120, by-8);                                 // whatever is left over is the art's
+  /* Bands, not fractions. The first pass at this put the wordmark at headH*0.55 while the
+     ship hung at headH*0.16, and on a 320px screen "ABDUCT A" ran straight through the
+     alien's head. Type gets its height from the WIDTH, the art gets whatever vertical band
+     is left, and the art is bottom-anchored into that band so the two can never collide. */
+  const t1=Math.min(56,vpW*0.11), t2=Math.min(60,vpW*0.12);
+  const wordsH=t1*1.15+t2*1.15+34;
+  const artH=Math.max(0, headH-wordsH), artS=clamp(artH/130,0.5,1);
+  if(artH>=56){
+    // P10: our actual characters — the person hider slowly repainting to the ground hue, waving; the alien under its ship
+    const artB=artH-6;                                             // the lowest ink the art is allowed to lay down
+    const chx=cx-Math.min(120,vpW*0.32), chy=artB-30*artS; const hue=(hueAnim*40)%360; const cc=hsv2rgb(hue,0.45,0.72);
+    drawHumanoid(chx, chy, 0, rgb2hex(cc), 0.15, { pose:'wave', r:20*artS, breathP:hueAnim*2.2, skin:PROGRESS.equipped&&PROGRESS.equipped.skin });
+    const ux=cx+Math.min(130,vpW*0.34), uy=artB-105*artS+Math.sin(hueAnim*2)*5*artS;
+    ctx.save(); ctx.translate(ux,uy); ctx.scale(artS,artS); ctx.fillStyle='rgba(63,208,224,0.15)'; ctx.beginPath(); ctx.moveTo(-24,0); ctx.lineTo(24,0); ctx.lineTo(14,70); ctx.lineTo(-14,70); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#1b2337'; ctx.strokeStyle=COL.cyan; ctx.lineWidth=2; ctx.beginPath(); ctx.ellipse(0,0,26,15,0,0,Math.PI*2); ctx.fill(); ctx.stroke(); ctx.restore();
+    drawHumanoid(ux, uy+84*artS, 0, '#EDEFF4', 0, { pose:'point', r:13*artS, alien:true, breathP:hueAnim*1.7 });
   }
-  else if(vpH>=440) txt('v0.2 "Photo Loop" · offline · drag a SCANNER .json onto the window to playtest it', cx, vpH-22, 11, COL.muted,'center','500');
+  const w1y=artH+t1*0.62, w2y=w1y+t1*0.5+t2*0.55;
+  txt('ABDUCT A', cx, w1y, t1, COL.txt,'center','800');
+  txt('CHAMELEON', cx, w2y, t2, COL.amber,'center','800');
+  const tagY=w2y+t2*0.55+15;
+  if(tagY<by-14) txt('Paint yourself to vanish. Outlast the hunters.', cx, tagY, Math.min(14,vpW*0.037), COL.muted,'center','500');
+  if(tagY+16<by-14) txt('six regions · twelve hiding grounds · one long night', cx, tagY+16, 10, 'rgba(140,150,175,0.75)','center','500');
+  navBtn('▶  PLAY', bx,by,bw,ROWS[0], ()=>{ startPlay(); }, {size:20}); by+=ROWS[0]+gap;
+  navBtn('🌐  Play Online — 1v1', bx,by,bw,ROWS[1], ()=>{ appState='ONLINE'; menuIndex=0; SFX.ui(); }, {size:15}); by+=ROWS[1]+gap;
+  navBtn('🧪  3D — new, in the lab', bx,by,bw,ROWS[2], ()=>{ try{ location.href='abduct-3d.html'; }catch(_){} }, {size:13, color:COL.green}); by+=ROWS[2]+gap;
+  const hw=(bw-gap)/2;
+  navBtn('👕  Wardrobe', bx,by,hw,ROWS[3], ()=>{ appState='WARDROBE'; menuIndex=0; SFX.ui(); }, {size:14});
+  navBtn('⚙  Settings', bx+hw+gap,by,hw,ROWS[3], ()=>{ openSettings('TITLE'); }, {size:14}); by+=ROWS[3]+gap;
+  const tw=(bw-gap*2)/3;
+  navBtn('The Files', bx,by,tw,ROWS[4], ()=>{ appState='FILES'; filesScroll=0; filesOpen=false; SFX.ui(); }, {size:12});
+  navBtn('How to Play', bx+tw+gap,by,tw,ROWS[4], ()=>{ showHelp=true; SFX.ui(); }, {size:12});
+  navBtn(settings.muted?'Muted':'Sound', bx+(tw+gap)*2,by,tw,ROWS[4], ()=>{ setMuted(!settings.muted); }, {size:12});
+  if(EMBED){                                                        // P22: inside the portal iframe
+    navBtn('⛶  Open full screen', cx-Math.min(150,vpW*0.3), vpH-46, Math.min(300,vpW*0.6), 34, ()=>openStandalone(), {size:12});
+    if(!LS_OK) txt('⚠ progress may not save inside the portal — open full screen to keep your XP', cx, vpH-58, 10, PAL.warn,'center','600');
+  }
+  // the long build line overflowed both edges of a 375px phone; the short one always fits
+  else if(vpH>=440) txt(vpW>=620?'v0.2 "Photo Loop" · offline · drag a SCANNER .json onto the window to playtest it':'v0.2 · offline', cx, vpH-14, 11, COL.muted,'center','500');
 }
+/* ⛔ THE MODE LIST SCROLLS NOW, AND IT HAD TO.
+   This grid used to hardcode three rows: `ch=Math.min(86,(vpH*0.52)/3-gap)` with the
+   Back button hung off the bottom of however many rows there actually were. With six
+   modes on a 375x667 phone that put Time Attack at y=647..733 and Back at y=748 — i.e.
+   the SIXTH MODE AND THE BACK BUTTON WERE BOTH BELOW THE FOLD, on the most common
+   screen size there is, with no scroll to reach them. Nobody could play Time Attack on
+   a phone and nobody could back out of this screen except with Escape.
+   It was invisible because every headless test drives this screen with arrow keys,
+   which do not care where a rect lands. It took a SCREENSHOT at 375x667 to see it.
+   Fixed the same way the level list already does it: a fixed header, a fixed Back at
+   the bottom, and a clipped scrolling band in between with hit rects clipped to the
+   band so an off-screen tile can never shadow the button underneath it. */
 function drawModeSelect(){ const cx=vpW/2;
   txt('CHOOSE MODE', cx, vpH*0.16, 24, COL.txt,'center','800');
   txt('how will you spend the night?', cx, vpH*0.16+22, 11, COL.muted,'center','500');
@@ -3403,12 +3448,32 @@ function drawModeSelect(){ const cx=vpW/2;
     {n:'Daily Challenge', s:'One seeded run/day'+(((PROGRESS.daily&&PROGRESS.daily.streak)||0)>1?' · 🔥 '+PROGRESS.daily.streak:''), go:()=>startDaily()},
     {n:'🛸 Hunt', s:'BE the alien — catch chameleons', go:()=>route('HUNT'), color:COL.cyan},
     {n:'Time Attack', s:'Bank hidden beacons vs the clock', go:()=>route('TA')},
+    {n:'⚙ Salvage', s:'Build the cutter and shoot one down', go:()=>route('SALVAGE'), color:COL.amber},
   ];
   const cols=vpW>620?2:1, cw=Math.min(300,(vpW-56)/cols), gap=14;
-  const gridW=cols*cw+(cols-1)*gap, gx=(vpW-gridW)/2, top=vpH*0.22, ch=Math.min(86,(vpH*0.52)/3-gap);
-  modes.forEach((m,i)=>{ const col=i%cols,row=(i/cols)|0; const x=gx+col*(cw+gap), y=top+row*(ch+gap);
-    navBtn(m.n, x,y,cw,ch, m.disabled?()=>{}:m.go, {size:16, sub:m.s, disabled:m.disabled, color:m.color}); });
-  navBtn('‹ Back', gx, top+Math.ceil(modes.length/cols)*(ch+gap)+2, gridW, 40, ()=>gotoTitle(), {size:14});
+  const gridW=cols*cw+(cols-1)*gap, gx=(vpW-gridW)/2;
+  const top=Math.min(vpH*0.22,152), availH=Math.max(120, vpH-56-10-top);   // Back owns vpH-56..vpH-14
+  const rows=Math.ceil(modes.length/cols);
+  // tiles never shrink under a thumb: 56 is the floor, and if that overflows the band we scroll
+  const ch=Math.max(56, Math.min(86,(availH-(rows-1)*gap)/rows));
+  const gridH=rows*ch+(rows-1)*gap;
+  modeMaxScroll=Math.max(0, gridH-availH); if(!modeMaxScroll) modeScroll=0; modeScroll=clamp(modeScroll,0,modeMaxScroll);
+  if(modeNavPending && menuIndex>=0 && menuIndex<modes.length && modeMaxScroll){ const ry=((menuIndex/cols)|0)*(ch+gap);
+    if(ry-modeScroll<0) modeScroll=ry; else if(ry+ch-modeScroll>availH) modeScroll=ry+ch-availH; }
+  modeNavPending=false;
+  const gy=top+Math.max(0,(availH-gridH)/2)-modeScroll;
+  ctx.save(); ctx.beginPath(); ctx.rect(0,top-4,vpW,availH+8); ctx.clip();
+  modes.forEach((m,i)=>{ const col=i%cols,row=(i/cols)|0; const x=gx+col*(cw+gap), y=gy+row*(ch+gap);
+    if(y+ch>top-6 && y<top+availH+6)
+      navBtn(m.n, x,y,cw,ch, m.disabled?()=>{}:m.go, {size:16, sub:m.s, disabled:m.disabled, color:m.color, noHit:true});
+    const vy0=Math.max(y,top-4), vy1=Math.min(y+ch,top+availH+4);
+    if(!m.disabled) navList.push({ x, y:vy0, w:cw, h:Math.max(0,vy1-vy0), fn:m.go, label:m.n });
+  });
+  ctx.restore();
+  if(modeMaxScroll){ const sbH=availH*availH/gridH, sbY=top+(availH-sbH)*(modeScroll/modeMaxScroll);
+    ctx.fillStyle='rgba(255,255,255,0.14)'; rr(vpW-8,sbY,4,sbH,2); ctx.fill();
+    if(modeScroll<modeMaxScroll-4) txt('▾ more', cx, top+availH+2, 10, COL.muted,'center','600'); }
+  navBtn('‹ Back', gx, vpH-58, gridW, 48, ()=>gotoTitle(), {size:14});
 }
 function route(mode){ pendingMode=mode; appState='LEVEL_SELECT'; menuIndex=0; SFX.confirm(); }
 function makeHeatDiff(){ return Object.assign({}, DIFF.EASY, { label:'HEAT', heat:true, COORDINATE:false, SURVIVE_TIME:Infinity, UFO_COUNT:1 }); }
@@ -3421,6 +3486,7 @@ function startDaily(){ SFX.confirm(); const seed=dailySeed();
 function levelBadge(entry){ if(entry.usedBaked) return ''; const key=entry.display+'|'+pendingMode+'|'+(pendingMode==='PRACTICE'?'PRACTICE':settings.lastDiff);
   const b=best[key]; return b?('PB '+b.bestScore+' ('+b.bestGrade+')'):''; }
 let levelScroll=0, levelMaxScroll=0, levelNavPending=false;   // follow the selection only on a KEYBOARD move — never fight finger/wheel scroll
+let modeScroll=0, modeMaxScroll=0, modeNavPending=false;      // same rule for the mode list (7 modes overflow a 667px phone)
 let levelOrderNames=[];                                        // display order (for tests/diagnostics)
 // P17: the world has named regions — levels group by biome so the set reads as PLACES, not a list
 const REGION_ORDER=['greenwood','dunes','tundra','downtown','xeno','bog'];
@@ -3507,7 +3573,7 @@ function drawLevelSelect(){ const cx=vpW/2;
   if(levelMaxScroll){ const sbH=availH*availH/gridH, sbY=top+(availH-sbH)*(levelScroll/levelMaxScroll);
     ctx.fillStyle='rgba(255,255,255,0.14)'; rr(vpW-8,sbY,4,sbH,2); ctx.fill();
     if(levelScroll<levelMaxScroll-4) txt('▾ more', cx, top+availH+2, 10, COL.muted,'center','600'); }
-  const bw=Math.min(200,vpW-48); navBtn('‹ Back', (vpW-bw)/2, vpH-56, bw, 42, ()=>menuBack(), {size:14});
+  const bw=Math.min(200,vpW-48); navBtn('‹ Back', (vpW-bw)/2, vpH-58, bw, 48, ()=>menuBack(), {size:14});
 }
 function ensureThumb(e){ if(e.thumb) return e.thumb; if(e._loading) return null;
   if(e.loaded && e.data){ e.thumb=buildThumb(e.data); return e.thumb; }
@@ -3904,6 +3970,9 @@ try{ window.__aac = { get state(){ return { appState, roundState,
   speed:+Math.hypot(player.vx,player.vy).toFixed(1), hud:_hud,
   perf:{dpr:+dpr.toFixed(2),dprCap:+dprCap.toFixed(2),qLevel} }; },
   // test rig (headless suite + console): position actors, read cover — same spirit as round.debug
+  // every tappable rect the CURRENT screen drew, in CSS px — the gate that catches a control
+  // laid out below the fold. Arrow-key tests cannot see that class of bug; this can.
+  navRects(){ return navList.map(n=>({ x:n.x, y:n.y, w:n.w, h:n.h, label:n.label||'' })); },
   t:{ teleport(x,y){ if(round&&player.alive){ player.x=x; player.y=y; player.vx=0; player.vy=0; } },
       moveUfo(i,x,y){ const u=round&&round.ufos[i]; if(u){ u.x=x; u.y=y; } },
       covers(){ return coverObjects.map(o=>({type:o.type,wx:o.wx,wy:o.wy})); } } }; }catch(_){}
