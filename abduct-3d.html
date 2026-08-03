@@ -5582,7 +5582,23 @@ function addCoverInner(type, gx, gy, unit){
         g.add(fr); g.add(q);
       }
     }
-    solids.push({ minX:w.x-TILE/2, maxX:w.x+TILE/2, minZ:w.z-TILE/2, maxZ:w.z+TILE/2 });
+    /* ⛔⛔⛔ 2026-08-03 — THE LAST LINK IN "STAND ON THE ROOFS", and it was two lines.
+       A wall was pushed as a solid with NO `top`. resolveWalls skips a solid when your
+       feet are above it - but only `if(s.top != null)` - so a topless wall blocked you at
+       EVERY height. You could climb the staircase to the parapet and then be shoved back
+       off your own building, because the wall you were standing on still thought you were
+       walking into it. And nothing registered the wall head as standable in the first
+       place, so support up there was zero and you fell down the inside.
+       The roof's own comment already described the intended route - "you climb the steps,
+       step up onto the wall head, and drop onto the roof" - it just was not built.
+       Now a wall knows how tall it is and its head is a surface, which is the whole
+       favela-rooftop idea: you can walk the tops of a block and drop into a courtyard.
+       ⚖ Still a wall to every reachability check: those filter on `top > STAND_MAX_TOP`,
+       and 4.2 to 6.2 clears 2.0 comfortably. */
+    solids.push({ minX:w.x-TILE/2, maxX:w.x+TILE/2, minZ:w.z-TILE/2, maxZ:w.z+TILE/2, top:h });
+    platforms.push({ minX:w.x-TILE/2, maxX:w.x+TILE/2, minZ:w.z-TILE/2, maxZ:w.z+TILE/2,
+                     top:h, colorHex:(pat ? pat.avg : wm.color.getHex()),
+                     cx:w.x, cz:w.z, name:'WALL TOP' });
   }else if(type==='cactus'){
     const b = new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.45,2.6,8), COVER_MAT.cactus); b.position.y=1.3;
     const a1 = new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.2,0.9,7), COVER_MAT.cactus); a1.position.set(0.5,1.6,0); a1.rotation.z=-0.6;
