@@ -2416,10 +2416,16 @@ function makeRandomMap(seed){
        2. the two cells the doorway OPENS ONTO must not themselves be walls, so
           every door is a straight three-cell passage (1.8m clear against a 1.2m
           body) and never a diagonal squeeze past a wall end. */
+  /* returns the [cx,cy] it cut (truthy) or false — the exterior-door loop
+     wants to know WHERE, to hang an awning over it.
+     ⛔ candidates must BE wall cells now: an L-shaped block's bounding sides
+     run across the carved notch, and "cutting a door" in open air used to be
+     impossible only because full rects had wall everywhere. */
   function carve(sh){
     const cands = [];
     for(let at = sh.lo+1; at <= sh.hi-1; at++){
       const cx = sh.vertical ? sh.x : at, cy = sh.vertical ? at : sh.y;
+      if(!wallSet.has(ckey(cx,cy))) continue;
       const a = sh.vertical ? ckey(cx-1,cy) : ckey(cx,cy-1);
       const b = sh.vertical ? ckey(cx+1,cy) : ckey(cx,cy+1);
       if(wallSet.has(a) || wallSet.has(b)) continue;
@@ -2428,7 +2434,7 @@ function makeRandomMap(seed){
     if(cands.length){
       const d = cands[Math.floor(rnd()*cands.length)];
       doorSet.add(ckey(d[0], d[1]));
-      return true;
+      return d;
     }
     /* ⛔ FAILING TO CUT A DOOR IS NOT AN OPTION, IT IS A SEALED ROOM.
        The first version returned false here and let the spanning tree try
@@ -2441,10 +2447,11 @@ function makeRandomMap(seed){
        player standing in a box for a whole round. */
     const at = sh.lo + 1 + Math.floor((sh.hi - sh.lo - 1)/2);
     const cx = sh.vertical ? sh.x : at, cy = sh.vertical ? at : sh.y;
+    if(!wallSet.has(ckey(cx,cy))) return false;   // L-notch air: nothing to widen
     doorSet.add(ckey(cx, cy));
     doorSet.add(sh.vertical ? ckey(cx-1,cy) : ckey(cx,cy-1));
     doorSet.add(sh.vertical ? ckey(cx+1,cy) : ckey(cx,cy+1));
-    return true;
+    return [cx, cy];
   }
 
   const BLOCKS = Math.max(2, Math.round(th.buildings/3));
@@ -2464,7 +2471,29 @@ function makeRandomMap(seed){
     const block = { x0, y0, x1:x0+bw, y1:y0+bh };
     placedRects.push(block);
 
-    const units = []; bsp(block, 2, units);                     // 2-4 units sharing walls
+    /* ⭐ 2026-08-03 — L-SHAPED BLOCKS. Stephen, repeatedly: every building is
+       one silhouette. Heights fixed the skyline; this fixes the PLAN: ~45% of
+       blocks carve a corner notch out, splitting the footprint into two rects
+       that still share walls (so shared() finds the seam and the spanning tree
+       doors it like any interior wall). The notch becomes a courtyard, the two
+       arms usually roll different unit heights, and the outline is an L or a
+       step instead of a box. carve() now verifies its cell is real wall, so
+       the bounding-side door pass simply skips the notch air. */
+    let parts = [block];
+    if(bw >= 9 && bh >= 8 && rnd() < 0.45){
+      const cw  = 3 + Math.floor(rnd()*(bw-6));
+      const chh = 3 + Math.floor(rnd()*(bh-6));
+      const corner = Math.floor(rnd()*4);          // 0 NW · 1 NE · 2 SW · 3 SE
+      const west = (corner%2===0), north = (corner<2);
+      const R1 = west ? {x0:x0+cw, y0, x1:x0+bw, y1:y0+bh}
+                      : {x0, y0, x1:x0+bw-cw, y1:y0+bh};
+      const R2 = { x0: west ? x0 : x0+bw-cw, x1: west ? x0+cw : x0+bw,
+                   y0: north ? y0+chh : y0,  y1: north ? y0+bh : y0+bh-chh };
+      if(R1.x1-R1.x0 >= ROOM_MIN && R2.x1-R2.x0 >= ROOM_MIN && R2.y1-R2.y0 >= ROOM_MIN)
+        parts = [R1, R2];
+    }
+    const units = [];
+    for(const P of parts) bsp(P, parts.length>1 ? 1 : 2, units); // 2-4 units sharing walls
     const rooms = [];
     units.forEach((u, ui)=>{
       const sub = []; bsp(u, 1, sub);                           // each split again
@@ -2512,7 +2541,15 @@ function makeRandomMap(seed){
     for(let k=sides.length-1;k>0;k--){ const m=Math.floor(rnd()*(k+1)); const tmp=sides[k]; sides[k]=sides[m]; sides[m]=tmp; }
     const wantDoors = 2 + (rnd()<0.5?1:0);
     let cutN = 0;
-    for(const s of sides){ if(cutN >= wantDoors) break; if(carve(s)) cutN++; }
+    for(const s of sides){ if(cutN >= wantDoors) break;
+      const cell = carve(s);
+      if(cell){ cutN++;
+        /* an exterior door gets an AWNING on the street side: character at
+           eye level, and a slice of overhead cover exactly where a hider
+           slips out of a building */
+        const outDir = s.vertical ? (s.x===block.x0 ? 'w' : 'e') : (s.y===block.y0 ? 'n' : 's');
+        objs.push({ x:cell[0], y:cell[1], type:'awning_'+outDir, u: wallOwner.get(ckey(cell[0],cell[1])) });
+      } }
 
     /* ⭐ ONE STAIRCASE PER BLOCK, AGAINST AN OUTER WALL, FACING THE ALLEY.
        Without it every roof in the game is scenery again - three metres up with
@@ -2554,7 +2591,10 @@ function makeRandomMap(seed){
            two cells a body walks through to reach the first tread, plus the two
            flanking cells whose props would inflate their AABBs into the flight. */
         const ax = sd.dir==='s' ? [0,-1] : sd.dir==='n' ? [0,1] : sd.dir==='e' ? [-1,0] : [1,0];
-        for(let step=1; step<=2; step++){
+        /* three cells, not two: climb3d spawns its walker up to 7.6m out when
+           the closer ground is busy, and both of its remaining failures were a
+           boulder in exactly that third cell */
+        for(let step=1; step<=3; step++){
           const nk = ckey(sd.cx + ax[0]*step, sd.cy + ax[1]*step);
           if(wallSet.has(nk)) break;
           seen.add(nk);
@@ -6065,6 +6105,27 @@ function addCoverInner(type, gx, gy, unit){
     if(pr){ pr.node.rotation.y = (hash2(gx+2,gy+4)%628)/100; g.add(pr.node); losMeshes.push(...pr.meshes); }
     else{ const b = new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.7,3.0,10), sm); b.position.y=1.5; g.add(b); losMeshes.push(b); }
     addTarget(w.x, w.z, sm.color.getHex(), 2.6);
+  }else if(type && type.indexOf('awning_') === 0){
+    /* a sloped cloth plate on two posts over an exterior door — street-level
+       character, and a strip of overhead cover exactly where a hider leaves a
+       building. Not a solid; you brush straight past the posts. */
+    const adir = type.slice(7);
+    const am = instMat(COVER_MAT.crate, CRATE_HUES, gx+3, gy+11);
+    const ew = (adir==='n'||adir==='s');
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(ew?2.6:1.35, 0.08, ew?1.35:2.6), am);
+    const off = TILE/2 + 0.55;
+    plate.position.set(adir==='e'? off : adir==='w'? -off : 0, 2.55,
+                       adir==='s'? off : adir==='n'? -off : 0);
+    if(adir==='e') plate.rotation.z = -0.16; else if(adir==='w') plate.rotation.z = 0.16;
+    else if(adir==='s') plate.rotation.x = 0.16; else plate.rotation.x = -0.16;
+    g.add(plate); losMeshes.push(plate);
+    const px = TILE/2 + 1.0;
+    for(const t2 of [-1.0, 1.0]){
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,2.4,5), DOOR_MAT);
+      post.position.set(adir==='e'? px : adir==='w'? -px : t2, 1.2,
+                        adir==='s'? px : adir==='n'? -px : t2);
+      g.add(post);
+    }
   }else if(type==='alien_pod'){
     const st = new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.3,1.4,7), COVER_MAT.dead); st.position.y=0.7;
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.7,14,12), COVER_MAT.pod); bulb.position.y=1.8;
@@ -6073,7 +6134,7 @@ function addCoverInner(type, gx, gy, unit){
   /* static, never mutated at runtime → candidates for the merge pass.
      Deliberately NOT marked: wreck (file pickups with lamps), chest and
      alien_pod (interaction candidates), anything a system recolors live. */
-  if(/^(tree|boulder|crate|barrel|wall|roof|pillar|statue|table|dead_tree|cactus|ice_spike|canopy|doorway_|stair_)/.test(type))
+  if(/^(tree|boulder|crate|barrel|wall|roof|pillar|statue|table|dead_tree|cactus|ice_spike|canopy|doorway_|stair_|awning_)/.test(type))
     g.traverse(o=>{ if(o.isMesh) o.userData.mrg = 1; });
   worldGroup.add(g); cover.push(g);
   g.updateMatrixWorld(true);
