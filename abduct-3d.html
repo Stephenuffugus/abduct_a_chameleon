@@ -2544,7 +2544,7 @@ function makeRandomMap(seed){
         const iny = sd.cy + (sd.dir==='s' ? 1 : sd.dir==='n' ? -1 : 0);
         const ink = ckey(inx, iny);
         if(!wallSet.has(ink) || doorSet.has(ink)) continue;
-        objs.push({ x:sd.cx, y:sd.cy, type:'stair_' + sd.dir });
+        objs.push({ x:sd.cx, y:sd.cy, type:'stair_' + sd.dir, u: wallOwner.get(ink) });
         seen.add(kk);
         break;
       }
@@ -4103,7 +4103,19 @@ function mixHex(a, b){ const A=new THREE.Color(a), B=new THREE.Color(b); return 
 function maybePattern(baseMat, hues, gx, gy, chance){
   const h = hash2(gx*3+1, gy*5+2);
   if(h%10 >= chance) return null;
-  const c1 = hues[h%hues.length], c2 = hues[(h+3)%hues.length];
+  /* ⛔⛔ 2026-08-03 — THIS WAS THE LOUDEST THING IN THE GAME AND IT READ AS A DEBUG
+     TEXTURE. The two squares were two DIFFERENT hues out of the palette, so a patterned
+     wall came out as a high-contrast brown-and-olive checkerboard - and because one
+     material covers all six faces of the box, it painted the roof and the wall head too.
+     Shot from a roof, that check was the dominant visual of the entire frame: not
+     architecture, a test card. It is a large part of "everything looks sloppy".
+     The second tone is now a shade of the first rather than a different colour, which is
+     what real tiling, brickwork and rendered block actually look like. Same geometry,
+     same draw calls, same camo target (the average of two shades of one hue is that hue,
+     so what a chameleon has to match barely moves). */
+  const c1 = hues[h%hues.length];
+  const _c = new THREE.Color(c1), k = (h & 1) ? 1.17 : 0.84;
+  const c2 = new THREE.Color(Math.min(1,_c.r*k), Math.min(1,_c.g*k), Math.min(1,_c.b*k)).getHex();
   const m = baseMat.clone(); m.color = new THREE.Color(0xffffff);
   m.map = patternTexture('#'+new THREE.Color(c1).getHexString(), '#'+new THREE.Color(c2).getHexString(), (h>>4)%3);
   return { m, avg: mixHex(c1, c2) };
@@ -5452,6 +5464,23 @@ window.__aac3dPaint = function(){
            coveredPct: Math.round(covered/Math.max(1,walkable)*100),
            worstCellTargets: worst===1e9?3:worst };
 };
+/* ⭐⭐ 2026-08-03 — HOW TALL IS THIS BUILDING? Stephen, twice: "buildings look the same",
+   "everything looks random and sloppy". Every wall in the game was 4.2 m, so a block of
+   four units was ONE silhouette repeated four times - and from the ground a street was a
+   single unbroken line against the sky. Roofs already varied by 1 m inside that fixed
+   box, which nobody can see from below.
+   Height is keyed to the UNIT, the same id that already gives a building its colour, so
+   one structure is one height all the way round and its neighbour is a different one.
+   ⚖ Three steps, not a continuous range: a block should read as deliberate architecture,
+   not as noise. And the top step is 6.2 rather than something grander because the
+   staircase climbs a single map cell - 3 m of run - so a taller building would need a
+   ladder rather than stairs.
+   ⚖ Null unit keeps 4.2: the handcrafted map has no units, and varying its height by
+   grid position would step a straight wall up and down mid-run. */
+function unitWallH(u){
+  if(u == null) return 4.2;
+  return 4.2 + (hash2(u*13+7, 3) % 3) * 1.0;      // 4.2 / 5.2 / 6.2
+}
 function addCover(type, gx, gy, unit){
   _targetName = String(type).replace(/_/g,' ').toUpperCase();   // names every addTarget below
   try{ return addCoverInner(type, gx, gy, unit); } finally { _targetName = ''; }
@@ -5510,7 +5539,7 @@ function addCoverInner(type, gx, gy, unit){
     const uk = (unit == null) ? Math.floor(gx/5) + Math.floor(gy/5)*31 : unit;
     const pat = maybePattern(COVER_MAT.wall, WALL_HUES, uk, 0, 3);
     const wm = pat ? pat.m : instMat(COVER_MAT.wall, WALL_HUES, uk, 0);
-    const h=4.2, b = new THREE.Mesh(new THREE.BoxGeometry(TILE,h,TILE), wm); b.position.y=h/2;
+    const h=unitWallH(unit), b = new THREE.Mesh(new THREE.BoxGeometry(TILE,h,TILE), wm); b.position.y=h/2;
     g.add(b); losMeshes.push(b); addTarget(w.x, w.z, pat ? pat.avg : wm.color.getHex(), 3.0);
     /* ⭐ A LIT WINDOW IS WHAT MAKES A NIGHT BUILDING A BUILDING. Until this the
        favela was flat slabs in the dark - correct geometry with nothing that
@@ -5623,7 +5652,12 @@ function addCoverInner(type, gx, gy, unit){
        the same tread caught the body on one run and let it walk through on the next.
        Now the treads climb continuously to the landing height, and the rise is chosen so
        there is real headroom under STEP_UP instead of 2 cm of luck. */
-    const TOPY = 4.2;
+    /* ⛔ AND IT CLIMBS TO THE PARAPET OF THE BUILDING IT LEANS ON, not to a hardcoded
+       4.2. The moment buildings stopped being one height, a fixed landing would have put
+       every staircase on a tall block a metre short of the roof and every staircase on a
+       short one a metre through it. The generator threads the wall cell's unit onto the
+       stair object for exactly this. */
+    const TOPY = unitWallH(unit);
     const N = Math.ceil(TOPY / 0.5), rise = TOPY / N, run = TILE / N;
     for(let i=0;i<N;i++){
       const hgt = rise*(i+1);
@@ -5648,8 +5682,13 @@ function addCoverInner(type, gx, gy, unit){
          The tread's collision rect is padded along the run so neighbours overlap by more
          than twice the inset. supportAt takes the HIGHEST match, so in the overlap you
          get the upper tread - which is what climbing is. The visible box is untouched. */
-      const padA = (dir==='n'||dir==='s') ? 0 : run*0.6;
-      const padC = (dir==='n'||dir==='s') ? run*0.6 : 0;
+      /* ⛔ A FLOOR UNDER THE PAD. A 6.2 m staircase fits 13 treads into the same 3 m of
+         run, so `run` drops to 0.23 - and a pad proportional to it would shrink below the
+         0.15 inset and tear the hole between treads open again on exactly the tall
+         buildings that need the stairs most. The pad has to beat the inset, not the tread. */
+      const pad = Math.max(0.25, run*0.6);
+      const padA = (dir==='n'||dir==='s') ? 0 : pad;
+      const padC = (dir==='n'||dir==='s') ? pad : 0;
       /* ⛔⛔ AND AN APRON ON THE BOTTOM STEP, or the whole staircase is a coin flip.
          Standing on the ground your feet reach 0 + STEP_UP = 0.62, so of ten treads
          exactly ONE is legal to step onto: the first. Its catch band is 0.43 m wide, and
@@ -5716,7 +5755,10 @@ function addCoverInner(type, gx, gy, unit){
        no shadow line, nothing to tell one apartment from the next even after
        they stopped sharing a colour. Three steps keyed to the UNIT, capped under
        the 4.2 wall so a roof never pokes out of the top of its own building. */
-    const rY = 2.9 + ((unit == null ? hash2(gx,gy) : hash2(unit*17+3, 5)) % 3) * 0.52;
+    /* keyed off the wall head so a roof still sits 1.3 m under its own parapet on a
+       building of any height, instead of poking out of a short one or floating in a tall
+       one. Identical to the old 2.9 + n*0.52 when the walls are 4.2. */
+    const rY = unitWallH(unit) - 1.3 + ((unit == null ? hash2(gx,gy) : hash2(unit*17+3, 5)) % 3) * 0.52;
     const slab = new THREE.Mesh(new THREE.BoxGeometry(3.05, 0.26, 3.05), rm);
     slab.position.y = rY; g.add(slab); losMeshes.push(slab);
     /* ⭐⭐ "The roofs of the building all can't be stood upon. that's dumb." He is
