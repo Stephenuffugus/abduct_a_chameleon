@@ -3410,6 +3410,7 @@ function buildWorld(map){
     });
   }
   while(solidOwner.length < solids.length) solidOwner.push(-1);   // anything added after the props
+  addRoofBridges(map);
   mergeStaticWorld();
   reseatSpawns();
   repairReachability(map);
@@ -3426,6 +3427,56 @@ function buildWorld(map){
    originals' geometries were never rendered (this runs inside buildWorld,
    before the first frame) so they hold no GPU memory — and prop geometries are
    SHARED with propLib (the clone() lesson), so they are never disposed here. */
+/* ⭐ 2026-08-03 — PLANK BRIDGES BETWEEN ROOFS. The mantle rule made wall heads
+   walkable and the staircases finally reach them, which turns parapets into
+   ROUTES — and a route wants somewhere to go. Where two different buildings of
+   the SAME height face each other across a clear alley, a timber plank now
+   spans parapet to parapet: a hider can cross a block without touching the
+   street, and a hunter watching an alley can be walked straight over.
+   ⚖ A platform and a sightline blocker, never a solid — you walk under it
+   freely, exactly like a canopy. Up to three per map, spread apart. */
+function addRoofBridges(map){
+  const wallU = new Map(), objAt = new Map();
+  for(const o of (map.objects||[])){ objAt.set(o.x+','+o.y, o.type);
+    if(o.type==='wall') wallU.set(o.x+','+o.y, o.u); }
+  const cands = [];
+  for(const [k,u] of wallU){
+    const [x,y] = k.split(',').map(Number);
+    for(const [dx,dz] of [[1,0],[0,1]]){
+      for(let gap=2; gap<=3; gap++){
+        const k2 = (x+dx*(gap+1))+','+(y+dz*(gap+1));
+        if(!wallU.has(k2)) continue;
+        const u2 = wallU.get(k2);
+        if(u2 === u) continue;                        // same building: pointless
+        if(unitWallH(u) !== unitWallH(u2)) continue;  // a sloped plank is a bug farm
+        let clear = true;
+        for(let s=1;s<=gap;s++){ const ot = objAt.get((x+dx*s)+','+(y+dz*s));
+          if(ot && (ot==='wall' || ot==='tree' || ot==='canopy' || ot.indexOf('stair_')===0)){ clear=false; break; } }
+        if(clear){ cands.push({x,y,dx,dz,gap,h:unitWallH(u)}); }
+        break;
+      }
+    }
+  }
+  const picked = [];
+  for(const c of cands){
+    if(picked.length >= 3) break;
+    if(picked.some(p=> Math.abs(p.x-c.x)+Math.abs(p.y-c.y) < 10)) continue;
+    picked.push(c);
+  }
+  for(const c of picked){
+    const a = cellToWorld(c.x, c.y), b2 = cellToWorld(c.x+c.dx*(c.gap+1), c.y+c.dz*(c.gap+1));
+    const cx = (a.x+b2.x)/2, cz = (a.z+b2.z)/2;
+    const len = c.gap*TILE + 1.0;                     // rests half a metre onto each parapet
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(c.dx ? len : 1.1, 0.14, c.dz ? len : 1.1), DOOR_MAT);
+    plank.position.set(cx, c.h+0.07, cz);
+    plank.userData.mrg = 1;
+    worldGroup.add(plank); losMeshes.push(plank);
+    platforms.push({ minX:cx-(c.dx?len/2:0.55), maxX:cx+(c.dx?len/2:0.55),
+                     minZ:cz-(c.dz?len/2:0.55), maxZ:cz+(c.dz?len/2:0.55),
+                     top:c.h+0.14, colorHex:0x6b5238, cx:cx, cz:cz, name:'PLANK BRIDGE' });
+  }
+  if(picked.length) console.info('[world] ' + picked.length + ' roof plank(s) laid');
+}
 function mergeStaticWorld(){
   worldGroup.updateWorldMatrix(true, true);
   /* ⚖ Two-phase bucketing, walking the line the negative result above drew:
@@ -5675,11 +5726,21 @@ function addCoverInner(type, gx, gy, unit){
        losMeshes, and the colour a chameleon has to match is exactly what it was.
        ⚖ And they are DIM - 0.55 alpha on a small quad. A window that lit the
        street would hand a hunter free illumination in a game about darkness. */
-    if((hash2(gx*3+11, gy*7+5) % 100) < 34){
-      /* four shared materials, not one per cell. A map has ~250 wall cells and a
-         third of them light up, so a fresh material each was ~85 extra draw
-         batches for four distinct colours. */
+    /* ⭐ 2026-08-03 — A FACE IS NEVER A BLANK SLAB. Three worldshots in a row
+       (and one climb-failure frame) put a player nose-to-nose with a building
+       face carrying one window or nothing — "flat plastic" at exactly the
+       distance the game is played at. Where the lit roll misses, most faces
+       now get the same timber frame with a NEAR-BLACK pane instead: a home
+       with the lights off, for two quads on shared materials. And every wall
+       cell gets a parapet trim band below (a shade of its own colour), which
+       draws the roofline at street level. All of it merges statically. */
+    const litRoll = hash2(gx*3+11, gy*7+5) % 100;
+    const wantLit = litRoll < 52, wantDark = !wantLit && litRoll < 86;
+    if(wantLit || wantDark){
       const wmMat = WINDOW_MATS[hash2(gx+5, gy+9) % WINDOW_MATS.length];
+      let dkMat = _fillMats.get('winDark');
+      if(!dkMat){ dkMat = new THREE.MeshBasicMaterial({ color:0x0f1216 }); _fillMats.set('winDark', dkMat); }
+      const paneMat = wantLit ? wmMat : dkMat;
       const ww = 0.95, wh = 0.8, yy = 2.35, eps = TILE/2 + 0.03;
       for(let f=0; f<4; f++){
         // one face in four is left blank so a run of walls is not a lit grid
@@ -5692,7 +5753,7 @@ function addCoverInner(type, gx, gy, unit){
            have to agree about how bright the world is.
            A timber reveal a size up fixes it for nothing: even against a black
            wall the eye now reads a window set into something. */
-        const q = new THREE.Mesh(new THREE.PlaneGeometry(ww, wh), wmMat);
+        const q = new THREE.Mesh(new THREE.PlaneGeometry(ww, wh), paneMat);
         const fr = new THREE.Mesh(new THREE.PlaneGeometry(ww+0.26, wh+0.24), DOOR_MAT);
         if(f===0){ q.position.set(0, yy,  eps); fr.position.set(0, yy,  eps-0.012); }
         else if(f===1){ q.position.set(0, yy, -eps); q.rotation.y = Math.PI;
@@ -5703,6 +5764,15 @@ function addCoverInner(type, gx, gy, unit){
                fr.position.set(-eps+0.012, yy, 0); fr.rotation.y = -Math.PI/2; }
         g.add(fr); g.add(q);
       }
+    }
+    /* parapet trim: a flush colour band at the wall head, unit-shaded */
+    {
+      const _tc = new THREE.Color(pat ? pat.avg : wm.color.getHex());
+      const trimHex = new THREE.Color(_tc.r*0.62, _tc.g*0.62, _tc.b*0.62).getHex();
+      let tm = _fillMats.get('trim'+trimHex);
+      if(!tm){ tm = new THREE.MeshLambertMaterial({ color: trimHex }); _fillMats.set('trim'+trimHex, tm); }
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(TILE, 0.22, TILE), tm);
+      trim.position.y = h - 0.11; g.add(trim);
     }
     /* ⛔⛔⛔ 2026-08-03 — THE LAST LINK IN "STAND ON THE ROOFS", and it was two lines.
        A wall was pushed as a solid with NO `top`. resolveWalls skips a solid when your
@@ -5960,8 +6030,9 @@ function addCoverInner(type, gx, gy, unit){
         line.position.y = top + 1.1; g.add(line);
         for(let k=0;k<3;k++){
           const c2 = WASH_HUES[hash2(gx+k, gy*3+k) % WASH_HUES.length];
-          const sheet = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.55),
-            new THREE.MeshLambertMaterial({ color:c2, side:THREE.DoubleSide }));
+          let shm = _fillMats.get('wash'+c2);
+          if(!shm){ shm = new THREE.MeshLambertMaterial({ color:c2, side:THREE.DoubleSide }); _fillMats.set('wash'+c2, shm); }
+          const sheet = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.55), shm);
           sheet.position.set(-0.7 + k*0.7, top + 0.82, 0); g.add(sheet);
         }
       }
