@@ -5324,6 +5324,25 @@ window.__aac3dCombat = function(){
            jam: (me && me.getState('jam')) || null };
 };
 window.__aac3dRawMap = function(){ return MAP; };
+/* Set the three lights at runtime so the same frame can be rendered under candidate night
+   grades side by side. Fixing the terrain winding (the whole playfield was lit from
+   underneath) left the lights carrying compensation that was added FOR that bug, and how
+   dark the night is is the Director's call - so this exists to make that call cheap to
+   make rather than to make it for him. Returns the current values when passed nothing. */
+window.__aac3dLights = function(cfg){
+  if(cfg){
+    if(cfg.hemi != null) hemiLight.intensity = cfg.hemi;
+    if(cfg.hemiSky != null) hemiLight.color.setHex(cfg.hemiSky);
+    if(cfg.hemiGround != null) hemiLight.groundColor.setHex(cfg.hemiGround);
+    if(cfg.moon != null) moonLight.intensity = cfg.moon;
+    if(cfg.moonColor != null) moonLight.color.setHex(cfg.moonColor);
+    if(cfg.warm != null) warmLight.intensity = cfg.warm;
+    if(cfg.warmColor != null) warmLight.color.setHex(cfg.warmColor);
+  }
+  return { hemi:hemiLight.intensity, hemiSky:hemiLight.color.getHex(), hemiGround:hemiLight.groundColor.getHex(),
+           moon:moonLight.intensity, moonColor:moonLight.color.getHex(),
+           warm:warmLight.intensity, warmColor:warmLight.color.getHex() };
+};
 /* What the phone is actually being asked to draw. renderer.info is three.js's own count,
    read on a settled frame; the mesh and unique-material totals sit beside it so a
    regression says WHICH of the three moved rather than just that something did. */
