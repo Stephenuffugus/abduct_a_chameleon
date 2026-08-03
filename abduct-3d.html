@@ -1297,6 +1297,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { insertCoin, onPlayerJoin, myPlayer, isHost, getState, setState } from 'playroomkit';
 
@@ -3251,13 +3252,15 @@ function buildWorld(map){
     if((h%1000)/1000 >= (clump ? 0.34 : 0.06)) continue;
     const kind = kinds[(h>>5)%kinds.length];
     const hue = PAINT_HUE[kind] || 0x4c7d3c;
-    const m = new THREE.MeshLambertMaterial({ color: hue });
+    let m = _fillMats.get(hue);
+    if(!m){ m = new THREE.MeshLambertMaterial({ color: hue }); _fillMats.set(hue, m); }
     const pr = propMesh(kind, m, 0.55 + ((h>>3)%50)/100);
     if(!pr) continue;
     const wx = (x+0.5-mapCols/2)*TILE + (((h>>8)%100)/100-0.5)*TILE*0.55;
     const wz = (y+0.5-mapRows/2)*TILE + (((h>>12)%100)/100-0.5)*TILE*0.55;
     pr.node.position.set(wx, pr.node.position.y, wz);
     pr.node.rotation.y = (h%628)/100;
+    pr.node.traverse(o=>{ if(o.isMesh) o.userData.mrg = 1; });
     worldGroup.add(pr.node);
     addTarget(wx, wz, hue, 2.2);      /* ← the whole point: now it is paintable */
     paintDeco++;
@@ -3301,7 +3304,8 @@ function buildWorld(map){
     if((h%1000)/1000 >= 0.75) continue;
     const kind = kinds[(h>>>5)%kinds.length];
     const hue = PAINT_HUE[kind] || 0x8a8578;
-    const m = new THREE.MeshLambertMaterial({ color: hue });
+    let m = _fillMats.get(hue);
+    if(!m){ m = new THREE.MeshLambertMaterial({ color: hue }); _fillMats.set(hue, m); }
     const big = /bench_park|well_stone|bin_street|planter_potted|traffic_light|lamp_post|fence_panel/.test(kind);
     const pr = propMesh(kind, m, big ? (0.9 + ((h>>>3)%70)/100) : (0.28 + ((h>>>3)%42)/100));
     if(!pr) continue;
@@ -3309,6 +3313,7 @@ function buildWorld(map){
     const wz = (y+0.5-mapRows/2)*TILE + (((h>>>12)%100)/100-0.5)*TILE*0.62;
     const g3 = new THREE.Group(); g3.add(pr.node);
     g3.position.set(wx, 0, wz); g3.rotation.y = ((h>>>16)%628)/100;
+    pr.node.traverse(o=>{ if(o.isMesh) o.userData.mrg = 1; });
     worldGroup.add(g3);
     if(big) losMeshes.push(...pr.meshes);
     addTarget(wx, wz, hue, big ? 1.5 : 0.95);
@@ -3341,12 +3346,19 @@ function buildWorld(map){
     const h = hash2(x*29+3, y*31+13);
     const kind = kinds[(h>>7)%kinds.length];
     const hue = PAINT_HUE[kind] || 0x4c7d3c;
-    const pr = propMesh(kind, new THREE.MeshLambertMaterial({ color: hue }), 0.5 + ((h>>3)%45)/100);
+    /* ⛔ was `new MeshLambertMaterial` PER PROP — the census on the worst map
+       showed 129 cacti carrying 129 identical materials, which is both the
+       material count and a draw call each. One shared material per hue, and
+       the props are marked for the static merge like everything else. */
+    let fm = _fillMats.get(hue);
+    if(!fm){ fm = new THREE.MeshLambertMaterial({ color: hue }); _fillMats.set(hue, fm); }
+    const pr = propMesh(kind, fm, 0.5 + ((h>>3)%45)/100);
     if(!pr) continue;
     const wx = w.x + (((h>>8)%100)/100-0.5)*TILE*0.5;
     const wz = w.z + (((h>>12)%100)/100-0.5)*TILE*0.5;
     pr.node.position.set(wx, pr.node.position.y, wz);
     pr.node.rotation.y = (h%628)/100;
+    pr.node.traverse(o=>{ if(o.isMesh) o.userData.mrg = 1; });
     worldGroup.add(pr.node);
     addTarget(wx, wz, hue, 2.2);
     filled++;
@@ -3398,8 +3410,85 @@ function buildWorld(map){
     });
   }
   while(solidOwner.length < solids.length) solidOwner.push(-1);   // anything added after the props
+  mergeStaticWorld();
   reseatSpawns();
   repairReachability(map);
+}
+/* ⭐ 2026-08-03 — ONE DRAW CALL PER MATERIAL, NOT PER PROP. draws3d measured
+   389-771 draw calls against a 300 budget: the scatter passes submit every
+   tread, wall box, window quad and boulder as its own mesh. Everything marked
+   `mrg` above is static for the life of the world, so it is baked here into one
+   merged mesh per material. Collision, supports, LOS and camo targets never
+   referenced these meshes' identities except losMeshes, which is re-pointed at
+   the merged output.
+   ⚖ Geometry lifecycle: baked clones are disposed right after merging; the
+   merged buffers live on worldGroup and die in disposeWorldChildren; the
+   originals' geometries were never rendered (this runs inside buildWorld,
+   before the first frame) so they hold no GPU memory — and prop geometries are
+   SHARED with propLib (the clone() lesson), so they are never disposed here. */
+function mergeStaticWorld(){
+  worldGroup.updateWorldMatrix(true, true);
+  /* ⚖ Two-phase bucketing, walking the line the negative result above drew:
+     a GLOBAL batch can never be frustum-culled (paid in fill rate), and a
+     fixed-grid regional batch fragments below the merge threshold (paid in
+     calls — measured 416 at 18m regions vs 336 global). The observation that
+     resolves it: unit-keyed materials (one building's walls, its roof) are
+     ALREADY spatially local, so their whole-material batch culls like the
+     building it is. Only map-wide shared materials (stair wood, window glow,
+     rock and leaf hues) need splitting — and 24m cells keep those batches
+     chunky. So: gather per material, measure the bucket's extent, and only
+     region-split the ones that actually sprawl. */
+  const SINGLE_MAX = 55, REG = 24;
+  const byMat = new Map();
+  const _wp = new THREE.Vector3();
+  worldGroup.traverse(o=>{ if(o.isMesh && o.userData.mrg && !o.userData.mergedStatic){
+    o.getWorldPosition(_wp);
+    let e = byMat.get(o.material.uuid);
+    if(!e){ e = { mat:o.material, items:[] }; byMat.set(o.material.uuid, e); }
+    e.items.push({ m:o, x:_wp.x, z:_wp.z }); } });
+  const buckets = new Map();
+  for(const e of byMat.values()){
+    let x0=1e9,x1=-1e9,z0=1e9,z1=-1e9;
+    for(const it of e.items){ if(it.x<x0)x0=it.x; if(it.x>x1)x1=it.x; if(it.z<z0)z0=it.z; if(it.z>z1)z1=it.z; }
+    const local = Math.max(x1-x0, z1-z0) <= SINGLE_MAX;
+    for(const it of e.items){
+      const key = local ? e.mat.uuid
+                        : e.mat.uuid + '|' + Math.floor(it.x/REG) + '|' + Math.floor(it.z/REG);
+      let b = buckets.get(key);
+      if(!b){ b = { mat:e.mat, meshes:[] }; buckets.set(key, b); }
+      b.meshes.push(it.m);
+    }
+  }
+  let removed = 0, added = 0;
+  for(const b of buckets.values()){
+    if(b.meshes.length < 3) continue;                 // no win below three
+    const geos = [];
+    let ok = true;
+    for(const m of b.meshes){
+      let gg = m.geometry.clone();
+      if(gg.index) gg = gg.toNonIndexed();
+      for(const name of Object.keys(gg.attributes))
+        if(name!=='position' && name!=='normal' && name!=='uv') gg.deleteAttribute(name);
+      if(!gg.attributes.uv){ ok = false; geos.push(gg); break; }   // mixed layouts: leave bucket alone
+      gg.applyMatrix4(m.matrixWorld);
+      geos.push(gg);
+    }
+    let merged = null;
+    if(ok){ try{ merged = mergeGeometries(geos, false); }catch(e){ merged = null; } }
+    for(const gg of geos) gg.dispose();
+    if(!merged) continue;                             // originals stay; nothing lost
+    merged.computeBoundingSphere();
+    const mm = new THREE.Mesh(merged, b.mat);          // frustumCulled stays ON
+    mm.matrixAutoUpdate = false;
+    mm.userData.mergedStatic = 1;
+    worldGroup.add(mm);
+    const gone = new Set(b.meshes);
+    for(const m of b.meshes){ if(m.parent) m.parent.remove(m); }
+    losMeshes = losMeshes.filter(x=> !gone.has(x));
+    losMeshes.push(mm);
+    removed += b.meshes.length; added += 1;
+  }
+  if(removed) console.info('[world] merged ' + removed + ' static meshes into ' + added);
 }
 
 /* ⛔⛔⛔ 2026-08-02 — THE OLD REPAIR PROVED CONNECTIVITY IN A WORLD THE PLAYER DOES NOT
@@ -3722,7 +3811,9 @@ const STRUCT_MAT = {
   water: new THREE.MeshStandardMaterial({ color:0x3f7fa8, roughness:.25, metalness:.2 }),
   sand:  new THREE.MeshStandardMaterial({ color:0xc9b184, roughness:1 })
 };
-function _sMat(base, hex){ const m = base.clone(); m.color = new THREE.Color(hex); return m; }
+const _sMatCache = new Map();
+function _sMat(base, hex){ const k = base.uuid + '|' + hex; let m = _sMatCache.get(k);
+  if(!m){ m = base.clone(); m.color = new THREE.Color(hex); _sMatCache.set(k, m); } return m; }
 function _sBox(w,h,d,mat){ return new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat); }
 function _sCyl(r,h,mat,seg){ return new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,seg||10), mat); }
 
@@ -3737,6 +3828,9 @@ function placeStructure(built, wx, wz, rotY, kind){
   _targetName = kind ? String(kind).replace(/_/g,' ').toUpperCase() : 'STRUCTURE';
   const g = built.group;
   g.position.set(wx, 0, wz); g.rotation.y = rotY || 0;
+  /* structures are static too — merge everything except water (the one
+     material a later pass might animate) */
+  g.traverse(o=>{ if(o.isMesh && o.material !== STRUCT_MAT.water) o.userData.mrg = 1; });
   worldGroup.add(g); cover.push(g);
   g.updateMatrixWorld(true);
   const _c = new THREE.Vector3();
@@ -4132,10 +4226,22 @@ function maybePattern(baseMat, hues, gx, gy, chance){
   const c1 = hues[h%hues.length];
   const _c = new THREE.Color(c1), k = (h & 1) ? 1.17 : 0.84;
   const c2 = new THREE.Color(Math.min(1,_c.r*k), Math.min(1,_c.g*k), Math.min(1,_c.b*k)).getHex();
-  const m = baseMat.clone(); m.color = new THREE.Color(0xffffff);
-  m.map = patternTexture('#'+new THREE.Color(c1).getHexString(), '#'+new THREE.Color(c2).getHexString(), (h>>4)%3);
-  return { m, avg: mixHex(c1, c2) };
+  /* ⛔ MEMOIZED — this used to clone a material AND paint a fresh 64px canvas
+     texture on EVERY call, and it is called once per wall CELL with the same
+     unit key. Measured by draws3d: 421-535 live materials on a map whose
+     palette has a few dozen legitimate combinations. Same inputs → same
+     material instance, which also lets the static merge pass batch them. */
+  const pkey = baseMat.uuid + '|' + c1 + '|' + k + '|' + ((h>>4)%3);
+  let pe = _patCache.get(pkey);
+  if(!pe){
+    const m = baseMat.clone(); m.color = new THREE.Color(0xffffff);
+    m.map = patternTexture('#'+new THREE.Color(c1).getHexString(), '#'+new THREE.Color(c2).getHexString(), (h>>4)%3);
+    pe = { m, avg: mixHex(c1, c2) }; _patCache.set(pkey, pe);
+  }
+  return pe;
 }
+const _patCache = new Map();
+const _fillMats = new Map();      // paintable-fill props: one material per hue, ever
 /* ⛔⛔ "the match color didnt work at all it wasnt at all right." Measured: with
    cover beside you the game scores you against TWO surfaces, and the second one
    was called NEARBY COVER. A player cannot deliberately match a thing the game
@@ -5893,6 +5999,11 @@ function addCoverInner(type, gx, gy, unit){
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.7,14,12), COVER_MAT.pod); bulb.position.y=1.8;
     g.add(st,bulb); losMeshes.push(bulb); addTarget(w.x, w.z, 0x7d5fd0, 2.4);
   }
+  /* static, never mutated at runtime → candidates for the merge pass.
+     Deliberately NOT marked: wreck (file pickups with lamps), chest and
+     alien_pod (interaction candidates), anything a system recolors live. */
+  if(/^(tree|boulder|crate|barrel|wall|roof|pillar|statue|table|dead_tree|cactus|ice_spike|canopy|doorway_|stair_)/.test(type))
+    g.traverse(o=>{ if(o.isMesh) o.userData.mrg = 1; });
   worldGroup.add(g); cover.push(g);
   g.updateMatrixWorld(true);
   /* ⛔⛔ YOU COULD WALK THROUGH EVERYTHING. `solids.push` appeared exactly ONCE in
