@@ -39,6 +39,7 @@
   "boot3d": "node boot3d.mjs ../abduct-3d.html",
   "vram3d": "node vram3d.mjs ../abduct-3d.html",
   "draws3d": "node draws3d.mjs ../abduct-3d.html",
+  "nightsheet": "node nightsheet.mjs ../abduct-3d.html ../docs/night-grade-contact-sheet.png",
   "reach3d": "node reach3d.mjs ../abduct-3d.html",
   "combat3d": "node combat3d.mjs ../abduct-3d.html",
   "pick3d": "node pick3d.mjs ../abduct-3d.html && node reach3d.mjs ../abduct-3d.html && node combat3d.mjs ../abduct-3d.html"

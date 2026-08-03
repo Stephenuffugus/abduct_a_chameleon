@@ -39,19 +39,27 @@ const ROOT = path.dirname(GAME);
    being compared against. The rest move ONE idea each rather than three at once, because
    a sheet where every tile differs in every way is a sheet nobody can choose from. */
 const CANDIDATES = [
-  { key:'A', name:'AS IT SHIPS',   note:'the lights as they are now',
+  /* ⛔ THE FIRST SHEET WAS USELESS AND IT IS WORTH SAYING WHY. I bracketed around the
+     CURRENT setting - 103%, 98%, 93%, 92%, 86%, 101% - and every tile came out looking
+     like daylight, because the current setting is itself the thing in question. Six
+     options nobody can tell apart is not a choice, it is a slower way of changing
+     nothing. This spans the actual space instead: from what ships down to a night that
+     is probably too dark, so the answer is somewhere INSIDE the sheet rather than off
+     the end of it. */
+  { key:'A', name:'AS IT SHIPS',  note:'the lights as they are now - this reads as daylight',
     cfg:{ hemi:2.6, moon:1.9, warm:0.9 } },
-  { key:'B', name:'COOLER',        note:'warm light down; the greens stop going olive',
-    cfg:{ hemi:2.2, moon:1.9, warm:0.30 } },
-  { key:'C', name:'DARKER',        note:'everything down; more night, less palette',
-    cfg:{ hemi:1.6, moon:1.4, warm:0.45 } },
-  { key:'D', name:'MOONLIT',       note:'the moon does the work, the horizon barely',
-    cfg:{ hemi:1.7, moon:2.7, warm:0.20 } },
-  { key:'E', name:'WARM DUSK',     note:'todays mood, dimmer',
-    cfg:{ hemi:2.0, moon:1.4, warm:0.85 } },
-  { key:'F', name:'COOL + DIM',    note:'B and C together: the safe middle',
-    cfg:{ hemi:1.9, moon:1.7, warm:0.30 } },
+  { key:'B', name:'EVENING',      note:'a quarter down, still warm',
+    cfg:{ hemi:1.9, moon:1.5, warm:0.7 } },
+  { key:'C', name:'DUSK',         note:'half way; the sand stops shouting',
+    cfg:{ hemi:1.3, moon:1.1, warm:0.5 } },
+  { key:'D', name:'NIGHT',        note:'the moon leads, the horizon is a whisper',
+    cfg:{ hemi:0.85, moon:1.0, warm:0.22 } },
+  { key:'E', name:'MOONLIT NIGHT',note:'same darkness as D, cooler and more directional',
+    cfg:{ hemi:0.7, moon:1.5, warm:0.12, hemiSky:0xAFC6FF } },
+  { key:'F', name:'DEEP NIGHT',   note:'almost certainly too dark - the far end of the bracket',
+    cfg:{ hemi:0.5, moon:0.8, warm:0.10 } },
 ];
+
 
 const MIME = {'.html':'text/html','.js':'text/javascript','.json':'application/json','.png':'image/png',
   '.jpg':'image/jpeg','.glb':'model/gltf-binary','.css':'text/css'};
@@ -112,7 +120,7 @@ for (const C of CANDIDATES) {
 
   /* the numbers: walk a few spots and read the ground back off the GPU */
   const seen = new Map();
-  for (const [dx,dz] of [[0,0],[16,0],[-16,0],[0,16],[0,-16],[24,24],[-24,-24],[24,-24],[-24,24],[36,0],[0,36]]) {
+  for (const [dx,dz] of [[0,0],[16,0],[-16,0],[0,16],[0,-16],[24,24],[-24,-24]]) {
     await p.evaluate(([x,z])=>window.__aac3dTeleport(x,z), [dx,dz]);
     await new Promise(r=>setTimeout(r, 90));
     const m = await p.evaluate(()=>{ try { return window.__aac3dGround(); } catch(e){ return null; } });
