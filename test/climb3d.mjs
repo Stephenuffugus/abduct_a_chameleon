@@ -22,6 +22,9 @@
  * them like a person, do you end up on the roof?
  */
 import http from 'http'; import fs from 'fs'; import path from 'path';
+const SHOTDIR = process.env.CLIMB_SHOTS || (process.env.TMPDIR || '/tmp') + '/climb3d-shots';
+import { mkdirSync } from 'fs'; try{ mkdirSync(SHOTDIR, {recursive:true}); }catch(e){}
+
 import { createRequire } from 'module';
 let puppeteer;
 try { puppeteer = createRequire(import.meta.url)('/workspaces/lucid-winds/node_modules/puppeteer'); }
@@ -131,7 +134,7 @@ for (let s = 0; s < BLOCKS; s++) {
     for(const id of ['tapStart','howto','settings']){ const e=document.getElementById(id); if(e) e.style.display='none'; }
     document.querySelectorAll('body > *').forEach(e=>{ if(e.tagName!=='CANVAS') e.style.visibility='hidden'; }); });
   await new Promise(r=>setTimeout(r,450));
-  fs.writeFileSync(path.join('/tmp/claude-1000/-workspaces-lucid-winds/79b3a7f9-986f-4d21-a960-ea935fc533bd/scratchpad', 'climb-' + want + '.png'),
+  fs.writeFileSync(path.join(SHOTDIR, 'climb-' + want + '.png'),
                    await p.screenshot({type:'png'}));
   await p.evaluate(()=>{ document.querySelectorAll('body > *').forEach(e=>{ e.style.visibility=''; });
     window.__aac3dFreeCam(null); });

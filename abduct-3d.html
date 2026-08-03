@@ -2546,6 +2546,22 @@ function makeRandomMap(seed){
         if(!wallSet.has(ink) || doorSet.has(ink)) continue;
         objs.push({ x:sd.cx, y:sd.cy, type:'stair_' + sd.dir, u: wallOwner.get(ink) });
         seen.add(kk);
+        /* ⛔ RESERVE THE APRON, NOT JUST THE STAIR — the doorway lesson again.
+           climb3d's two failures were both placement: boulders from a cover
+           stand two cells in front of a staircase, and a table pressed against
+           the bottom flight. put() only refuses OCCUPIED cells, so reserve the
+           two cells a body walks through to reach the first tread, plus the two
+           flanking cells whose props would inflate their AABBs into the flight. */
+        const ax = sd.dir==='s' ? [0,-1] : sd.dir==='n' ? [0,1] : sd.dir==='e' ? [-1,0] : [1,0];
+        for(let step=1; step<=2; step++){
+          const nk = ckey(sd.cx + ax[0]*step, sd.cy + ax[1]*step);
+          if(wallSet.has(nk)) break;
+          seen.add(nk);
+        }
+        for(const off of (ax[0]===0 ? [[1,0],[-1,0]] : [[0,1],[0,-1]])){
+          const nk = ckey(sd.cx + off[0], sd.cy + off[1]);
+          if(!wallSet.has(nk)) seen.add(nk);
+        }
         break;
       }
     })();
@@ -5716,7 +5732,16 @@ function addCoverInner(type, gx, gy, unit){
          Above the first tread there is no such trap: from tread N both N+1 and N are
          within reach, their bands overlap, and coverage is continuous. So only the
          entrance needs widening, and it gets a walk-on apron. */
-      const apron = (i === 0) ? 0.9 : 0;
+      /* ⛔ AND AN APRON ON THE TOP THREE, for the same reason in mirror image.
+         The wall the flight leans on carries a collision AABB inflated by
+         PLAYER_RADIUS 0.6, so the body is pinned 0.6 m from the face — and on a
+         6.2 m building the treads inside that band hold the last metre of climb.
+         Measured: every 6.2 staircase topped out at exactly 5.25 (the highest
+         tread whose band the pin can reach) with a 0.95 m gap to the parapet.
+         Extending the top treads' CATCH BANDS back toward the approach lets the
+         pinned body keep gaining height in place; the feet-aware supportAt keeps
+         the overlap safe for everyone lower down. Meshes untouched. */
+      const apron = (i === 0 || i >= N-3) ? 0.9 : 0;
       const asc = (dir==='s' || dir==='e') ? 1 : -1;
       const apLoZ = (dir==='n'||dir==='s') && asc > 0 ? apron : 0;
       const apHiZ = (dir==='n'||dir==='s') && asc < 0 ? apron : 0;
@@ -9170,7 +9195,15 @@ function resolveWalls(){
        you walking into it would shove you off the top, and perches are how you
        reach a second paint tone. If your feet are level with its top you are on
        it, not in it. */
-    if(s.top != null && localPos.y >= s.top - 0.08) continue;
+    /* ⭐ 2026-08-03 — THE MANTLE RULE. Was `>= s.top - 0.08`: a solid stopped
+       blocking only once your feet were level with its head. But a ledge within
+       STEP_UP is by definition a step (that is what STEP_UP means), so a wall
+       whose head is one step away must not shove you back — resolveWalls lets
+       you through and the step-up branch lifts you on. This is what makes the
+       parapet walkable from the stair top, and roofs walkable onto wall heads.
+       From flat ground nothing changes: every wall and crate top is well above
+       feet + STEP_UP. */
+    if(s.top != null && localPos.y >= s.top - STEP_UP) continue;
     if(localPos.x > s.minX-PLAYER_RADIUS && localPos.x < s.maxX+PLAYER_RADIUS &&
        localPos.z > s.minZ-PLAYER_RADIUS && localPos.z < s.maxZ+PLAYER_RADIUS){
       const penL = localPos.x-(s.minX-PLAYER_RADIUS), penR = (s.maxX+PLAYER_RADIUS)-localPos.x;
