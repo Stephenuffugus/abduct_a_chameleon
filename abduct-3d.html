@@ -5771,7 +5771,21 @@ function addCoverInner(type, gx, gy, unit){
      them. So each MESH is measured on its own and only blocks you if it occupies
      the band a body actually passes through. A trunk blocks; the leaves above it
      do not. The posts of a shelter block; its roof does not. */
-  if(type !== 'wall'){
+  /* ⛔⛔⛔ 2026-08-03 — AND NOT THE STAIRCASE, WHICH IS THE THING THAT MAKES A ROOF A
+     PLACE. Stephen has asked THREE times to be able to stand on the structures. The
+     staircase's own comment forty lines up says "Not a solid: nothing about it blocks
+     the alley it stands in" - and then this generic pass made every tread solid anyway.
+     STEP_UP is 0.62, so the five treads sit at 0.60 / 1.20 / 1.80 / 2.40 / 3.00, and
+     anything whose top clears STAND_MAX_TOP 2.0 is classified as a WALL. Treads four and
+     five were walls. You walk up three steps, hit a vertical face, and that is the end
+     of the climb.
+     Measured with test/climb3d.mjs, which walks a body at the stairs instead of asking a
+     graph: 1 roof climbed out of 5, and the failures all peak at 2.48-2.50 - the apex of
+     a jump made at the foot of a wall.
+     jump3d was green through all three askings because its reachability is a graph over
+     the platform list with a modelled APEX of 2.72, and its roof check only asks whether
+     the words STEPS and ROOF both appear on the map. It never moved a player. */
+  if(type !== 'wall' && !(type && type.indexOf('stair_') === 0)){
     const _sb = new THREE.Box3();
     g.traverse(o=>{
       if(!o.isMesh) return;

@@ -27,6 +27,7 @@
   "online": "node online.js ../index.html",
   "twotone3d": "node twotone3d.mjs ../abduct-3d.html",
   "jump3d": "node jump3d.mjs ../abduct-3d.html",
+  "climb3d": "node climb3d.mjs ../abduct-3d.html",
   "studio3d": "node studio3d.mjs ../abduct-3d.html",
   "solo3d": "node solo3d.mjs ../abduct-3d.html",
   "ground3d": "node ground3d.mjs ../abduct-3d.html",
