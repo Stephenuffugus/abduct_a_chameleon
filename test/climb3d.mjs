@@ -59,14 +59,28 @@ for (let s = 0; s < BLOCKS; s++) {
 
   /* Find a staircase and the roof it is supposed to serve: the nearest ROOF to a STEPS. */
   const target = await p.evaluate(() => {
-    const all = []; for (let i = 0; ; i++) { const q = window.__aac3dPerch(i); if (!q) break; all.push(q); if (i > 4000) break; }
+    /* ⛔ __aac3dPerch(i) falls back to platforms[0] out of range and NEVER returns null,
+       so the obvious enumeration collects platforms[0] four thousand times. My first run
+       of this gate did exactly that: every "staircase" it found was one bottom tread
+       repeated, and its 1-of-5 was measuring nothing. Use the whole list. */
+    const all = window.__aac3dPerches();
     const steps = all.filter(q => q.name === 'STEPS');
     const roofs = all.filter(q => q.name === 'ROOF');
     if (!steps.length || !roofs.length) return null;
-    let best = null;
-    for (const st of steps) for (const rf of roofs) {
-      const d = Math.hypot(st.cx - rf.cx, st.cz - rf.cz);
-      if (!best || d < best.d) best = { d, st, rf };
+    /* A staircase is the CLUSTER of treads around one spot. Pair its highest tread - the
+       landing - with the nearest roof, and walk in from below its LOWEST tread. */
+    const used = new Set(); let best = null;
+    for (const s0 of steps) {
+      const k = Math.round(s0.cx) + ',' + Math.round(s0.cz);
+      if (used.has(k)) continue;
+      const cluster = steps.filter(s2 => Math.hypot(s2.cx - s0.cx, s2.cz - s0.cz) < 4.5);
+      for (const s2 of cluster) used.add(Math.round(s2.cx) + ',' + Math.round(s2.cz));
+      const lowT = cluster.reduce((a2, b2) => b2.top < a2.top ? b2 : a2);
+      const topT = cluster.reduce((a2, b2) => b2.top > a2.top ? b2 : a2);
+      for (const rf of roofs) {
+        const d = Math.hypot(topT.cx - rf.cx, topT.cz - rf.cz);
+        if (!best || d < best.d) best = { d, st: topT, low: lowT, rf, treads: cluster.length };
+      }
     }
     return best;
   });
@@ -77,22 +91,28 @@ for (let s = 0; s < BLOCKS; s++) {
      points from the player at the staircase; the game's own key handling does the rest. */
   const res = await p.evaluate(async (t) => {
     const nap = ms => new Promise(r=>setTimeout(r,ms));
-    const dx = t.st.cx - t.rf.cx, dz = t.st.cz - t.rf.cz;
+    const dx = t.low.cx - t.rf.cx, dz = t.low.cz - t.rf.cz;
     const len = Math.hypot(dx, dz) || 1;
-    const startX = t.st.cx + (dx/len) * 3.5, startZ = t.st.cz + (dz/len) * 3.5;
-    const yaw = Math.atan2(-(t.st.cx - startX), -(t.st.cz - startZ));   // face the steps
+    const startX = t.low.cx + (dx/len) * 3.0, startZ = t.low.cz + (dz/len) * 3.0;
+    /* ⛔⛔ AND FACE THE RIGHT WAY. Both negatives put the yaw 180 degrees out, so every
+       run of this gate walked the body directly AWAY from the staircase - the trace read
+       z -12.2, -12.7, -13.2, -13.7, -14.2 with the bottom tread sitting at -10.2. Two
+       "failures" of the game were reported off the back of that. The game's forward is
+       (sin(yaw), cos(yaw)) - see orbit() - so face the target, do not face away from it. */
+    const yaw = Math.atan2(t.low.cx - startX, t.low.cz - startZ);
     window.__aac3dPlace(startX, 0, startZ, yaw);
     await nap(250);
     const before = window.__aac3dPlayer();
     const key = (code, type) => dispatchEvent(new KeyboardEvent(type, { code, key: code, bubbles: true }));
     key('KeyW', 'keydown');
-    let peak = before.y, jumps = 0;
-    for (let f = 0; f < 200; f++) {
-      /* jump whenever we are grounded and not already climbing, the way a person
-         mashes it at the bottom of a step */
-      const s2 = window.__aac3dPlayer();
-      if (s2.grounded && jumps < 40) { key('Space','keydown'); await nap(16); key('Space','keyup'); jumps++; }
-      await nap(30);
+    let peak = before.y;
+    for (let f = 0; f < 600; f++) {
+      /* ⛔ AND DO NOT JUMP. An earlier version of this gate mashed Space whenever it was
+         grounded, "the way a person does". The step-up branch requires `grounded`, so a
+         body that is permanently mid-jump can never walk up a step - the gate was holding
+         the player off the stairs and then reporting the stairs as broken. Walking up
+         stairs without jumping is the entire point of stairs, so this walks. */
+      await nap(16);
       const s3 = window.__aac3dPlayer();
       if (s3.y > peak) peak = s3.y;
     }
@@ -120,7 +140,7 @@ for (let s = 0; s < BLOCKS; s++) {
   const roofTop = target.rf.top;
   const onRoof = res.endY >= roofTop - 0.6 || (res.endOn && res.endOn.name === 'ROOF');
   if (onRoof) made++;
-  lines.push(`  ${want.padEnd(14)} steps top ${target.st.top.toFixed(1)}  roof top ${roofTop.toFixed(1)}  ` +
+  lines.push(`  ${want.padEnd(14)} ${target.treads} treads, landing ${target.st.top.toFixed(1)}, roof ${roofTop.toFixed(1)} (${target.d.toFixed(1)}m away)  ` +
              `-> walked ${res.moved.toFixed(1)}m, peaked ${res.peak.toFixed(2)}, ended ${res.endY.toFixed(2)} ` +
              `on ${res.endOn ? res.endOn.name : 'the ground'}   ${onRoof ? 'ON THE ROOF' : 'did not get up'}`);
 }

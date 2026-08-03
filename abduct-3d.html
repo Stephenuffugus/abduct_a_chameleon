@@ -5407,6 +5407,16 @@ window.__aac3dPlayer = function(){
 };
 /* what a given perch offers: does it hold you up, and does it become the ground
    your paint is judged against once you are on it */
+/* ⛔⛔ THE WHOLE LIST, because __aac3dPerch(i) below falls back to platforms[0] when the
+   index is out of range and therefore NEVER returns null. Any gate that enumerates with
+   `for(i=0;;i++){ const q = perch(i); if(!q) break; }` collects platforms[0] forever - my
+   own climb3d did exactly that and every "staircase" it found was the same bottom tread
+   repeated four thousand times, which made its first measurement meaningless. Enumerate
+   with this. */
+window.__aac3dPerches = function(){
+  return platforms.map(p=>({ name:p.name, cx:+p.cx.toFixed(2), cz:+p.cz.toFixed(2), top:+p.top.toFixed(2),
+    minX:+p.minX.toFixed(2), maxX:+p.maxX.toFixed(2), minZ:+p.minZ.toFixed(2), maxZ:+p.maxZ.toFixed(2) }));
+};
 window.__aac3dPerch = function(i){
   const p = platforms[i|0] || platforms[0];
   if(!p) return null;
@@ -5604,7 +5614,17 @@ function addCoverInner(type, gx, gy, unit){
        rather than jumping five times. Not a solid: nothing about it blocks the
        alley it stands in, and a hider can shelter underneath. */
     const dir = type.slice(6);                       // n | s | e | w — which way is UP
-    const N = 5, rise = STEP_UP - 0.02, run = TILE/N;
+    /* ⛔⛔⛔ 2026-08-03 — AND THE LAST STEP WAS TWICE AS TALL AS A BODY CAN CLIMB.
+       This read `const N = 5, rise = STEP_UP - 0.02` — five treads to 3.00 — and then
+       parked the landing at 4.2. That is a 1.20 m step where STEP_UP is 0.62. The final
+       step of every staircase in the game was double the maximum a player can step up,
+       so the stairs did not reach the thing they exist to reach. On top of that, a rise
+       of STEP_UP - 0.02 left a TWO CENTIMETRE margin on every other step, which is why
+       the same tread caught the body on one run and let it walk through on the next.
+       Now the treads climb continuously to the landing height, and the rise is chosen so
+       there is real headroom under STEP_UP instead of 2 cm of luck. */
+    const TOPY = 4.2;
+    const N = Math.ceil(TOPY / 0.5), rise = TOPY / N, run = TILE / N;
     for(let i=0;i<N;i++){
       const hgt = rise*(i+1);
       const off = -TILE/2 + run*(i+0.5);
@@ -5615,8 +5635,40 @@ function addCoverInner(type, gx, gy, unit){
       const st = new THREE.Mesh(new THREE.BoxGeometry(bw, hgt, bd), STAIR_MAT);
       st.position.set(along, hgt/2, cross);
       g.add(st); losMeshes.push(st);
-      platforms.push({ minX:w.x+along-bw/2, maxX:w.x+along+bw/2,
-                       minZ:w.z+cross-bd/2, maxZ:w.z+cross+bd/2,
+      /* ⛔⛔⛔ 2026-08-03 — THE STAIRS HAD A HOLE BETWEEN EVERY TREAD, which is why the
+         roofs have been unreachable through three askings.
+         supportAt insets every platform by 0.15 on each side ("so you have to actually
+         be ON a prop"). A tread is `run` = TILE/5 = 0.6m deep and consecutive treads
+         ABUT, so the supported bands come out as -10.35..-10.05 and -9.75..-9.45 with a
+         0.30m strip between them held up by NOTHING. Walk up and you drop through the
+         first gap you land in.
+         Traced, walking a real body at a real staircase: z -12.2 -> -9.45, straight past
+         treads at -10.2, -9.6 and -9.0, with y = 0 the entire way. It walks THROUGH the
+         staircase at ground level.
+         The tread's collision rect is padded along the run so neighbours overlap by more
+         than twice the inset. supportAt takes the HIGHEST match, so in the overlap you
+         get the upper tread - which is what climbing is. The visible box is untouched. */
+      const padA = (dir==='n'||dir==='s') ? 0 : run*0.6;
+      const padC = (dir==='n'||dir==='s') ? run*0.6 : 0;
+      /* ⛔⛔ AND AN APRON ON THE BOTTOM STEP, or the whole staircase is a coin flip.
+         Standing on the ground your feet reach 0 + STEP_UP = 0.62, so of ten treads
+         exactly ONE is legal to step onto: the first. Its catch band is 0.43 m wide, and
+         one frame of walking is about that on a slow device - so the body strides clean
+         over the only tread it could have used and carries on at ground level. Measured:
+         the same seed, the same start, twice in a row - one run climbed 0 -> 0.47 -> 0.93
+         -> 1.40, the next walked through at y = 0 the whole way. Nothing but the frame
+         times differed.
+         Above the first tread there is no such trap: from tread N both N+1 and N are
+         within reach, their bands overlap, and coverage is continuous. So only the
+         entrance needs widening, and it gets a walk-on apron. */
+      const apron = (i === 0) ? 0.9 : 0;
+      const asc = (dir==='s' || dir==='e') ? 1 : -1;
+      const apLoZ = (dir==='n'||dir==='s') && asc > 0 ? apron : 0;
+      const apHiZ = (dir==='n'||dir==='s') && asc < 0 ? apron : 0;
+      const apLoX = (dir==='e'||dir==='w') && asc > 0 ? apron : 0;
+      const apHiX = (dir==='e'||dir==='w') && asc < 0 ? apron : 0;
+      platforms.push({ minX:w.x+along-bw/2-padA-apLoX, maxX:w.x+along+bw/2+padA+apHiX,
+                       minZ:w.z+cross-bd/2-padC-apLoZ, maxZ:w.z+cross+bd/2+padC+apHiZ,
                        top:hgt, colorHex:0x6b5238, cx:w.x+along, cz:w.z+cross, name:'STEPS' });
     }
     /* ⛔ AND A LANDING ON THE PARAPET, OR THE STAIRS GO NOWHERE. jump3d found 12
@@ -5631,10 +5683,10 @@ function addCoverInner(type, gx, gy, unit){
     const land = new THREE.Mesh(new THREE.BoxGeometry(
       (dir==='n'||dir==='s') ? TILE*0.82 : lw, 0.22,
       (dir==='n'||dir==='s') ? lw : TILE*0.82), STAIR_MAT);
-    land.position.set(lx, 4.2 - 0.11, lz);
+    land.position.set(lx, TOPY - 0.11, lz);
     g.add(land); losMeshes.push(land);
     platforms.push({ minX:w.x+lx-lw/2, maxX:w.x+lx+lw/2, minZ:w.z+lz-lw/2, maxZ:w.z+lz+lw/2,
-                     top:4.2, colorHex:0x6b5238, cx:w.x+lx, cz:w.z+lz, name:'STEPS' });
+                     top:TOPY, colorHex:0x6b5238, cx:w.x+lx, cz:w.z+lz, name:'STEPS' });
     addTarget(w.x, w.z, 0x6b5238, 2.0);
   }else if(type==='doorway_ns' || type==='doorway_ew'){
     /* ⚖ DECORATION ONLY. Not in solids, not in losMeshes, nothing added to
@@ -5812,10 +5864,26 @@ function addCoverInner(type, gx, gy, unit){
   }
 }
 /* the highest thing you could be standing on at this spot. Inset so you have to
-   be properly on top of it rather than clipping its lip. */
-function supportAt(x, z){
+   be properly on top of it rather than clipping its lip.
+   ⛔⛔⛔ 2026-08-03 — AND ONLY THINGS YOU CAN ACTUALLY REACH, which is the third and
+   last reason the roofs were unstandable. This used to return the highest platform over
+   a spot FULL STOP, with no idea where your feet were. On a staircase the treads overlap,
+   so standing on the ground at the foot of the steps it answered with tread TWO - a 0.93 m
+   step where STEP_UP is 0.62 - and the caller, seeing a step it could not make, refused
+   the climb entirely and left the body on the floor. The reachable tread was right there
+   underneath, hidden by the one above it.
+   Traced: z -12.33 -> -9.12, straight past treads at -10.33, -10.0, -9.7, -9.3, with
+   y = 0 the whole way.
+   This is not a staircase special case. Any platform over your head stole the support of
+   the one at your feet - stand under a canopy or a stacked crate and the ground itself
+   stopped answering. A body can only stand on what it can step onto, so that is what the
+   query returns. `feetY` omitted keeps the old whole-column answer for the spawn and
+   placement callers, which want the highest surface regardless of anybody's legs. */
+function supportAt(x, z, feetY){
+  const reach = (feetY == null) ? Infinity : feetY + STEP_UP;
   let top = 0, plat = null;
   for(const p of platforms){
+    if(p.top > reach) continue;
     if(p.top > top && x > p.minX+0.15 && x < p.maxX-0.15 && z > p.minZ+0.15 && z < p.maxZ-0.15){
       top = p.top; plat = p;
     }
@@ -8960,8 +9028,32 @@ function moveLocal(dt, role){
        so the counterplay is your TEAMMATES and the clock, not your thumbstick.
        Both roles read the same flag: an alien hit by a tongue is just as stuck. */
     const base = amStunned() ? 0 : (foot ? FOOT_SPEED : HIDER_SPEED);
-    localPos.x += mv.x*base*fx.s*dt; localPos.z += mv.z*base*fx.s*dt;
-    resolveWalls();
+    /* ⛔⛔⛔ 2026-08-03 — MOVE IN SUB-STEPS, or the stairs are a coin flip and walls are
+       porous on a slow phone. dt is clamped at 0.05 and HIDER_SPEED is 10, so one frame
+       of walking carries you up to 0.50 m in a single jump of the position - and the
+       window in which a staircase can catch you is 0.55 m wide (the overlap of the two
+       treads within STEP_UP of your feet). A five centimetre margin, and `fx.s` - any
+       speed boost - eats it outright.
+       That is not a theory. Same seed, same start, twice: one run climbed 0 -> 0.47 ->
+       0.93 -> 1.40, the next strode over every tread at y = 0. Walking for longer made it
+       WORSE: the body climbed to 1.40 and then over-stepped the next pair and fell off.
+       So the move is swept in chunks no longer than 0.2 m, with the walls resolved and
+       the feet allowed to find the step after each one. The stride can no longer outrun
+       the geometry whatever the frame rate or the speed multiplier - which also means a
+       laggy phone can no longer push a body through a wall. At normal speed this is three
+       iterations of arithmetic. */
+    const stepX = mv.x*base*fx.s*dt, stepZ = mv.z*base*fx.s*dt;
+    const nsub = Math.max(1, Math.min(8, Math.ceil(Math.hypot(stepX, stepZ) / 0.2)));
+    for(let sub = 0; sub < nsub; sub++){
+      localPos.x += stepX/nsub; localPos.z += stepZ/nsub;
+      resolveWalls();
+      if(grounded){
+        const ss = supportAt(localPos.x, localPos.z, localPos.y);
+        if(ss.top > localPos.y && ss.top - localPos.y <= STEP_UP){
+          localPos.y = ss.top; velY = 0; standingOn = ss.plat;
+        }
+      }
+    }
     /* VERTICAL. Landing only counts while DESCENDING from above the top,
        otherwise walking into the side of a crate would teleport you on top of
        it and every prop would be a ladder. Walking off an edge just stops
@@ -8974,7 +9066,9 @@ function moveLocal(dt, role){
     jumpQueued = false;
     velY -= GRAVITY*dt;
     localPos.y += velY*dt;
-    const sup = supportAt(localPos.x, localPos.z);
+    /* prevY, not localPos.y: gravity has already been applied this frame, and what you
+       can step onto is decided by where your feet WERE. */
+    const sup = supportAt(localPos.x, localPos.z, prevY);
     /* ⭐ 2026-08-02 — STEP UP. Stephen asked for staircases and for roofs you can
        stand on, and both were impossible while the ONLY way to gain height was a
        jump: landing is tested on the way DOWN, so walking into a step just
