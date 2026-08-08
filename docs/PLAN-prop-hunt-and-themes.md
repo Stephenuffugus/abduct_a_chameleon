@@ -14,6 +14,43 @@ against the live file (`abduct-3d.html`, branch `salvage`, HEAD ae624f5).
 
 ---
 
+## PHASE 0 VERDICT — Stephen's test round (2026-08-08)
+
+He played. Four notes, each now an acceptance bar for this plan:
+
+1. **"A lot of structures all look the same, kind of boring layout."**
+2. **"I can't stand on rocks, roofs, or awnings."**
+3. **"There's not a lot of detail."**
+4. **"The sound effects are really primitive."**
+
+⛔ **Caveat that reframes 1-3: he tested a month-stale deploy.** The live
+github.io build (main, `c141c22`) predates the ENTIRE structures era — probe
+showed zero occurrences of `mergeStaticWorld`/`addRoofBridges`. No mantle
+rule, no standable roofs, no staircase fixes, no L-shaped blocks, no face
+detail (windows/trim), no awnings, no plank bridges. `salvage` fast-forwards
+`main` cleanly (0 divergent commits) and the suite was 17/17 green at its
+tip. **Deploy, then re-test 1-3 against the real build.**
+
+What stays true even on the new build:
+- **Standability directive (his call, from the test):** rocks, roofs, and
+  awnings must all hold a player. Roofs: standable on salvage via stairs +
+  mantle — re-verify by hand. Rocks: `jump3d` proves boulders perch, but
+  verify every placed rock VARIANT and scale registers (a rock whose top
+  exceeds `STAND_MAX_TOP 2.0` silently becomes a wall). Awnings: currently
+  "never a solid" BY DESIGN plus the canopy free-win concern — **overruled by
+  the director's test**; make awning slabs platforms (tops ~2.2-2.6m sit
+  under the 2.75 jump apex; perch-as-ground camo already prices standing on
+  one). A gated change with its own climb3d cases.
+- **Sameness/detail:** the composition gap is real and is exactly Phases 1
+  and 6 (themes, grammar, districts, landmarks, the unused building kit).
+  His note confirms their priority order.
+- **Audio is now a phase of its own** (see build order): the synth SFX eras
+  out. And in the mimic mode sound is load-bearing gameplay, not polish —
+  prop movement noise is a TELL, so footsteps/scrapes need positional,
+  material-aware audio before Phase 3 ships.
+
+---
+
 ## 0. Why this fits (and was already half-written-down)
 
 Two receipts from our own repo:
@@ -209,6 +246,12 @@ asking for by name — composition — inside `makeRandomMap` (2228) and
   payload, then theme packs + grammar + districts + landmarks + the building
   kit + `themes3d` + per-theme worldshots. Ships visible map diversity on its
   own even if the mode slips.
+- **PHASE 1.5 — STANDABILITY + AUDIO (Stephen's test-round list).**
+  Rocks/roofs/awnings all hold a player (directive above), plus the audio
+  pass: CC0 recorded SFX bank to replace the primitive synths, per-mood
+  layered ambience, positional material-aware footsteps/scrapes (they become
+  the mimic tell), stingers for sweep/stun/beam/morph. Gate: climb3d rock +
+  awning cases; audio reviewed by ear like worldshots by eye.
 - **PHASE 2 — MORPH SOLO.** The ability vs the training bot (bot learns to
   probe: prefers props out of company or that it saw move). `morph3d`,
   `reach3d`, `hud3d` hold. Playable alone the day it lands.
