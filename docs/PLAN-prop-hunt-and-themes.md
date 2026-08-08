@@ -263,11 +263,11 @@ asking for by name — composition — inside `makeRandomMap` (2228) and
   calling it done.
 - **PHASE 5 — GENERATOR POLISH.** More themes, more grammar, set-piece
   landmarks; contact sheets per theme read against the composition bar.
-- **PHASE 6 (candidate, HIS SHAPE FIRST) — player-built structures.** Panels
-  that take the colour of what they lean on compose beautifully with prop
-  hunt (build a fake stack, hide in it) — but the standing rule is ASK for
-  the shape before building.
-- **PHASE 7 (deep endgame) — THE SURVEY PHOTOGRAPH** (BUILD_NOTES #2, already
+- ~~PHASE 6 — player-built structures~~ **RETIRED 2026-08-08, his answer:**
+  *"I wanted people to be able to blend in better. adding prop hunt abilities
+  touches this."* The underlying want was blending, and the mimic mode IS
+  that. No separate build system.
+- **PHASE 6 (deep endgame) — THE SURVEY PHOTOGRAPH** (BUILD_NOTES #2, already
   canon-fit): the ship photographs the map on arrival; the seeker can consult
   the photo; spot-the-difference becomes the master-level tell. Also unlocks
   **group camo** (BUILD_NOTES #3): the photo shows three crates, so it takes
@@ -280,4 +280,6 @@ asking for by name — composition — inside `makeRandomMap` (2228) and
 3. "3 times per game" read as: 3 transforms in, reverts free (default).
 4. Probe punishments: beam→overheat (decoy rule) + stun→dud+cooldown
    (default) — harsh enough?
-5. Phase 6 shape — the panel idea is a guess until he says otherwise.
+
+Answered 2026-08-08: "more pads" — no preference, dropped. Player-built
+structures — folded into the mimic mode (see retired Phase 6).
